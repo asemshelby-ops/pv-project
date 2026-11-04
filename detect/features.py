@@ -13,6 +13,7 @@ median of the last 3 such means (removes single-sample glitches).
 import math
 
 import config
+from detect.residual import CusumCore
 
 DT = config.DT_S
 N2 = int(2 * 60 / DT)                       # 12 samples = 2 min
@@ -31,10 +32,15 @@ WIND_FEATURES = [
     "wind_2m",                          # m/s, 2-min mean wind
     "wind_drop",                        # 2-min mean 10 min ago minus now
 ]
+HYBRID_FEATURES = [
+    "cusum_d",                          # degC, thermal-model residual minus its baseline
+    "cusum_S",                          # CUSUM statistic of cusum_d (never reset here)
+]
 
 
-def feature_names(use_wind):
-    return BASE_FEATURES + (WIND_FEATURES if use_wind else [])
+def feature_names(use_wind, hybrid=False):
+    return (BASE_FEATURES + (WIND_FEATURES if use_wind else [])
+            + (HYBRID_FEATURES if hybrid else []))
 
 
 class Ring:
@@ -108,8 +114,12 @@ def clear_sky_poa_simple(cos_z, cos_aoi):
 # --- the extractor ------------------------------------------------------------
 
 class FeatureExtractor:
-    def __init__(self, use_wind=config.GBT_USE_WIND):
-        self.use_wind = use_wind
+    def __init__(self, use_wind=config.GBT_USE_WIND, hybrid=False, model_params=None):
+        """hybrid: add CUSUM's residual and statistic (detect/residual.py, the
+        same code as the CUSUM baseline). model_params: its thermal model."""
+        self.use_wind, self.hybrid = use_wind, hybrid
+        self.core = (CusumCore(use_wind, config.HYBRID_CUSUM_K, model_params)
+                     if hybrid else None)
         self.reset()
 
     def reset(self):
@@ -118,6 +128,8 @@ class FeatureExtractor:
         self.t_med = Ring(N10 + 1)
         self.g = Ring(N10 + 1)
         self.wind = Ring(N10)
+        if self.core is not None:
+            self.core.reset()
 
     def update(self, s):
         """s: a Sample (detect/stream.py). Returns a dict of features, or None
@@ -130,6 +142,8 @@ class FeatureExtractor:
             return None
         t = median3(self.t_raw.ago(0), self.t_raw.ago(1), self.t_raw.ago(2))
         self.t_med.push(t)
+        if self.core is not None:
+            self.core.update(t, s)          # every sample, also during warm-up
         if not (self.t_med.full() and self.g.full() and self.wind.full()):
             return None
 
@@ -156,5 +170,8 @@ class FeatureExtractor:
             before = sum(self.wind.ago(k) for k in range(N10 - N2, N10)) / N2
             f["wind_2m"] = now
             f["wind_drop"] = before - now
+        if self.hybrid:
+            f["cusum_d"] = self.core.d
+            f["cusum_S"] = self.core.S
         f["t"] = t           # filtered temperature, used by the detectors (not a model input)
         return f

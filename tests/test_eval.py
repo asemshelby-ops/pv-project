@@ -101,3 +101,25 @@ def test_ambient_rise_is_neutral():
     ts = ts_grid()
     m = score(ts, alarms_at(ts, [10]), ev([(5, 20, "ambient_rise")]), n_days=1)
     assert m["FP"] == 0
+
+
+def test_fast_p_path_with_persistence_and_hybrid():
+    days, events = synth.generate(seed=2, n_days=3)
+    y, use = gbt.sample_targets(days, events)
+    model = gbt.train(gbt.build_features(days, True, hybrid=True), y, use, seed=0,
+                      weighting="sqrt")
+    p = run.p_trace(model, True, days, hybrid=True)
+    for thr in (0.3, 0.7):
+        fast = run.alarms_from_p(p, thr, days, persist=2)
+        slow = stream.run(gbt.GbtDetector(model, True, thr, hybrid=True, persist=2), days)
+        assert np.array_equal(fast, slow)
+
+
+def test_tune_grid_extends_past_edges():
+    # F1 peaks at 7 although the grid stops at 3: the search must walk out to it
+    def fake(s):
+        return {"F1": -abs(s[0] - 7), "FA_per_day": 0.0}
+    best, at_edge = run.tune_grid(fake, [[1, 2, 3]], [(None, lambda x: x + 1)])
+    assert best == (7,) and not at_edge
+    best, at_edge = run.tune_grid(fake, [[1, 2, 3]], [(None, None)])
+    assert best == (3,) and at_edge                       # cannot extend: flagged

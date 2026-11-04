@@ -120,6 +120,15 @@ GBT_LEARNING_RATE = 0.1
 GBT_MIN_CHILD = 50          # min samples per leaf: no tiny, noise-fitting leaves
 GBT_POS_WINDOW_MIN = 10     # training target: first 10 min of each spike
 GBT_P_THRESHOLD = 0.5       # [ASSUMPTION] default, tuned in Step 4
+# NASIM-GBT current version (decided 2026-11-04 after seeds 0-4; judged on 5-9):
+GBT_HYBRID = True           # add CUSUM residual d and statistic S as features
+HYBRID_CUSUM_K = 0.2        # [ASSUMPTION] k of the feature CUSUM (not tuned; the
+                            # trees set their own thresholds on S)
+GBT_CLASS_WEIGHT = "sqrt"   # positive weight sqrt(n_neg/n_pos); version 1: "full"
+GBT_PERSIST = 2             # alarm after 2 consecutive samples >= p; version 1: 1
+HYBRID_MISMATCH = dict(c_frac=+0.2, u0_frac=-0.2, u1_frac=-0.2)
+                            # fixed a-priori +/-20 % model for the hybrid's
+                            # mismatch row: the worst case of CUSUM on seeds 0-4
 
 # Simple clear-sky model for the clear-sky index ON THE ESP32 (features only;
 # the synthetic data itself uses pvlib Ineichen). Meinel & Meinel DNI with
@@ -130,11 +139,15 @@ CS_DIFFUSE_FRAC = 0.1       # [ASSUMPTION] clear-sky diffuse / DNI
 SPLIT_DAYS = (36, 12, 12)   # chronological train / validation / test, whole days
 MISMATCH_FRAC = 0.20        # [ASSUMPTION] CUSUM model-mismatch study: C, u0, u1
                             # each off by +/-20 % (all 8 sign combinations)
-SEEDS = (0, 1, 2, 3, 4)     # multi-seed summary
+SEEDS = (5, 6, 7, 8, 9)     # evaluation seeds. Seeds 0-4 are BURNED: their test
+                            # results were seen while designing NASIM-GBT's
+                            # current version, so it is judged on 5-9 only
 
 # --- "Hard" synthetic variant (all values [ASSUMPTION]) ---------------------
 # Off by default. Removes the easy giveaways of the base data.
 HARD_VARIANT = False
+HARD_N_DAYS = 150                 # >= 50 training spikes per seed (Phase 1 target)
+HARD_SPLIT_DAYS = (90, 30, 30)    # train / validation / test
 HARD_LULL_DROP = (0.7, 1.6)       # m/s drop below the base wind ...
 HARD_LULL_WIND_FLOOR = 1.6        # ... but the lull wind never goes below 1.6 m/s, the
                                   # bottom edge of the background: 1st percentile of

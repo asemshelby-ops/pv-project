@@ -24,11 +24,9 @@ Caveat for synthetic data: the generator uses the same thermal model, so the
 model structure is perfect here; on the real module the residual will be larger.
 Step 4 therefore also runs CUSUM with C, u0, u1 each off by +/-20 %.
 """
-import math
-
 import config
 from detect.features import N10, Ring, median3
-from sim import thermal
+from detect.residual import CusumCore
 
 DT = config.DT_S
 SILENCE_N = int(config.SILENCE_MIN * 60 / DT)
@@ -39,19 +37,13 @@ class CusumDetector:
                  model_params=None):
         """model_params: optional dict of c, u0, u1 for the internal model
         (default: the same values as the generator; see the mismatch study)."""
-        self.use_wind, self.k, self.h = use_wind, k, h
-        self.model_params = model_params or {}
-        self.a_wind = 1.0 - math.exp(-DT / (config.CUSUM_WIND_TAU_MIN * 60))
-        self.a_res = 1.0 - math.exp(-DT / (config.CUSUM_RES_TAU_MIN * 60))
+        self.h = h
+        self.core = CusumCore(use_wind, k, model_params)   # steps 2-4 above
         self.reset()
 
     def reset(self):
         self.t_raw = Ring(config.MEDIAN_N)
-        self.model = None
-        self.prev = None          # (G, Ta, v_slow) of the previous sample
-        self.v_slow = None
-        self.r_base = 0.0
-        self.S = 0.0
+        self.core.reset()
         self.n = 0
         self.quiet = 0
 
@@ -60,31 +52,16 @@ class CusumDetector:
         if not self.t_raw.full():
             return False
         t = median3(self.t_raw.ago(0), self.t_raw.ago(1), self.t_raw.ago(2))
-
-        if self.use_wind and s.wind == s.wind:
-            self.v_slow = s.wind if self.v_slow is None else \
-                self.v_slow + self.a_wind * (s.wind - self.v_slow)
-        else:
-            self.v_slow = config.CUSUM_WIND_CONST
-
-        if self.model is None:                       # first sample of the day
-            self.model, self.prev = t, (s.g, s.ta, self.v_slow)
+        if not self.core.update(t, s):               # first sample of the day
             return False
-        self.model = thermal.step(self.model, *self.prev, **self.model_params)
-        self.prev = (s.g, s.ta, self.v_slow)
-
-        r = t - self.model
-        d = r - self.r_base
-        self.r_base += self.a_res * (r - self.r_base)
-        self.S = max(0.0, self.S + d - self.k)
         self.n += 1
 
         if self.quiet > 0:
             self.quiet -= 1
         if self.n < N10 or self.quiet > 0:           # same 10-min warm-up as (a), (c)
             return False
-        if self.S > self.h:
-            self.S = 0.0
+        if self.core.S > self.h:
+            self.core.S = 0.0
             self.quiet = SILENCE_N
             return True
         return False

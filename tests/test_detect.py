@@ -203,3 +203,45 @@ def test_no_look_ahead(synth_days, which):
     future.loc[cut:, "irradiance"] *= 0.3
     a2 = stream.run(make(), future)
     assert np.array_equal(a1[:cut], a2[:cut])
+
+
+# --- hybrid NASIM-GBT -------------------------------------------------------------
+
+def test_hybrid_features_equal_cusum_baseline_state(synth_days):
+    # The hybrid features must be computed by exactly the CUSUM baseline's code
+    days, _ = synth_days
+    day = days[days["date"] == days["date"].iloc[0]].reset_index(drop=True)
+    fx = FeatureExtractor(use_wind=True, hybrid=True)
+    det = CusumDetector(use_wind=True, k=config.HYBRID_CUSUM_K, h=1e12)   # never alarms
+    for _, s in stream.samples(day):
+        f = fx.update(s)
+        det.update(s)
+        if f is not None:
+            assert f["cusum_d"] == det.core.d and f["cusum_S"] == det.core.S
+    assert f is not None and feature_names(True, True)[-2:] == ["cusum_d", "cusum_S"]
+
+
+def test_sqrt_class_weighting_is_milder(synth_days):
+    days, events = synth_days
+    X = gbt.build_features(days, False)
+    y, use = gbt.sample_targets(days, events)
+    full = gbt.train(X, y, use, seed=0, weighting="full").get_params()["scale_pos_weight"]
+    sqrt = gbt.train(X, y, use, seed=0, weighting="sqrt").get_params()["scale_pos_weight"]
+    assert sqrt == pytest.approx(np.sqrt(full)) and sqrt < full
+
+
+def test_gbt_persistence_needs_consecutive_samples():
+    class Fixed:                       # stand-in booster returning a scripted p
+        def __init__(self, ps):
+            self.ps = iter(ps)
+
+        def predict(self, x):
+            return [next(self.ps)]
+    day = make_day(np.full(200, 40.0), np.full(200, 800.0))
+    first = config.MEDIAN_N - 1 + N10                 # first row with features
+    ps = [0.0] * 200
+    ps[0] = 0.9                                       # single spike of p: no alarm
+    ps[10], ps[11] = 0.9, 0.9                         # two in a row: alarm
+    det = gbt.GbtDetector(Fixed(ps), use_wind=True, p_threshold=0.5, persist=2)
+    al = stream.run(det, day)
+    assert np.flatnonzero(al).tolist() == [first + 11]

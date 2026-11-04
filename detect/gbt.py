@@ -8,9 +8,14 @@ Training (offline, on the PC):
     samples inside neutral windows (rest of a spike, minor_lull, mixed,
     natural_spike, natural_minor) are left out, so the model is never told a
     real lull is "not a spike";
-  * class imbalance: positives weighted by n_negative / n_positive.
-Online: p = model(features); alarm when p >= threshold, then 10-min silence,
-exactly as for the threshold rule. The threshold is tuned on validation days.
+  * class imbalance: positives weighted by n_negative / n_positive ("full",
+    version 1) or by its square root ("sqrt", current): full weighting pushed
+    the probabilities of many negatives close to 1 and made the threshold
+    unstable with few training events;
+  * hybrid (current): CUSUM's residual and statistic as two extra features.
+Online: p = model(features); alarm when p >= threshold for PERSIST
+consecutive samples (current: 2, version 1: 1), then 10-min silence. The
+threshold is tuned on validation days.
 
 Size budget: at most GBT_N_ESTIMATORS trees of depth <= GBT_MAX_DEPTH.
 Reproducible: fixed seed, deterministic mode, one thread.
@@ -27,10 +32,10 @@ SILENCE_N = int(config.SILENCE_MIN * 60 / config.DT_S)
 NEUTRAL = {"minor_lull", "mixed", "natural_spike", "natural_minor", "ambient_rise"}
 
 
-def build_features(days, use_wind):
+def build_features(days, use_wind, hybrid=False, model_params=None):
     """Feature matrix, one row per sample; NaN rows while buffers fill."""
-    names = feature_names(use_wind)
-    fx = FeatureExtractor(use_wind)
+    names = feature_names(use_wind, hybrid)
+    fx = FeatureExtractor(use_wind, hybrid, model_params)
     X = np.full((len(days), len(names)), np.nan)
     for i, (new_day, s) in enumerate(samples(days)):
         if new_day:
@@ -59,17 +64,18 @@ def sample_targets(days, events):
     return y, use
 
 
-def train(X, y, use, seed, names=None):
+def train(X, y, use, seed, names=None, weighting=config.GBT_CLASS_WEIGHT):
     ok = use & ~np.isnan(X).any(axis=1)
     Xt, yt = X[ok], y[ok]
     n_pos = int(yt.sum())
+    ratio = (len(yt) - n_pos) / max(n_pos, 1)
     model = lgb.LGBMClassifier(
         n_estimators=config.GBT_N_ESTIMATORS,
         max_depth=config.GBT_MAX_DEPTH,
         num_leaves=config.GBT_NUM_LEAVES,
         learning_rate=config.GBT_LEARNING_RATE,
         min_child_samples=config.GBT_MIN_CHILD,
-        scale_pos_weight=(len(yt) - n_pos) / max(n_pos, 1),
+        scale_pos_weight=ratio if weighting == "full" else np.sqrt(ratio),
         random_state=seed, deterministic=True, force_row_wise=True,
         n_jobs=1, verbose=-1)
     model.fit(Xt, yt, feature_name=names or "auto")
@@ -77,16 +83,18 @@ def train(X, y, use, seed, names=None):
 
 
 class GbtDetector:
-    def __init__(self, model, use_wind, p_threshold=config.GBT_P_THRESHOLD):
+    def __init__(self, model, use_wind, p_threshold=config.GBT_P_THRESHOLD,
+                 hybrid=False, persist=1, model_params=None):
         self.booster = model.booster_ if hasattr(model, "booster_") else model
-        self.names = feature_names(use_wind)
-        self.p_threshold = p_threshold
-        self.fx = FeatureExtractor(use_wind)
+        self.names = feature_names(use_wind, hybrid)
+        self.p_threshold, self.persist = p_threshold, persist
+        self.fx = FeatureExtractor(use_wind, hybrid, model_params)
         self.reset()
 
     def reset(self):
         self.fx.reset()
         self.quiet = 0
+        self.run = 0              # consecutive samples with p >= threshold
         self.p = float("nan")
 
     def update(self, s):
@@ -95,12 +103,15 @@ class GbtDetector:
             self.quiet -= 1
         if f is None:
             self.p = float("nan")
+            self.run = 0
             return False
         x = np.array([[f[n] for n in self.names]])
         self.p = float(self.booster.predict(x)[0])
+        self.run = self.run + 1 if self.p >= self.p_threshold else 0
         if self.quiet > 0:
             return False
-        if self.p >= self.p_threshold:
+        if self.run >= self.persist:
             self.quiet = SILENCE_N
+            self.run = 0
             return True
         return False
