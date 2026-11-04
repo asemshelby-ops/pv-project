@@ -106,6 +106,7 @@ class GbtDetector:
             self.run = 0
             return False
         x = np.array([[f[n] for n in self.names]])
+        self.x = x[0]             # last feature vector (for the C parity report)
         self.p = float(self.booster.predict(x)[0])
         self.run = self.run + 1 if self.p >= self.p_threshold else 0
         if self.quiet > 0:

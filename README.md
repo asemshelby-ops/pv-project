@@ -50,7 +50,9 @@ non-wind temperature rises.
 | `data/synth.py`, `data/schema.py` | synthetic days in the real CSV schema + labelled events |
 | `detect/` | streaming features and the detectors: Threshold, CUSUM, NASIM-GBT |
 | `eval/` | chronological split, event-level metrics, the one-command run |
-| `export/` | (Step 5) C export of the model and features, parity test |
+| `export/c/nasim.[ch]` | C port of the features, thermal step, CUSUM core and NASIM-GBT alarm logic |
+| `export/c/generated/` | generated: `nasim_config.h` (from config.py) and the two m2cgen models |
+| `export/run.py` | export + Python-vs-C parity test, report in `out/export/parity.md` |
 | `tests/` | pytest for each module |
 
 ## Detectors compared
@@ -66,3 +68,18 @@ Event scoring: first alarm inside a spike = true positive; alarms outside
 events or inside irradiance-driven rises = false alarms; minor lulls, mixed
 windows and natural minor episodes are neutral; natural spikes are reported
 separately.
+
+## Export to C (Step 5)
+
+```bash
+winget install BrechtSanders.WinLibs.POSIX.UCRT     # gcc for the PC parity test
+.venv/Scripts/python -m export.run
+```
+
+Exports both hybrid NASIM-GBT models (main: **no wind**) of
+`config.EXPORT_VARIANT` / `EXPORT_SEED` with m2cgen, and runs that run's
+held-out test days through Python and the compiled C detector. The double
+build must match Python exactly (0 alarm mismatches); the float build is
+reported for comparison, because the ESP32 FPU is single precision. The
+models are trained on synthetic data: retrain on real data before use. No
+ESP32 firmware here (task 2).

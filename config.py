@@ -170,3 +170,7 @@ HARD_TA_STEP_C = (1.0, 3.0)       # degC
 HARD_TA_STEP_RAMP_MIN = 5
 HARD_TA_STEP_HOLD_MIN = (30, 90)  # the step's rise + 15 min = ambient_rise, neutral:
                                   # a real module rise, but neither wind nor irradiance
+
+# --- Export (export/) ----------------------------------------------------------
+EXPORT_VARIANT = "hard"     # models exported to C: hard variant, first evaluation
+EXPORT_SEED = 5             # seed; parity test on that run's held-out test days
