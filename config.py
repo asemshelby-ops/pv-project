@@ -92,3 +92,36 @@ G_NOISE_W = 2.0             # [ASSUMPTION] W/m2; reading rounded to 1 W/m2 [DS]
 WIND_NOISE = 0.2            # [ASSUMPTION] m/s; rounded to 0.1 m/s (spec target)
 V_NOISE = 0.01              # [ASSUMPTION] V
 I_NOISE = 0.003             # [ASSUMPTION] A
+
+# --- Detectors (detect/) ---------------------------------------------------
+# Shared signal: module temperature = mean of T1..T5, then a 3-sample median.
+MEDIAN_N = 3                # [CLAUDE.md] 3-sample median filter
+DET_WINDOW_MIN = 10         # [CLAUDE.md] rise window of the threshold rule
+SILENCE_MIN = 10            # [CLAUDE.md] no new alarm for 10 min after one
+G_FLOOR = 50.0              # [ASSUMPTION] W/m2, guard for divisions by irradiance
+
+# (a) Threshold rule -- fixed team parameters, NOT tuned on our data
+THR_RISE_C = 2.5            # [CLAUDE.md] rise >= 2.5 degC within 10 min
+THR_GATE = 0.05             # [CLAUDE.md] irradiance gate 5 %
+
+# (b) CUSUM on the thermal-model residual (k, h tuned on validation in Step 4)
+CUSUM_WIND_CONST = 1.5      # [ASSUMPTION] m/s, model wind when no anemometer
+CUSUM_WIND_TAU_MIN = 60.0   # [ASSUMPTION] slow wind baseline (EWMA) time constant
+CUSUM_RES_TAU_MIN = 30.0    # [ASSUMPTION] slow residual baseline (EWMA) time constant
+CUSUM_K = 0.5               # [ASSUMPTION] degC, drift allowance per sample
+CUSUM_H = 20.0              # [ASSUMPTION] degC-samples, alarm level
+
+# (c) Gradient-boosted trees (LightGBM); p threshold tuned on validation in Step 4
+GBT_USE_WIND = True         # one flag: with / without the anemometer features
+GBT_N_ESTIMATORS = 50       # size budget: n_estimators x depth kept small
+GBT_MAX_DEPTH = 4
+GBT_NUM_LEAVES = 15         # <= 2**MAX_DEPTH
+GBT_LEARNING_RATE = 0.1
+GBT_MIN_CHILD = 50          # min samples per leaf: no tiny, noise-fitting leaves
+GBT_POS_WINDOW_MIN = 10     # training target: first 10 min of each spike
+GBT_P_THRESHOLD = 0.5       # [ASSUMPTION] default, tuned in Step 4
+
+# Simple clear-sky model for the clear-sky index ON THE ESP32 (features only;
+# the synthetic data itself uses pvlib Ineichen). Meinel & Meinel DNI with
+# Kasten & Young air mass; diffuse taken as a fixed fraction of DNI.
+CS_DIFFUSE_FRAC = 0.1       # [ASSUMPTION] clear-sky diffuse / DNI
