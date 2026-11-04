@@ -8,4 +8,4 @@ BACK_SENSORS = ["T1", "T2", "T3", "T4", "T5"]
 
 EVENT_COLUMNS = ["start", "end", "class", "effect_C", "note"]
 EVENT_CLASSES = ["spike", "minor_lull", "irradiance_rise", "mixed",
-                 "natural_spike", "natural_minor"]
+                 "natural_spike", "natural_minor", "ambient_rise"]

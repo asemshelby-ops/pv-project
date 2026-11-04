@@ -24,7 +24,7 @@ from detect.features import FeatureExtractor, feature_names
 from detect.stream import samples
 
 SILENCE_N = int(config.SILENCE_MIN * 60 / config.DT_S)
-NEUTRAL = {"minor_lull", "mixed", "natural_spike", "natural_minor"}
+NEUTRAL = {"minor_lull", "mixed", "natural_spike", "natural_minor", "ambient_rise"}
 
 
 def build_features(days, use_wind):
@@ -59,7 +59,7 @@ def sample_targets(days, events):
     return y, use
 
 
-def train(X, y, use, seed):
+def train(X, y, use, seed, names=None):
     ok = use & ~np.isnan(X).any(axis=1)
     Xt, yt = X[ok], y[ok]
     n_pos = int(yt.sum())
@@ -72,7 +72,7 @@ def train(X, y, use, seed):
         scale_pos_weight=(len(yt) - n_pos) / max(n_pos, 1),
         random_state=seed, deterministic=True, force_row_wise=True,
         n_jobs=1, verbose=-1)
-    model.fit(Xt, yt)
+    model.fit(Xt, yt, feature_name=names or "auto")
     return model
 
 

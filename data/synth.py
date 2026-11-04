@@ -20,6 +20,10 @@ Events (events.csv):
                   baseline, averaged over NATURAL_WINDOW_MIN; scored separately
   natural_minor   same, between NATURAL_MINOR_C and SPIKE_EFFECT_C: neutral
   A natural episode overlapping any other event turns that event "mixed".
+Hard variant only (config.HARD_VARIANT or generate(..., hard=True)):
+  irradiance_rise also after slow haze dips; ambient_rise (neutral) after
+  warm-air steps of Ta; shallower lulls whose wind stays inside the background
+  range; larger sensor noise and slow per-sensor drift.
 
 The labels use only the generator's own ground truth (wind with and without
 the lull), never any detector's threshold, so they do not favour a detector.
@@ -149,7 +153,9 @@ def natural_episodes(effect, window):
 
 
 def add_natural(events, natural):
-    """Add natural episodes; one overlapping another event makes it "mixed"."""
+    """Add extra episodes (natural wind, or hard-variant haze / Ta steps).
+    One overlapping another event makes it "mixed"; two irradiance rises merge
+    into one irradiance_rise."""
     events = [dict(e) for e in events]
     for nat in natural:
         hit = [e for e in events if overlaps(nat["start"], nat["end"], e["start"], e["end"])]
@@ -158,7 +164,8 @@ def add_natural(events, natural):
             continue
         for e in hit:
             e["start"], e["end"] = min(e["start"], nat["start"]), max(e["end"], nat["end"])
-            e["cls"] = "mixed"
+            same_irr = e["cls"] == nat["cls"] == "irradiance_rise"
+            e["cls"] = "irradiance_rise" if same_irr else "mixed"
     return sorted(events, key=lambda ev: ev["start"])
 
 
@@ -168,7 +175,7 @@ def quantise(x, lsb):
 
 # --- one day -----------------------------------------------------------------
 
-def simulate_day(date, rng, sensor_offsets):
+def simulate_day(date, rng, sensor_offsets, hard=False):
     times = pd.date_range(f"{date} {config.DAY_START}", f"{date} {config.DAY_END}",
                           freq=f"{int(DT)}s", tz=config.TZ)
     n = len(times)
@@ -176,6 +183,9 @@ def simulate_day(date, rng, sensor_offsets):
     per_min = int(60 / DT)
     lo = int(np.searchsorted(times.strftime("%H:%M:%S"), config.EVENT_HOURS[0]))
     hi = int(np.searchsorted(times.strftime("%H:%M:%S"), config.EVENT_HOURS[1]))
+    # hard-variant extras use their own generator: the base draws stay unchanged
+    hrng = np.random.default_rng(int(rng.integers(2**62))) if hard else None
+    extra = []
 
     # 1. irradiance
     clearness = np.full(n, rng.uniform(*config.DAY_CLEARNESS))
@@ -188,28 +198,51 @@ def simulate_day(date, rng, sensor_offsets):
         clearness *= 1.0 - depth * ramp_window(n, s, e, config.CLOUD_RAMP_S / DT)
         clouds.append(dict(start=s, end=e,
                            rise_end=min(e + config.RISE_WINDOW_MIN * per_min, n - 1)))
+    if hard:   # slow haze dips: fade out, hold, fade back in
+        n_hz = hrng.poisson(config.HARD_HAZE_PER_DAY)
+        dur = hrng.integers(config.HARD_HAZE_DURATION_MIN[0] * per_min,
+                            config.HARD_HAZE_DURATION_MIN[1] * per_min + 1, n_hz)
+        for s, e in place_intervals(hrng, n_hz, dur, lo, hi, 0):
+            r = (e - s) // 4
+            clearness *= 1.0 - hrng.uniform(*config.HARD_HAZE_DEPTH) * ramp_window(n, s, e, r)
+            extra.append(dict(start=e - r, cls="irradiance_rise", effect=np.nan,
+                              end=min(e + config.RISE_WINDOW_MIN * per_min, n - 1)))
     g = clear_sky_poa(times) * clearness
 
     # 2. ambient air (sinusoid, peak at 15:00)
     phase = np.sin(2 * np.pi * (hour - 9.0) / 24.0)
     ta = rng.uniform(*config.TA_DAY_MEAN) + config.TA_AMP * phase
     rh = config.RH_MEAN - config.RH_AMP * phase
+    if hard:   # warm-air steps of the ambient temperature
+        n_ts = hrng.poisson(config.HARD_TA_STEPS_PER_DAY)
+        r = config.HARD_TA_STEP_RAMP_MIN * per_min
+        dur = 2 * r + hrng.integers(config.HARD_TA_STEP_HOLD_MIN[0] * per_min,
+                                    config.HARD_TA_STEP_HOLD_MIN[1] * per_min + 1, n_ts)
+        for s, e in place_intervals(hrng, n_ts, dur, lo, hi, 0):
+            ta = ta + hrng.uniform(*config.HARD_TA_STEP_C) * ramp_window(n, s, e, r)
+            extra.append(dict(start=s, cls="ambient_rise", effect=np.nan,
+                              end=min(s + r + config.RISE_WINDOW_MIN * per_min, n - 1)))
 
     # 3. wind: base, then lulls on top
     slow = config.WIND_MEAN + config.WIND_DIURNAL_AMP * np.sin(np.pi * (hour - 6.0) / 12.0)
     base = slow + ou_process(rng, n, config.WIND_OU_SIGMA, config.WIND_OU_TAU_S)
     v_no_lull = np.maximum(base, config.WIND_MIN)
-    n_lu = int(rng.integers(config.LULLS_PER_DAY[0], config.LULLS_PER_DAY[1] + 1))
+    lpd = config.HARD_LULLS_PER_DAY if hard else config.LULLS_PER_DAY
+    n_lu = int(rng.integers(lpd[0], lpd[1] + 1))
     lu_dur = rng.integers(config.LULL_DURATION_MIN[0] * per_min,
                           config.LULL_DURATION_MIN[1] * per_min + 1, n_lu)
     drop = np.zeros(n)
     lulls = []
     for s, e in place_intervals(rng, n_lu, lu_dur, lo, hi,
                                 config.EVENT_GAP_MIN * per_min):
-        drop += rng.uniform(*config.LULL_DROP) * ramp_window(
-            n, s, e, config.LULL_RAMP_S / DT)
+        drop += rng.uniform(*(config.HARD_LULL_DROP if hard else config.LULL_DROP)) \
+            * ramp_window(n, s, e, config.LULL_RAMP_S / DT)
         lulls.append(dict(start=s, end=e))
-    v = np.maximum(base - drop, config.WIND_MIN)
+    if hard:   # lull wind stays inside the background range
+        v = np.maximum(np.minimum(base, np.maximum(base - drop, config.HARD_LULL_WIND_FLOOR)),
+                       config.WIND_MIN)
+    else:
+        v = np.maximum(base - drop, config.WIND_MIN)
 
     # label: noise-free steady-state effect of the lull, averaged over it
     for lull in lulls:
@@ -222,6 +255,7 @@ def simulate_day(date, rng, sensor_offsets):
                       - thermal.steady_state(g, ta, np.maximum(slow, config.WIND_MIN)))
     events = add_natural(events, natural_episodes(
         natural_effect, config.NATURAL_WINDOW_MIN * per_min))
+    events = add_natural(events, sorted(extra, key=lambda x: x["start"]))
 
     # 4. true module (back-sheet) temperature
     t_mod = thermal.simulate(ta[0], g, ta, v)
@@ -229,12 +263,17 @@ def simulate_day(date, rng, sensor_offsets):
     # 5. sensor readings
     df = pd.DataFrame({"date": times.strftime("%Y-%m-%d"),
                        "time": times.strftime("%H:%M:%S")})
+    sd_t = config.HARD_DS18B20_NOISE_C if hard else config.DS18B20_NOISE_C
     for name, off in zip(BACK_SENSORS, sensor_offsets):
-        df[name] = quantise(t_mod + off + rng.normal(0, config.DS18B20_NOISE_C, n),
+        drift = (ou_process(hrng, n, config.HARD_SENSOR_DRIFT_C,
+                            config.HARD_SENSOR_DRIFT_TAU_MIN * 60) if hard else 0.0)
+        df[name] = quantise(t_mod + off + drift + rng.normal(0, sd_t, n),
                             config.DS18B20_LSB_C)
-    df["T_ambient"] = np.round(ta + rng.normal(0, config.TA_NOISE_C, n), 2)
+    df["T_ambient"] = np.round(ta + rng.normal(
+        0, config.HARD_TA_NOISE_C if hard else config.TA_NOISE_C, n), 2)
     df["humidity"] = np.round(np.clip(rh + rng.normal(0, config.RH_NOISE, n), 0, 100), 1)
-    df["irradiance"] = np.clip(np.round(g + rng.normal(0, config.G_NOISE_W, n)), 0, None)
+    df["irradiance"] = np.clip(np.round(g + rng.normal(
+        0, config.HARD_G_NOISE_W if hard else config.G_NOISE_W, n)), 0, None)
 
     t_cell = t_mod + config.CELL_MINUS_BACK_C * g / 1000.0
     dt25 = t_cell - 25.0
@@ -247,7 +286,8 @@ def simulate_day(date, rng, sensor_offsets):
     df["voltage"] = np.round(volt, 3)
     df["current"] = np.round(curr, 4)
     df["power"] = np.round(df["voltage"] * df["current"], 3)
-    df["wind"] = np.clip(np.round(v + rng.normal(0, config.WIND_NOISE, n), 1), 0, None)
+    df["wind"] = np.clip(np.round(v + rng.normal(
+        0, config.HARD_WIND_NOISE if hard else config.WIND_NOISE, n), 1), 0, None)
 
     ev = pd.DataFrame([{
         "start": times[e["start"]].strftime("%Y-%m-%d %H:%M:%S"),
@@ -259,14 +299,15 @@ def simulate_day(date, rng, sensor_offsets):
     return df[COLUMNS], ev
 
 
-def generate(seed, n_days=config.N_DAYS, start_date=config.START_DATE):
+def generate(seed, n_days=config.N_DAYS, start_date=config.START_DATE,
+             hard=config.HARD_VARIANT):
     """All days for one seed. Each day has its own child RNG, so adding days
     does not change the days already generated."""
     root = np.random.SeedSequence(seed)
     sensor_rng, *day_seeds = (np.random.default_rng(s) for s in root.spawn(n_days + 1))
     offsets = sensor_rng.normal(0.0, config.DS18B20_OFFSET_C, config.N_BACK_SENSORS)
     dates = pd.date_range(start_date, periods=n_days, freq="D").strftime("%Y-%m-%d")
-    days, events = zip(*(simulate_day(d, r, offsets) for d, r in zip(dates, day_seeds)))
+    days, events = zip(*(simulate_day(d, r, offsets, hard) for d, r in zip(dates, day_seeds)))
     return (pd.concat(days, ignore_index=True),
             pd.concat(events, ignore_index=True))
 
@@ -276,10 +317,11 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--days", type=int, default=config.N_DAYS)
     ap.add_argument("--out", default=None)
+    ap.add_argument("--hard", action="store_true", help="hard synthetic variant")
     a = ap.parse_args()
-    out = pathlib.Path(a.out or f"out/synth/seed{a.seed}")
+    out = pathlib.Path(a.out or f"out/synth/{'hard' if a.hard else 'base'}/seed{a.seed}")
     out.mkdir(parents=True, exist_ok=True)
-    days, events = generate(a.seed, a.days)
+    days, events = generate(a.seed, a.days, hard=a.hard)
     days.to_csv(out / "days.csv", index=False)
     events.to_csv(out / "events.csv", index=False)
     print(f"{len(days)} rows, {len(events)} events -> {out}")

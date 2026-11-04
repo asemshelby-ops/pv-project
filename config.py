@@ -125,3 +125,35 @@ GBT_P_THRESHOLD = 0.5       # [ASSUMPTION] default, tuned in Step 4
 # the synthetic data itself uses pvlib Ineichen). Meinel & Meinel DNI with
 # Kasten & Young air mass; diffuse taken as a fixed fraction of DNI.
 CS_DIFFUSE_FRAC = 0.1       # [ASSUMPTION] clear-sky diffuse / DNI
+
+# --- Evaluation (eval/) ----------------------------------------------------
+SPLIT_DAYS = (36, 12, 12)   # chronological train / validation / test, whole days
+MISMATCH_FRAC = 0.20        # [ASSUMPTION] CUSUM model-mismatch study: C, u0, u1
+                            # each off by +/-20 % (all 8 sign combinations)
+SEEDS = (0, 1, 2, 3, 4)     # multi-seed summary
+
+# --- "Hard" synthetic variant (all values [ASSUMPTION]) ---------------------
+# Off by default. Removes the easy giveaways of the base data.
+HARD_VARIANT = False
+HARD_LULL_DROP = (0.7, 1.6)       # m/s drop below the base wind ...
+HARD_LULL_WIND_FLOOR = 1.6        # ... but the lull wind never goes below 1.6 m/s, the
+                                  # bottom edge of the background: 1st percentile of
+                                  # the 2-min-mean background wind 08-16 h = 1.68 m/s
+                                  # (seed 0). In the base data lulls reach 0.2 m/s.
+HARD_LULLS_PER_DAY = (4, 6)       # more lulls, because few of them now reach 3 degC
+HARD_DS18B20_NOISE_C = 0.15       # degC, 3x the base sensor noise
+HARD_SENSOR_DRIFT_C = 0.3         # degC, slow per-sensor drift (OU) ...
+HARD_SENSOR_DRIFT_TAU_MIN = 60.0  # ... with a 60-min correlation time
+HARD_TA_NOISE_C = 0.3
+HARD_G_NOISE_W = 5.0
+HARD_WIND_NOISE = 0.4
+# Non-wind causes of small temperature rises:
+HARD_HAZE_PER_DAY = 1.0           # Poisson mean: slow haze dips of the irradiance
+HARD_HAZE_DEPTH = (0.05, 0.15)    # fraction removed
+HARD_HAZE_DURATION_MIN = (20, 60) # fades in over the first and out over the last
+                                  # quarter; the fade-out + 15 min = irradiance_rise
+HARD_TA_STEPS_PER_DAY = 0.7       # Poisson mean: warm-air steps of the ambient
+HARD_TA_STEP_C = (1.0, 3.0)       # degC
+HARD_TA_STEP_RAMP_MIN = 5
+HARD_TA_STEP_HOLD_MIN = (30, 90)  # the step's rise + 15 min = ambient_rise, neutral:
+                                  # a real module rise, but neither wind nor irradiance

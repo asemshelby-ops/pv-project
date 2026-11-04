@@ -152,3 +152,43 @@ def test_full_run_natural_effect_is_against_slow_baseline(three_days):
     _, events = three_days
     nat = events[events["class"].str.startswith("natural")]
     assert nat["effect_C"].ge(config.NATURAL_MINOR_C).all()
+
+
+# --- hard variant ------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def hard_days():
+    return synth.generate(seed=0, n_days=6, hard=True)
+
+
+def test_hard_lull_wind_stays_inside_background_range(hard_days, three_days):
+    # True lull wind is floored; the measured 2-min mean may dip a little below
+    # the floor only through sensor noise
+    for (days, events), floor in ((hard_days, config.HARD_LULL_WIND_FLOOR), (three_days, None)):
+        ts = pd.to_datetime(days["date"] + " " + days["time"])
+        w2 = days["wind"].rolling(12).mean()
+        lows = []
+        for _, e in events[events["class"].isin(["spike", "minor_lull"])].iterrows():
+            m = (ts >= pd.Timestamp(e["start"])) & (ts <= pd.Timestamp(e["end"]))
+            lows.append(w2[m].min())
+        if floor is None:
+            assert min(lows) < 1.2            # base data: lulls go far below background
+        else:
+            assert min(lows) > floor - 0.3
+
+
+def test_hard_variant_adds_neutral_and_irradiance_events(hard_days):
+    _, events = hard_days
+    assert set(events["class"]) <= set(EVENT_CLASSES)
+    assert "ambient_rise" in set(events["class"])
+
+
+def test_hard_variant_is_noisier(hard_days, three_days):
+    def jitter(days):
+        return days["T1"].diff().abs().median()
+    assert jitter(hard_days[0]) > 1.5 * jitter(three_days[0])
+
+
+def test_hard_flag_does_not_change_base_data(three_days):
+    d, e = synth.generate(seed=0, n_days=3, hard=False)
+    pd.testing.assert_frame_equal(three_days[0], d)

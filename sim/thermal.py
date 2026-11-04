@@ -32,20 +32,24 @@ def faiman_u(v, u0=config.FAIMAN_U0, u1=config.FAIMAN_U1):
     return u0 + u1 * v
 
 
-def time_constant(v, c=config.HEAT_CAPACITY_J_K, area=config.AREA_M2):
+def time_constant(v, c=config.HEAT_CAPACITY_J_K, area=config.AREA_M2,
+                  u0=config.FAIMAN_U0, u1=config.FAIMAN_U1):
     """Thermal time constant tau = C / (A U) in seconds."""
-    return c / (area * faiman_u(v))
+    return c / (area * faiman_u(v, u0, u1))
 
 
-def steady_state(g, ta, v, q_cool=0.0, area=config.AREA_M2):
+def steady_state(g, ta, v, q_cool=0.0, area=config.AREA_M2,
+                 u0=config.FAIMAN_U0, u1=config.FAIMAN_U1):
     """Temperature the module settles at for constant inputs, degC."""
-    return ta + (area * g - q_cool) / (area * faiman_u(v))
+    return ta + (area * g - q_cool) / (area * faiman_u(v, u0, u1))
 
 
-def step(t, g, ta, v, q_cool=0.0, dt=config.DT_S):
-    """Advance the module temperature by one sample of length dt (exact)."""
-    t_ss = steady_state(g, ta, v, q_cool)
-    return t_ss + (t - t_ss) * math.exp(-dt / time_constant(v))
+def step(t, g, ta, v, q_cool=0.0, dt=config.DT_S, c=config.HEAT_CAPACITY_J_K,
+         u0=config.FAIMAN_U0, u1=config.FAIMAN_U1):
+    """Advance the module temperature by one sample of length dt (exact).
+    c, u0, u1 can be overridden (used for the CUSUM model-mismatch study)."""
+    t_ss = steady_state(g, ta, v, q_cool, u0=u0, u1=u1)
+    return t_ss + (t - t_ss) * math.exp(-dt / time_constant(v, c, u0=u0, u1=u1))
 
 
 def simulate(t0, g, ta, v, q_cool=None, dt=config.DT_S):

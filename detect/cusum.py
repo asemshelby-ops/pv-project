@@ -22,6 +22,7 @@ k (allowance) and h (alarm level) are tuned on validation days in Step 4.
 
 Caveat for synthetic data: the generator uses the same thermal model, so the
 model structure is perfect here; on the real module the residual will be larger.
+Step 4 therefore also runs CUSUM with C, u0, u1 each off by +/-20 %.
 """
 import math
 
@@ -34,8 +35,12 @@ SILENCE_N = int(config.SILENCE_MIN * 60 / DT)
 
 
 class CusumDetector:
-    def __init__(self, use_wind=True, k=config.CUSUM_K, h=config.CUSUM_H):
+    def __init__(self, use_wind=True, k=config.CUSUM_K, h=config.CUSUM_H,
+                 model_params=None):
+        """model_params: optional dict of c, u0, u1 for the internal model
+        (default: the same values as the generator; see the mismatch study)."""
         self.use_wind, self.k, self.h = use_wind, k, h
+        self.model_params = model_params or {}
         self.a_wind = 1.0 - math.exp(-DT / (config.CUSUM_WIND_TAU_MIN * 60))
         self.a_res = 1.0 - math.exp(-DT / (config.CUSUM_RES_TAU_MIN * 60))
         self.reset()
@@ -65,7 +70,7 @@ class CusumDetector:
         if self.model is None:                       # first sample of the day
             self.model, self.prev = t, (s.g, s.ta, self.v_slow)
             return False
-        self.model = thermal.step(self.model, *self.prev)
+        self.model = thermal.step(self.model, *self.prev, **self.model_params)
         self.prev = (s.g, s.ta, self.v_slow)
 
         r = t - self.model
