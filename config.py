@@ -18,3 +18,77 @@ AREA_M2 = 0.648             # [DS] listing 1200 x 540 mm -> 0.648 m2
 HEAT_CAPACITY_J_K = 8700.0  # [EST] C ~ tau*U*A ~ 8.7 kJ/K (CLAUDE.md, Key physics)
 FAIMAN_U0 = 25.0            # [LIT] pvlib Faiman default, W/(m2 K)
 FAIMAN_U1 = 6.84            # [LIT] pvlib Faiman default, W s/(m3 K)
+
+# --- Site and calendar (data/synth.py) ------------------------------------
+LAT, LON = 21.42, 39.83     # Makkah (PROJECT_STATE sec.7)
+ALTITUDE_M = 277            # [ASSUMPTION] approximate site altitude
+TZ = "Asia/Riyadh"          # UTC+3, no daylight saving
+TILT_DEG = 21.0             # [CLAUDE.md] tilt ~21 deg
+AZIMUTH_DEG = 180.0         # [ASSUMPTION] due south; measure at installation
+DAY_START, DAY_END = "06:00:00", "18:00:00"   # logged window, local time
+START_DATE = "2026-11-15"   # [ASSUMPTION] first synthetic day (test season)
+N_DAYS = 60                 # [ASSUMPTION] -> 36 / 12 / 12 days train/val/test
+
+# --- Irradiance: clear sky x haze x cloud transients ----------------------
+# Clear sky: pvlib Ineichen + Linke climatology, isotropic transposition.
+DAY_CLEARNESS = (0.85, 1.00)   # [ASSUMPTION] daily haze factor, uniform range
+CLOUDS_PER_DAY = 1.5           # [ASSUMPTION] Poisson mean; set above Makkah's mostly
+                               # clear skies so the test set has enough hard negatives
+CLOUD_DEPTH = (0.3, 0.8)       # [ASSUMPTION] fraction of irradiance removed
+CLOUD_DURATION_MIN = (5, 20)   # [ASSUMPTION]
+CLOUD_RAMP_S = 60              # [ASSUMPTION] edge ramp of a cloud
+RISE_WINDOW_MIN = 15           # [ASSUMPTION] after a cloud ends, the next 15 min
+                               # are labelled "irradiance_rise" (~2.4 tau)
+EVENT_HOURS = ("08:00:00", "16:00:00")  # [ASSUMPTION] window for event starts
+
+# --- Wind: diurnal mean + slow random variation + injected lulls ----------
+WIND_MEAN = 2.0             # [ASSUMPTION] m/s, daily mean of the base wind
+WIND_DIURNAL_AMP = 0.5      # [ASSUMPTION] m/s, peak at 12:00
+WIND_OU_SIGMA = 0.3         # [ASSUMPTION] m/s, slow variation (Ornstein-Uhlenbeck)
+WIND_OU_TAU_S = 300.0       # [ASSUMPTION] s, its correlation time
+WIND_MIN = 0.2              # [ASSUMPTION] m/s, floor of the true wind
+LULLS_PER_DAY = (2, 4)      # [ASSUMPTION] integer range, inclusive
+LULL_DROP = (0.6, 1.8)      # [ASSUMPTION] m/s drop below the base wind
+LULL_DURATION_MIN = (15, 25)  # [ASSUMPTION]; CLAUDE.md spike scenario: 20 min
+LULL_RAMP_S = 60            # [ASSUMPTION] wind ramps down/up over 1 min
+EVENT_GAP_MIN = 30          # [ASSUMPTION] minimum gap between two lulls
+
+# --- Labels (independent of every detector's settings) --------------------
+SPIKE_EFFECT_C = 3.0        # [SUPERVISOR] 3-4 degC: a lull is a "spike" when its
+                            # noise-free steady-state effect >= 3 degC, else
+                            # "minor_lull" (neutral in scoring)
+# Natural episodes: the background wind (without injected lulls) is compared
+# with its slow diurnal baseline using the same steady-state rule. The lull
+# window is unknown, so the effect is averaged over sliding windows as long as
+# the shortest injected lull.
+NATURAL_WINDOW_MIN = 15     # = LULL_DURATION_MIN[0]
+NATURAL_MINOR_C = 2.0       # [ASSUMPTION] floor for a neutral "natural_minor":
+                            # without a floor, every below-average gust gap would
+                            # become a neutral window and hide false alarms
+
+# --- Ambient air -----------------------------------------------------------
+TA_DAY_MEAN = (24.0, 28.0)  # [ASSUMPTION] degC, rough Makkah winter, not climatology
+TA_AMP = 5.0                # [ASSUMPTION] degC, half the daily swing, peak 15:00
+RH_MEAN, RH_AMP = 45.0, 15.0  # [ASSUMPTION] %, minimum at 15:00
+
+# --- PV electrical model (synthetic only) ---------------------------------
+P_STC_W = 100.0             # [DS] listing Pmax
+VMP_STC_V = 18.0            # [DS] listing Vmp
+GAMMA_P = -0.004            # [EST] illustrative -0.4 %/degC, NOT this module's value
+BETA_VMP = -0.0035          # [ASSUMPTION] Vmp temperature coefficient, 1/degC
+VMP_LOG_G = 0.05            # [ASSUMPTION] Vmp change per ln(G/1000)
+CELL_MINUS_BACK_C = 3.0     # [LIT] cell - back-sheet ~3 degC at 1000 W/m2
+                            # (Sandia, King et al. 2004), scaled with G/1000
+
+# --- Sensors (noise values are assumptions, not datasheet specs) ----------
+N_BACK_SENSORS = 5
+DS18B20_LSB_C = 0.0625      # [DS] 12-bit resolution
+DS18B20_NOISE_C = 0.05      # [ASSUMPTION]
+DS18B20_OFFSET_C = 0.2      # [ASSUMPTION] std of fixed per-sensor offset (before
+                            # the water-bath cross-calibration)
+TA_NOISE_C = 0.1            # [ASSUMPTION]
+RH_NOISE = 1.0              # [ASSUMPTION] %
+G_NOISE_W = 2.0             # [ASSUMPTION] W/m2; reading rounded to 1 W/m2 [DS]
+WIND_NOISE = 0.2            # [ASSUMPTION] m/s; rounded to 0.1 m/s (spec target)
+V_NOISE = 0.01              # [ASSUMPTION] V
+I_NOISE = 0.003             # [ASSUMPTION] A
