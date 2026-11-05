@@ -1,0 +1,267 @@
+# Phase 0 bring-up checklist
+
+One device at a time: wire it, flash its test sketch, compare with "correct output",
+then move on. Pins: [PINMAP.md](PINMAP.md). Example output lines below show the FORMAT
+only — they are not measurements.
+
+## Build and flash
+
+```bash
+python firmware/build_all.py                 # compile everything (no flashing)
+arduino-cli upload -p COM3 firmware/tests/ds3231
+arduino-cli monitor -p COM3 -c baudrate=115200
+```
+
+The logger needs the NASIM include paths, so build it with `build_all.py logger`, then
+upload with `arduino-cli upload -p COM3 --input-dir out/firmware_build/logger firmware/logger`.
+
+Every sketch drives the pump (GPIO32) and load (GPIO33) outputs LOW first. Even so, fit
+the 10 kΩ gate pull-downs before connecting any MOSFET.
+
+### Pinned build environment (every `sketch.yaml`)
+
+| Item | Version | Used for |
+|---|---|---|
+| arduino-cli | 1.4.1 | build tool |
+| esp32:esp32 core | 3.3.8 | board support (FQBN esp32:esp32:esp32wrover) |
+| RTClib (Adafruit) | 2.1.4 | DS3231 |
+| Adafruit BME280 Library | 2.3.0 | BME280 |
+| Adafruit BMP280 Library | 3.0.0 | BMP280 fallback |
+| Adafruit Unified Sensor | 1.1.15 | dependency of the two above |
+| Adafruit BusIO | 1.17.4 | dependency of RTClib / Adafruit sensors |
+| INA226 (Rob Tillaart) | 0.6.6 | INA226 |
+| OneWire | 2.3.8 | 1-Wire bus |
+| DallasTemperature | 4.0.6 | DS18B20 |
+| PvDaq (this repo) | 0.1.0 | our drivers, `firmware/libraries/PvDaq` |
+
+SD, SPI, Wire and the ADC come with the ESP32 core. Modbus RTU and the PaHub are
+written by hand (no library).
+
+## Order
+
+Any I2C device that is not found: flash `tests/i2c_lines` first. It reports, without any
+I2C traffic, whether SDA/SCL have pull-ups, float, are held low, or are shorted together.
+
+1. I2C level check (before any I2C wiring) → 2. DS3231 → 3. BME280 → 4. PaHub + INA226 →
+5. DS18B20 → 6. microSD → 7. PYR20 Modbus → 8. PYR20 analog → 9. button → 10. logger.
+
+---
+
+## 1. I2C logic level (supervisor's "I2C converter")
+
+Power the PaHub from 5 V with nothing else connected. Measure SDA→GND and SCL→GND.
+
+| Reading | Action |
+|---|---|
+| ≈ 3.3 V | Connect PaHub SDA/SCL directly to GPIO21/22. |
+| ≈ 5 V | Use a bidirectional 3.3 V ↔ 5 V I2C level shifter between the ESP32 and the PaHub. GPIO pins are not 5 V tolerant. |
+
+Do the same for each M5 unit if it is ever wired without the PaHub.
+
+## 2. DS3231 RTC — `tests/ds3231`
+
+| Module pin | ESP32 |
+|---|---|
+| VCC | 3.3 V |
+| GND | GND |
+| SDA | GPIO21 |
+| SCL | GPIO22 |
+| SQW, 32K | not connected |
+
+Set the time: run the sketch, close the serial monitor, then
+`.venv/Scripts/python firmware/tools/set_rtc.py COM3` (Makkah local time = UTC+3 from the PC clock).
+
+Correct output: one line per second, the seconds counting up, die temperature near room
+temperature, and no "time not set" note after setting.
+`2026-11-05 14:30:01  die 27.25 C  [ok]`
+
+| Symptom | Likely cause |
+|---|---|
+| `not found (no ACK at 0x68)`, scan shows nothing or a stray address (e.g. 0x0A) | Flash `tests/i2c_lines`. "HELD LOW" on both lines = module VCC not powered (its pull-ups then pull the lines to 0 V) or lines on GND; "FLOATING" = wire not on GPIO21/22. Seen on our bench 2026-11-05: module VCC unpowered. |
+| `not found` but i2c_lines shows "external pull-up present" | SDA/SCL swapped |
+| `time not set` after every power-up | Backup cell flat or missing. This board charges its cell → use an LIR2032, not a CR2032 (CLAUDE.md) |
+| Time drifts by seconds per day | Not a DS3231 (fake chip) or bad crystal: compare with internet time after 24 h |
+
+The module's AT24C32 EEPROM also answers at 0x57. That is normal.
+
+## 3. BME280 — `tests/bme280`
+
+| Breakout pin | ESP32 |
+|---|---|
+| VIN / VCC | 3.3 V (check the breakout: some have a regulator and accept 5 V) |
+| GND | GND |
+| SDA | GPIO21 |
+| SCL | GPIO22 |
+| SDO (if present) | GND → 0x76, 3.3 V → 0x77 |
+| CSB (if present) | 3.3 V (selects I2C) |
+
+Correct output: `chip ID 0x60 -> BME280`, then T within about 1–2 °C of a reference
+thermometer, RH plausible, P a few percent below 1013 hPa (it depends on the site's
+altitude and the weather; compare with a nearby weather station).
+
+| Symptom | Meaning / cause |
+|---|---|
+| `chip ID 0x58 -> BMP280 (NO humidity sensor)` | The seller shipped a BMP280. The humidity column will stay empty; buy a real BME280 if humidity is needed. |
+| `unknown chip ID 0x61` | A BME680 |
+| `not found` | Wiring, or CSB floating on a 6-pin board |
+| T a few degrees high | Self-heating or heat from the board/enclosure: mount it in the radiation shield, away from the ESP32 |
+
+## 4. PaHub + 2× INA226-10A — `tests/ina226`
+
+| Connection | Detail |
+|---|---|
+| ESP32 → PaHub input port | HY2.0-4P: black GND, red 5 V, yellow SDA → GPIO21, white SCL → GPIO22 (through the level shifter if step 1 said so) |
+| PaHub channel 0 | INA226-10A **panel** unit |
+| PaHub channel 1 | INA226-10A **pump** unit |
+| Panel unit current path | In the + lead **between the module and the load capacitor** (CLAUDE.md) |
+
+First test with a bench supply and a resistor (for example 12 V across a power resistor),
+not with the panel.
+
+Correct output:
+- The scan shows `0x70` on the main bus, `0x41` on channel 0 and on channel 1, and nothing at
+  0x41 on the main bus.
+- `IDs 0x5449 / 0x2260`; current LSB ≈ 305 µA (10 A / 32768).
+- With no current flowing, I ≈ 0 A (a few mA of offset is normal). Bus V should match a
+  multimeter within about 1 %. The current sign is positive in the intended direction.
+
+| Symptom | Cause |
+|---|---|
+| Only one 0x41, or 0x41 on the main bus | A unit plugged into the wrong port, or two channels selected at once |
+| `IDs are not TI INA226` | Not an INA226 at that address |
+| Current negative | Current path wired backwards: swap the leads, or accept the sign and document it |
+| Bus V 0 while current flows | **TODO:** check which terminal the M5 unit senses VBUS on (not stated in the M5 docs) |
+| Readings stuck or noisy | Default conversion time and averaging (not yet chosen; **TODO** from the TI datasheet, PROJECT_STATE §4) |
+
+Range: ±10 A and 0–30 V bus (M5 docs). The 100 W module's Voc is 21.5 V and Isc 5.88 A,
+inside the range. **After** the load capacitor, the pulses reach about 14 A → the unit must
+stay on the module side.
+
+## 5. DS18B20 ×5 (+ water/tank) — `tests/ds18b20`
+
+| Cable wire (typical) | ESP32 |
+|---|---|
+| Red | 3.3 V |
+| Black | GND |
+| Yellow (sometimes white) | GPIO4 |
+| **4.7 kΩ** | between GPIO4 and 3.3 V. The resistor that was ordered is 4.7 Ω, the wrong part: buy 4.7 kΩ. |
+
+Correct output: every sensor listed with `CRC ok`. Genuine Maxim parts read
+`28-xx-xx-xx-xx-00-00-xx` ("pattern ok"). Temperatures update every 2 s in 0.0625 °C
+steps, and all sensors agree within about 0.5 °C in the same air.
+
+Cross-calibration: all sensors in one stirred water bath (2–3 temperatures if possible),
+log for 10 min each, compute per-sensor offsets. Then copy each mounted sensor's ROM
+into `T_ROM` in `logger/logger.ino` (T1..T5 = positions on the back sheet).
+
+| Symptom | Cause |
+|---|---|
+| `no sensor` | Pull-up missing (or the 4.7 Ω part fitted!), DQ on the wrong pin |
+| Some sensors missing on a long cable | Weak pull-up on long cables: try a lower value (for example 2.2 kΩ) after checking the total cable length |
+| `-127` → empty / "no valid reading" | Contact or cable fault |
+| Exactly 85.0 → treated as invalid | The power-on value of the register (Maxim datasheet): the conversion did not run. Often a supply problem in parasite mode; use 3-wire (powered) mode. |
+| "LIKELY CLONE" | Bytes 5–6 are not 00-00. The sensor still works; keep it in the calibration and note it. Clones can show larger offsets or self-heating. |
+
+## 6. microSD — `tests/sdcard`
+
+| Module pin | ESP32 |
+|---|---|
+| VCC | 5 V if the module has a regulator (AMS1117) and level shifter, which most "Micro SD card adapter" boards have; 3.3 V if it has none. **Check the board before powering it.** |
+| GND | GND |
+| CS | GPIO13 |
+| SCK | GPIO18 |
+| MOSI | GPIO23 |
+| MISO | GPIO19 |
+
+Card: FAT32, ≤ 32 GB (SDHC).
+
+Correct output: `card SDHC/SDXC, N MB`, `write/read test: PASS`, then `append ...: ok` every
+5 s. Pull the card: the next append shows a failure, and after reinserting it mounts again.
+
+| Symptom | Cause |
+|---|---|
+| `mount failed` | exFAT / NTFS format, card > 32 GB, wiring, or a module without a regulator fed from 5 V |
+| Works on USB power, fails in the field | Supply dips during writes: add 100 µF near the module |
+| MISO shared with another SPI device | Some adapters' level shifters do not release MISO. Keep the SD alone on this bus. |
+
+## 7. PYR20 Modbus — `tests/pyr20_modbus`
+
+| Connection | Detail |
+|---|---|
+| PYR20 red (V+) | 5–12 V (manual: 3.9–30 V DC) |
+| PYR20 black (G) | GND, common with the ESP32 |
+| PYR20 yellow (RS485 A / T+) | MAX3485 module A |
+| PYR20 white (RS485 B / T−) | MAX3485 module B |
+| MAX3485 VCC / GND | 3.3 V / GND (MAX3485 is a 3.3 V part; check the module) |
+| MAX3485 TXD (DI) | GPIO25 |
+| MAX3485 RXD (RO) | GPIO26 |
+
+Wire colours are from the INFWIN manual for the RS485-only version. **TODO:** our unit is
+the dual-output version (RS485 + 0–2 V); read the colours on its label or tag.
+
+Correct output:
+- `CRC self-test`: three `PASS` (frames from the manual). This runs without the sensor.
+- `settings: address 1, baud code 3 (3 = 9600) ...`
+- `FC 4: SR raw N -> N W/m2 [ok]` and the same value with FC 3. RX frame
+  `01 04 02 hh ll crc crc`. Indoors N is small; shade the sensor and N drops, put a lamp on it and N rises.
+
+| Symptom | Cause |
+|---|---|
+| `no reply` | A/B swapped (the most common), TXD/RXD swapped (module labels differ — swap GPIO25/26 wires), no sensor power, ground not common |
+| `CRC mismatch` | Noise or a baud mismatch: check the settings line, use shielded twisted pair, add 120 Ω termination only on long cables |
+| `Modbus exception code 2` | Register address not supported with that function code |
+| `[echo of the request removed]` | The module echoes the request. Harmless; the driver strips it. |
+
+Calibration: compare with a reference on a clear day (CLAUDE.md). The register is
+1 W/m² per count (manual).
+
+## 8. PYR20 analog — `tests/pyr20_analog`
+
+| Connection | Detail |
+|---|---|
+| PYR20 analog output (blue, O1, per manual) | GPIO34, through a 1 kΩ series resistor (protection) |
+| PYR20 ground | ESP32 GND (same point as the sensor's power ground) |
+
+Correct output: mV ≈ the Modbus W/m² value (SR = 1000 × V), within a few % in steady
+light. Below about 150 mV it reads "outside the 150–2450 mV ADC range": the ESP32 ADC
+is not accurate there (ESP-IDF docs). Use Modbus for low light.
+
+| Symptom | Cause |
+|---|---|
+| Random values with nothing connected | Normal: a floating input. The analog driver cannot detect the sensor. |
+| Analog ≠ Modbus by a constant offset | Ground offset between the sensor and the ESP32: return the analog ground to the ESP32 GND |
+
+## 9. test_marker button
+
+| Button | ESP32 |
+|---|---|
+| One leg | GPIO27 (internal pull-up) |
+| Other leg | GND |
+
+Check with the logger: each press prints `# marker: date,time,millis` and appends to
+`/markers.csv`. The CSV schema has no test_marker column yet: it is a proposed addition
+awaiting confirmation (CLAUDE.md), so presses go to their own file.
+
+## 10. Logger — `firmware/logger`
+
+Correct output on Serial:
+
+```
+# PV Phase 0 logger. NASIM-GBT (no wind, double) trained on SYNTHETIC data.
+date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm
+# status: DS3231=ok; BME280=ok; PaHub=ok; INA226 panel=ok; DS18B20=ok; PYR20 Modbus=ok; microSD=ok;
+2026-11-05,10:00:00,41.1250,...,812,18.0120,4.8810,87.9134,,,0
+```
+
+- One row every 10 s; the time column steps by 10 s with no drift (millis schedule).
+- Missing devices → empty fields, and the logger keeps running. Missing devices are retried every 60 s.
+- `p` is empty outside 06:00–18:00, during the first 10 min of data each day (warm-up),
+  and when T1–T5, ambient, irradiance or the time is missing.
+- `wind` stays empty until an anemometer is approved and wired.
+- SD files: `/YYYYMMDD.csv` per day, with a header line.
+
+| Symptom | Cause |
+|---|---|
+| Date/time empty | RTC missing or not set (step 2) |
+| `# warning: sample period overrun` | A device is blocking for too long: look at the status line |
+| T1..T5 in the wrong order | `T_ROM` not filled in yet (step 5) |
