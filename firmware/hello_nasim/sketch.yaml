@@ -1,0 +1,2 @@
+# Built and tested with arduino-cli 1.4.1 and the esp32:esp32 core 3.3.8.
+default_fqbn: esp32:esp32:esp32wrover
