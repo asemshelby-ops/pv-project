@@ -1,7 +1,7 @@
 # Pin map — Freenove ESP32-WROVER, Phase 0 data logger
 
 Proposed 2026-11-05. The code reads every pin from one header,
-`firmware/libraries/PvDaq/src/pins.h`; change a pin there and in this table together.
+`firmware/libraries/PvDaq/src/pv_config.h`; change a pin there and in this table together.
 
 Board: Freenove ESP32-WROVER (ESP32-D0WD-V3 rev 3.1, 4 MB flash, 4 MB PSRAM), camera removed,
 on the Freenove GPIO extension board. Facts about the GPIOs are from the ESP-IDF GPIO guide
