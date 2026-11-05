@@ -42,13 +42,14 @@ Spare pins (kept free on purpose):
 
 ```
 ESP32 (21/22) ── [level shifter if the M5 side idles near 5 V — measure first] ── PaHub V2.1 (0x70)
-   │                                                                              ├─ ch0: INA226-10A, panel (0x41)
-   │                                                                              └─ ch1: INA226-10A, pump  (0x41)
+   │                                                                              ├─ port "0" = chip ch1: INA226-10A, panel (0x41)
+   │                                                                              └─ port "1" = chip ch2: INA226-10A, pump  (0x41)  [assumed]
    ├─ DS3231 RTC (0x68) + its AT24C32 EEPROM (0x57)
    └─ BME280 (0x76 or 0x77, set by SDO on the breakout)
 ```
 
 - The two INA226-10A units both have the fixed address 0x41 (M5Stack docs), so each sits on its own PaHub channel; the firmware selects a channel before talking to that unit and deselects afterwards. PaHub channel selection follows the PCA9548A command byte (TI/NXP datasheet: bit *n* = 1 enables channel *n*).
+- **Port labels ≠ chip channels.** Bench check 2026-11-05: the PaHub port printed "0" is PCA9548A channel 1. The code uses chip channel numbers (`pv_config.h`), and the `tests/ina226` scan prints them. The pump unit's channel 2 for port "1" is an assumption (port *n* = channel *n*+1) until the scan confirms it.
 - RTC and BME280 are on the main (upstream) bus, always reachable; none of 0x57, 0x68, 0x76/0x77 collide with 0x41 or 0x70.
 - 100 kHz bus clock (long leads, several modules with their own pull-ups).
 - **Logic level (open):** M5Stack units and the PaHub run from 5 V on the HY2.0 port; the docs do not state the I2C pull-up voltage. Before connecting to GPIO21/22, power the PaHub alone and measure idle SDA and SCL to GND. Near 5 V → use a bidirectional 3.3 V ↔ 5 V I2C level shifter (likely the supervisor's "I2C converter"). Near 3.3 V → direct connection is acceptable.
