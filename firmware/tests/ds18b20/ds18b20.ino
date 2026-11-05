@@ -1,6 +1,6 @@
 // DS18B20 test: scans the 1-Wire bus, prints every ROM with its CRC check and the
 // authenticity screen from CLAUDE.md (28-xx-xx-xx-xx-00-00-xx), then prints all
-// temperatures every 2 s. Use it for the water-bath cross-calibration: put all
+// temperatures every second (one 12-bit conversion takes 750 ms). Use it for the water-bath cross-calibration: put all
 // sensors in one stirred bath and log this output.
 #include <PvDaq.h>
 
@@ -39,7 +39,7 @@ void loop() {
   }
   static uint32_t next = millis();
   if ((int32_t)(millis() - next) < 0) return;
-  next += 2000;
+  next += 1000;
   if (!probes.ok() && probes.count == 0) {
     Serial.println("no sensors (type 'scan')");
     return;

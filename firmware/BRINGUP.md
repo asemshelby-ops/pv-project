@@ -147,7 +147,7 @@ stay on the module side.
 | **4.7 kΩ** | between GPIO4 and 3.3 V. The resistor that was ordered is 4.7 Ω, the wrong part: buy 4.7 kΩ. |
 
 Correct output: every sensor listed with `CRC ok`. Genuine Maxim parts read
-`28-xx-xx-xx-xx-00-00-xx` ("pattern ok"). Temperatures update every 2 s in 0.0625 °C
+`28-xx-xx-xx-xx-00-00-xx` ("pattern ok"). Temperatures update every second in 0.0625 °C
 steps, and all sensors agree within about 0.5 °C in the same air.
 
 Cross-calibration: all sensors in one stirred water bath (2–3 temperatures if possible),
