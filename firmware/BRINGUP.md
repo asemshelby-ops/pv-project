@@ -111,19 +111,21 @@ altitude and the weather; compare with a nearby weather station).
 | Connection | Detail |
 |---|---|
 | ESP32 → PaHub input port | HY2.0-4P: black GND, red 5 V, yellow SDA → GPIO21, white SCL → GPIO22 (through the level shifter if step 1 said so) |
-| PaHub port printed "0" (= chip channel 1, verified) | INA226-10A **panel** unit |
-| PaHub port printed "1" (= chip channel 2, assumed) | INA226-10A **pump** unit |
+| PaHub port "0" (= chip channel 0) | INA226-10A **panel** unit |
+| PaHub port "1" (= chip channel 1) | INA226-10A **pump** unit |
 | Panel unit current path | In the + lead **between the module and the load capacitor** (CLAUDE.md) |
 
 First test with a bench supply and a resistor (for example 12 V across a power resistor),
 not with the panel.
 
 Correct output:
-- The scan lists the PCA9548A's 8 chip channels (0–7), not the port labels. Upstream devices
-  (0x70, and 0x68/0x57 when the RTC is connected) appear on every channel.
-- The scan shows `0x70` on the main bus, `0x41` on channel 1 (port "0") and on channel 2 (port "1",
-  to confirm), and nothing at
+- The scan lists the PCA9548A's 8 chip channels (0–7); port "n" is channel n (bench check
+  2026-11-05). Upstream devices (0x70, and 0x68/0x57 when the RTC is connected) appear on
+  every channel.
+- The scan shows `0x70` on the main bus, `0x41` on channel 0 and on channel 1, and nothing at
   0x41 on the main bus.
+- Plug and unplug Grove cables with USB disconnected: hot-plugging glitched the bus on our bench,
+  and a half-seated cable made one unit disappear from the scan.
 - `IDs 0x5449 / 0x2260`; `current LSB 500.0 uA`. The INA226 library rounds 10 A / 32768 = 305 µA
   up to a round value; nothing is lost, because the shunt ADC step is 2.5 µV ÷ 5 mΩ = 0.5 mA
   (TI datasheet: shunt-voltage LSB 2.5 µV). Bench check 2026-11-05: 500 µA, as expected.

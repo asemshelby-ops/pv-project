@@ -23,13 +23,12 @@ constexpr int MARKER_BUTTON = 27;  // to GND, internal pull-up
 // ---- I2C ------------------------------------------------------------------------
 constexpr uint32_t I2C_CLOCK_HZ = 100000;      // long leads, several pull-ups
 constexpr uint8_t PAHUB_ADDR = 0x70;           // M5Stack PaHub V2.1 default (M5 docs)
-// PCA9548A CHANNEL numbers (bit n of the command byte), not the port numbers printed on
-// the PaHub. The chip has 8 channels (TI/NXP datasheet); M5 brings out 6 ports.
-// Bench 2026-11-05: the port printed "0" is chip channel 1.
+// PCA9548A channel numbers (bit n of the command byte). Bench check 2026-11-05, one unit
+// moved between ports: the port printed "n" is chip channel n ("0" -> 0, "1" -> 1).
+// The chip has 8 channels (TI/NXP datasheet); M5 brings out ports 0-5. Scans cover all 8.
 constexpr uint8_t PAHUB_CHANNELS = 8;          // all chip channels, for scans and range checks
-constexpr uint8_t PAHUB_CH_PANEL = 1;          // panel unit in port "0" (verified)
-constexpr uint8_t PAHUB_CH_PUMP = 2;           // pump unit in port "1": ASSUMES port n = channel n+1;
-                                               // TODO verify with tests/ina226 when it is plugged in
+constexpr uint8_t PAHUB_CH_PANEL = 0;          // panel unit in port "0" (verified)
+constexpr uint8_t PAHUB_CH_PUMP = 1;           // pump unit in port "1" (verified)
 constexpr uint8_t INA226_ADDR = 0x41;          // M5Stack Unit INA226-10A, fixed (M5 docs)
 constexpr float INA226_10A_SHUNT_OHM = 0.005f; // 5 mOhm (M5 docs; also their ESPHome config)
 constexpr float INA226_10A_MAX_A = 10.0f;      // +/-10 A rating (M5 docs)
