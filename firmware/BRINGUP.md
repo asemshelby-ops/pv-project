@@ -180,14 +180,27 @@ into `T_ROM` in `logger/logger.ino` (T1..T5 = positions on the back sheet).
 | MOSI | GPIO23 |
 | MISO | GPIO19 |
 
-Card: FAT32, ≤ 32 GB (SDHC).
+Card: FAT32 (or FAT16 on small cards), ≤ 32 GB. Our bench card: 1 GB SDSC, shown as 960 MB.
+Recommended: a 10 kΩ pull-up from CS (GPIO13) to 3.3 V, so the card stays deselected while
+the ESP32 resets (see the first-mount note below).
 
-Correct output: `card SDHC/SDXC, N MB`, `write/read test: PASS`, then `append ...: ok` every
-5 s. Pull the card: the next append shows a failure, and after reinserting it mounts again.
+Correct output: `card SDSC` or `SDHC/SDXC, N MB (mounted on attempt 1 or 2)`,
+`write/read test: PASS`, then `append ...: ok` every 5 s. Pull the card: the next append shows a
+failure, and after reinserting it mounts again.
+
+No PC card reader? A card with no valid FAT volume can be formatted from the ESP32: run this
+test and type `FORMAT` in the serial monitor. It ERASES the card, and only acts when the mount
+fails with "no valid FAT volume" (a readable card is never touched). Used once on 2026-11-05.
+
+First mount after a reset (bench 2026-11-05): with the card staying powered, the first mount
+after an ESP32 reset failed in alternating resets, then in every reset; a second attempt
+always worked (14/14). The driver therefore retries once after 100 ms. Suspected cause, not
+proven: CS floats during the reset. A CS pull-up should make attempt 1 succeed.
 
 | Symptom | Cause |
 |---|---|
 | `mount failed` | exFAT / NTFS format, card > 32 GB, wiring, or a module without a regulator fed from 5 V |
+| Debug log `f_mount failed: (13) There is no valid FAT volume` | The card answers (wiring OK) but has no FAT file system: format it (FAT32/FAT), or use `FORMAT` above. Build with `--board-options DebugLevel=debug` to see this log. |
 | Works on USB power, fails in the field | Supply dips during writes: add 100 µF near the module |
 | MISO shared with another SPI device | Some adapters' level shifters do not release MISO. Keep the SD alone on this bus. |
 

@@ -1,11 +1,27 @@
 #include "pv_sdcard.h"
 
-bool PvSdCard::begin() {
+bool PvSdCard::begin() { return mount(false); }
+
+bool PvSdCard::formatIfNoFilesystem() { return mount(true); }
+
+bool PvSdCard::mount(bool format_if_empty) {
   SD.end();  // allows a retry after the card was removed or failed
   SPI.begin(pins::SD_SCK, pins::SD_MISO, pins::SD_MOSI, pins::SD_CS);
-  if (!SD.begin(pins::SD_CS, SPI, hz_)) {
+  mountAttempts = 1;
+  bool mounted = SD.begin(pins::SD_CS, SPI, hz_, "/sd", 5, format_if_empty);
+  if (!mounted) {
+    mountAttempts = 2;
+    // Bench 2026-11-05: after an ESP32 reset (card stays powered) every second first mount
+    // failed and the next attempt succeeded. One retry after a short pause fixes that.
+    SD.end();
+    delay(100);
+    mounted = SD.begin(pins::SD_CS, SPI, hz_, "/sd", 5, format_if_empty);
+  }
+  if (!mounted) {
     type_ = CARD_NONE;
-    return setStatus(PvStatus::NotFound, "mount failed (card, wiring, FAT32?)");
+    return setStatus(PvStatus::NotFound, format_if_empty
+                                             ? "format/mount failed"
+                                             : "mount failed (card, wiring, FAT32?)");
   }
   type_ = SD.cardType();
   if (type_ == CARD_NONE) return setStatus(PvStatus::NotFound, "no card");
