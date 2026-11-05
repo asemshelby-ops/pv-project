@@ -9,3 +9,4 @@ scikit-learn==1.9.1
 m2cgen==0.10.0
 matplotlib==3.11.2
 pytest==9.2.0
+pyserial==3.5           # PC <-> ESP32 replay (export/replay.py)

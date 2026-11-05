@@ -22,6 +22,7 @@ pluggy==1.7.0
 pvlib==0.16.1
 Pygments==2.21.0
 pyparsing==3.3.3
+pyserial==3.5
 pytest==9.2.0
 python-dateutil==4.0.0
 pytz==2026.6
