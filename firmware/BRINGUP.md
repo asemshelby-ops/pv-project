@@ -121,7 +121,9 @@ not with the panel.
 Correct output:
 - The scan shows `0x70` on the main bus, `0x41` on channel 0 and on channel 1, and nothing at
   0x41 on the main bus.
-- `IDs 0x5449 / 0x2260`; current LSB ≈ 305 µA (10 A / 32768).
+- `IDs 0x5449 / 0x2260`; `current LSB 500.0 uA`. The INA226 library rounds 10 A / 32768 = 305 µA
+  up to a round value; nothing is lost, because the shunt ADC step is 2.5 µV ÷ 5 mΩ = 0.5 mA
+  (TI datasheet: shunt-voltage LSB 2.5 µV). Bench check 2026-11-05: 500 µA, as expected.
 - With no current flowing, I ≈ 0 A (a few mA of offset is normal). Bus V should match a
   multimeter within about 1 %. The current sign is positive in the intended direction.
 
