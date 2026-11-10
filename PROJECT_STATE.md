@@ -359,7 +359,7 @@ Order: 1 after two weeks of data; 2 and 4 after the pump works; 3 any time in pa
 - The supervisor will buy a data logger and lend it to the team (reported 2026-11-10; model unknown). Planned use: reference instrument to validate the ESP32 DAQ (temperatures, V, I, PYR20 analog) and a parallel record for the paper; ESP32 stays for the PWM load, I-V sweeps and real-time NASIM.
 
 **Engineering review notes — 2026-11-10 (from a review Asim ran with Gemini and an engineer; assessed by Claude) `[REC]`:**
-- Load resistance: 1.5 Ω clips the sweep at D = 1 to V ≥ ≈ 8.8 V (5.88 A × 1.5 Ω), so Isc is not measured and shading steps can hide. Recommend ≈ 0.75 Ω (2 × 1.5 Ω parallel): V_min ≈ 4.4 V, MPP at D ≈ 0.23, start-of-sweep pulse ≈ 29 A → MOSFET pulse rating ≥ 40 A, low R_DS(on). Average resistor dissipation unchanged (≤ panel power). Isc estimated from the flat region. Pending team decision.
+- Load resistance: 1.5 Ω clips the sweep at D = 1 to V ≥ ≈ 8.8 V (5.88 A × 1.5 Ω), so Isc is not measured and shading steps can hide. Recommend ≈ 0.75 Ω (2 × 1.5 Ω parallel): V_min ≈ 4.4 V, MPP at D ≈ 0.23, start-of-sweep pulse ≈ 29 A → MOSFET pulse rating ≥ 40 A, low R_DS(on). Average resistor dissipation unchanged (≤ panel power). Isc estimated from the flat region. Set in firmware config on 2026-11-10 (R_LOAD = 0.75); team confirms before buying parts.
 - Sweep settling: τ ≈ C × (R_eff ∥ panel dynamic resistance); worst case near Isc ≈ 2000 µF × 1.5 Ω ≈ 3 ms → wait 5τ ≈ 15–20 ms per D step, then INA226 read (≈ 1.1 ms conversion, 4-sample average) → ≈ 30 ms/step, ≈ 1.5 s for 50 steps. Verify by logging V every 1 ms after one step.
 - Freewheel: fast Schottky across the resistor bank (cathode to +), ≥ 60 V, rated for the pulse current, plus TVS on the MOSFET; confirm in the BOM.
 - Placement: resistor bank on a separate shaded stand, downwind, ≈ ≥ 1.5 m from the module and the BME280 (engineering judgment; verify with air-temperature readings with the load on vs off).
@@ -368,7 +368,7 @@ Order: 1 after two weeks of data; 2 and 4 after the pump works; 3 any time in pa
 - Terms: digital twin = calibrated physics model running on the ESP32; physical twin = the second reference panel.
 - Future (post-paper) SCADA simulation: 120 modules, 6 strings × 20, one spray zone/valve per string, NASIM schedules zones; shows all six cases at once. Corrections: 120 × 100 W ≈ 12 kW (≈ 50 kW needs ≈ 400 W commercial modules, scaled from our curve, stated as an assumption); string length is set by inverter max voltage and cold-day Voc, not a fixed standard of 20.
 
-**Team proposal for the 2026-11-09 supervisor meeting — "diagnose before spraying" + reference panel `[PROPOSED]` (2026-11-06):** pending supervisor approval; nothing bought until then.
+**Team proposal for the 2026-11-09 supervisor meeting — "diagnose before spraying" + reference panel `[DEFERRED — after the paper, per the 2026-11-10 outcome]` (2026-11-06):** kept for the expansion phase; nothing bought now.
 - NASIM becomes a multi-cause classifier from I-V sweeps + temperatures + irradiance: thermal spike → cooling burst (only if net gain > pump + water cost); soiling (Isc/G drops, curve shape normal) → one cleaning spray; partial shading (bypass-diode step) → no spray, alert; series-resistance fault (FF drop) → no spray, maintenance alert; cloud → nothing. Fits the title's "Sudden Degradation Detection"; events are produced on demand (windbreak, uniform shade mesh, cardboard on a cell, small series power resistor) → solves rare-spike risk.
 - Second identical 100 W module (126.1 SAR) as an untouched reference → cooling gain measured as ΔP between panels; 3–5 day matching run; both panels wiped every morning (front spray cleans); swap roles mid-campaign. Needs a 2nd PWM load + 3rd INA226 (PaHub ch 2).
 - Final comparison: no action / thermostat / NASIM on alternating days vs the reference — net Wh, pump Wh, litres, L/kWh, wrong-spray count, per-class F1 and delay.
@@ -388,21 +388,19 @@ Record each evaluated idea as `Decision: … (date, decided by …)`.
 
 ## 9. Consolidated open items
 
-**Pending — supervisor (Gate A, in this order)**
-1. Confirm the working interpretation (§1.2) — one message; in the same message ask whether temperature rises caused by returning irradiance (after cloud or dust) count as thermal spikes. Until he answers they are labelled as a separate class `[REC]`
-2. Inform him of the team's load decision, option C (§4, decided 2026-10-01), and ask whether he has any objection
-3. A lab reference instrument (programmable DC load or I-V tracer) for a validation day (§4)
-4. Anemometer approval (§2) — priority raised under the new direction
-5. After item 1: the title wording suggestion (§1)
-6. Confirm the rating of the module to buy (team recommendation: 100 W, 12 V class, §2)
-7. Confirm the pump type he prefers (recorded as "بي دي بي" in the transcript)
-8. Which data logger he is buying, and whether it can serve as the reference instrument (item 3)
-- Gate B resolved 2026-10-11: physical spray cooling
+**Resolved by the supervisor on 2026-11-10:** returning-irradiance rises count as spikes; anemometer deferred; pump and cooling deferred until after the paper; he lends a data logger (model to confirm). Items on interpretation, anemometer approval and pump type are closed for this phase.
 
-**Pending — team**
-- Buy the module once the rating is confirmed; record its datasheet and label specs in §2
-- Flow calculation for the supervisor (first estimate in §2) → nozzle choice → pump choice; costed list of nozzles, pump, driver, tank, gutter, tubing and flow sensor
-- Literature: first-pass targeted search done 2026-09-30 (§1.6); read the full texts of the closest works before writing the literature chapter
+**Pending — supervisor**
+1. Paper: exact topic, target venue and deadline
+2. Data logger model and specs (channels, input types, logging rate) — it is the reference instrument for the validation day
+3. After the paper is agreed: the title wording suggestion (§1)
+
+**Pending — team (paper phase)**
+- Confirm the 0.75 Ω load (already set in firmware config, R_LOAD = 0.75) and buy the load parts sized for ~29 A pulses
+- Stand: send drawings PS-01..03 to the workshop after measuring the module frame holes and the PYR20 base
+- Finish the DAQ: solder BME280, PYR20 in sun + Modbus, DS18B20 water-bath calibration
+- Run the BRINGUP "Before logging" checklist (set_rtc.py to UTC, marker test), then install outdoors and log
+- Literature: read the full texts of the closest works for the paper (§1.6)
 
 **EWA — optional, not on the critical path `[DECIDED]`**
 - Gave approval in principle, then stopped responding (as of 2026-09-29). The team proceeds independently and keeps the channel open for specific steps (e.g. PYR20 calibration comparison, O&M session on soiling, facility visit).
