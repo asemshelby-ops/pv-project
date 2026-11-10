@@ -3,6 +3,11 @@
 #pragma once
 #include <stdint.h>
 
+// ---- Build switches (decisions 2026-11-10) --------------------------------------------
+#define ENABLE_PUMP 0      // cooling and pump deferred: pump code compiled out
+                           // (pvOutputsOff still holds PUMP_PWM LOW: safety, not pump code)
+#define HAS_ANEMOMETER 0   // no anemometer in this phase: wind logged as NaN
+
 // ---- GPIO (firmware/PINMAP.md) ----------------------------------------------
 namespace pins {
 constexpr int I2C_SDA = 21;
@@ -28,7 +33,9 @@ constexpr uint8_t PAHUB_ADDR = 0x70;           // M5Stack PaHub V2.1 default (M5
 // The chip has 8 channels (TI/NXP datasheet); M5 brings out ports 0-5. Scans cover all 8.
 constexpr uint8_t PAHUB_CHANNELS = 8;          // all chip channels, for scans and range checks
 constexpr uint8_t PAHUB_CH_PANEL = 0;          // panel unit in port "0" (verified)
+#if ENABLE_PUMP
 constexpr uint8_t PAHUB_CH_PUMP = 1;           // pump unit in port "1" (verified)
+#endif
 constexpr uint8_t INA226_ADDR = 0x41;          // M5Stack Unit INA226-10A, fixed (M5 docs)
 constexpr float INA226_10A_SHUNT_OHM = 0.005f; // 5 mOhm (M5 docs; also their ESPHome config)
 constexpr float INA226_10A_MAX_A = 10.0f;      // +/-10 A rating (M5 docs)
@@ -48,10 +55,6 @@ constexpr uint8_t PWM_RES_BITS = 10;
 
 // ---- Measurement load (option C) -----------------------------------------------------
 constexpr float R_LOAD = 0.75f;                // ohm, resistor bank (decision 2026-11-10)
-
-// ---- Build switches (decisions 2026-11-10) --------------------------------------------
-#define ENABLE_PUMP 0      // cooling and pump deferred: pump code compiled out
-#define HAS_ANEMOMETER 0   // no anemometer in this phase: wind logged as NaN
 
 // ---- Logging -------------------------------------------------------------------------
 constexpr uint32_t SAMPLE_PERIOD_MS = 10000;   // one CSV row every 10 s (CLAUDE.md)

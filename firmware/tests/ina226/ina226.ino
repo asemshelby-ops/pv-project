@@ -1,13 +1,15 @@
 // PaHub + 2x M5Stack INA226-10A test.
 // 1. Scans the main I2C bus (all PaHub channels off), then each PaHub channel.
-// 2. Starts the panel unit (channel PAHUB_CH_PANEL) and the pump unit (PAHUB_CH_PUMP),
-//    checks the TI IDs, calibrates for the 5 mOhm shunt / 10 A, and prints
+// 2. Starts the panel unit (channel PAHUB_CH_PANEL) and, when ENABLE_PUMP is 1, the pump
+//    unit (PAHUB_CH_PUMP), checks the TI IDs, calibrates for the 5 mOhm shunt / 10 A, and prints
 //    bus voltage, shunt voltage, current and power every second.
 #include <PvDaq.h>
 
 PvPaHub hub;
 PvIna226 panel("INA226 panel", &hub, PAHUB_CH_PANEL);
+#if ENABLE_PUMP
 PvIna226 pump("INA226 pump", &hub, PAHUB_CH_PUMP);
+#endif
 
 void report(PvIna226 &u) {
   Serial.printf("%s: begin %s %s", u.name(), u.statusText(), u.detail());
@@ -36,9 +38,11 @@ void setup() {
     Serial.printf("PaHub: %s (%s)\n", hub.statusText(), hub.detail());
   }
   panel.begin();
-  pump.begin();
   report(panel);
+#if ENABLE_PUMP
+  pump.begin();
   report(pump);
+#endif
 }
 
 void printUnit(PvIna226 &u) {
@@ -55,5 +59,7 @@ void loop() {
   delay(1000);
   if (!hub.ok()) hub.begin();
   printUnit(panel);
+#if ENABLE_PUMP
   printUnit(pump);
+#endif
 }
