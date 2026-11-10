@@ -5,8 +5,9 @@
 //
 //   date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm
 //
-// Missing value = empty field. Lines starting with '#' on Serial are status messages,
-// not data. Files: /YYYYMMDD.csv per day (RTC date), /markers.csv for button presses.
+// Timestamps are UTC (the DS3231 holds UTC). Missing value = empty field. Lines starting
+// with '#' on Serial are status messages, not data. Files: /YYYYMMDD.csv per day (UTC
+// date), /markers.csv for button presses.
 // Build: python firmware/build_all.py logger   (adds the include paths to export/c).
 //
 // SAFETY: pump and load MOSFET outputs are held LOW. The alarm is only logged;
@@ -23,6 +24,7 @@ static const real NASIM_P_THRESHOLD = 0.995;  // out/results/hard/seed5/tuned.js
 static const int NASIM_PERSIST = 2;           // config.GBT_PERSIST
 static const int NASIM_START_MIN = 6 * 60;    // detector window = synthetic day window,
 static const int NASIM_END_MIN = 18 * 60;     // config.DAY_START / DAY_END (local time)
+static const int32_t UTC_OFFSET_S = 3 * 3600; // Makkah = UTC+3: NASIM's time inputs are local
 static const uint8_t RETRY_EVERY = 6;         // retry missing devices every 6 samples (60 s)
 
 // Back-sheet sensors T1..T5 by ROM. TODO: fill in after the water-bath cross-calibration
@@ -105,7 +107,8 @@ void sample(uint32_t n) {
   if (pyr.ok() || pyr.status() == PvStatus::ReadError) pyr.read();
 
   const bool have_time = rtc.ok() && rtc.timeValid;
-  const DateTime t = rtc.time();
+  const DateTime t = rtc.time();                    // UTC: every logged timestamp
+  const DateTime lt = t + TimeSpan(UTC_OFFSET_S);   // local time: NASIM inputs only
   double T[5];
   for (int k = 0; k < 5; k++) T[k] = backTemp(k);
   double ta = env.ok() ? env.temperatureC : NAN;
@@ -118,12 +121,12 @@ void sample(uint32_t n) {
   // NASIM: same input as the replay test; needs time, T1..T5, ambient and irradiance.
   double p = NAN;
   int alarm = 0;
-  int minute = have_time ? t.hour() * 60 + t.minute() : -1;
+  int minute = have_time ? lt.hour() * 60 + lt.minute() : -1;
   bool complete = have_time && !isnan(ta) && !isnan(g);
   for (int k = 0; k < 5; k++) complete = complete && !isnan(T[k]);
   bool in_window = minute >= NASIM_START_MIN && minute < NASIM_END_MIN;
   if (complete && in_window) {
-    int doy = dayOfYear(t);
+    int doy = dayOfYear(lt);
     if (doy != det_doy) {  // a new day starts with empty buffers, as in training
       gbt_reset(&det);
       det_doy = doy;
@@ -134,7 +137,7 @@ void sample(uint32_t n) {
     s.g = g;
     s.wind = NAN;
     s.doy = doy;
-    s.minute = minute + t.second() / 60.0;
+    s.minute = minute + lt.second() / 60.0;
     alarm = gbt_update(&det, &s);
     p = det.p;  // NAN while the 10-min buffers fill
   } else if (det_doy != -1) {
@@ -207,6 +210,7 @@ void setup() {
   gbt_init(&det, nasim_score_nowind, /*use_wind=*/0, /*hybrid=*/1, NASIM_P_THRESHOLD,
            NASIM_PERSIST);
   Serial.println("# PV Phase 0 logger. NASIM-GBT (no wind, double) trained on SYNTHETIC data.");
+  Serial.println("# timestamps are UTC (DS3231)");
   Serial.println(HEADER);
 }
 

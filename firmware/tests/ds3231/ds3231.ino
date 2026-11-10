@@ -1,5 +1,5 @@
 // DS3231 test: prints the RTC time and die temperature every second.
-// Set the clock from the PC (Makkah local time, UTC+3):
+// Set the clock from the PC (UTC):
 //     .venv/Scripts/python firmware/tools/set_rtc.py COM3
 // or type in the serial monitor:  SET 2026-11-05 14:30:00
 #include <PvDaq.h>

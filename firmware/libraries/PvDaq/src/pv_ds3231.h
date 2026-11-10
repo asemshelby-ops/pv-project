@@ -1,6 +1,7 @@
 // DS3231 real-time clock (+ AT24C32 EEPROM on the same module, 0x57). Uses RTClib.
-// The RTC holds Makkah LOCAL time (UTC+3, no daylight saving): the CSV and NASIM's
-// solar geometry both expect local time (export/c/nasim.c: tz_hours = 3).
+// The RTC holds UTC (firmware/tools/set_rtc.py); all logged timestamps are UTC. The logger
+// adds UTC+3 (Makkah, no daylight saving) only for NASIM's inputs, whose solar geometry
+// expects local time (export/c/nasim.c: tz_hours = 3).
 #pragma once
 #include <RTClib.h>
 #include "pv_config.h"
