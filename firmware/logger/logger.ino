@@ -114,7 +114,6 @@ void sample(uint32_t n) {
   double v = panel.ok() ? panel.busV : NAN;
   double i = panel.ok() ? panel.currentA : NAN;
   double p_el = panel.ok() ? panel.powerW : NAN;
-  double wind = NAN;  // no anemometer yet (pending approval)
 
   // NASIM: same input as the replay test; needs time, T1..T5, ambient and irradiance.
   double p = NAN;
@@ -161,7 +160,11 @@ void sample(uint32_t n) {
   addField(row, v, 4);
   addField(row, i, 4);
   addField(row, p_el, 4);
-  addField(row, wind, 2);
+#if HAS_ANEMOMETER
+#error "HAS_ANEMOMETER 1: no anemometer driver exists yet"
+#else
+  row += ",NaN";  // no anemometer in this phase: "NaN" = not measured (empty = read failed)
+#endif
   addField(row, p, 6);
   row += ',';
   row += alarm;

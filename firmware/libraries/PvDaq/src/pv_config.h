@@ -46,5 +46,12 @@ constexpr uint8_t PYR20_FC = 0x04;             // manual: FC 3 or 4; its read ex
 constexpr uint32_t PWM_FREQ_HZ = 20000;        // load: ~20 kHz (CLAUDE.md); pump: above hearing
 constexpr uint8_t PWM_RES_BITS = 10;
 
+// ---- Measurement load (option C) -----------------------------------------------------
+constexpr float R_LOAD = 0.75f;                // ohm, resistor bank (decision 2026-11-10)
+
+// ---- Build switches (decisions 2026-11-10) --------------------------------------------
+#define ENABLE_PUMP 0      // cooling and pump deferred: pump code compiled out
+#define HAS_ANEMOMETER 0   // no anemometer in this phase: wind logged as NaN
+
 // ---- Logging -------------------------------------------------------------------------
 constexpr uint32_t SAMPLE_PERIOD_MS = 10000;   // one CSV row every 10 s (CLAUDE.md)
