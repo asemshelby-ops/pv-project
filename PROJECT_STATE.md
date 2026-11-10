@@ -154,7 +154,7 @@ Sub-questions:
 | Host computer | Raspberry Pi | In BOM — role to be re-evaluated under TinyML (§6) |
 | Battery | QSSUN AGM 12 V 18 Ah | In BOM — **not a measurement load** (§4); not needed for the thesis |
 | Charge controller | Anern 30A MPPT (139 SAR); EPEVER XTRA1206N rejected on price | In BOM — **not a measurement load** (§4) |
-| PV measurement load | PWM-switched resistor bank + capacitor + MOSFET/gate driver | `[DECIDED]` 2026-10-01, team (§4); supervisor to be informed at Gate A |
+| PV measurement load | PWM-switched resistor bank + capacitor + MOSFET/gate driver | `[DECIDED]` 2026-10-01, team (§4); supervisor approved in principle on 2026-11-10 |
 
 **Proposed additions `[PENDING — supervisor]`** (literature doc §5):
 - **Anemometer — priority raised.** Clouds are rare in Makkah, so wind lulls are the most likely driver of thermal spikes; wind speed is needed both to explain spikes and as a detector feature `[REC]`. Key specs `[REC]`: starting threshold well below 1 m/s and 0.1 m/s resolution, because module temperature is most wind-sensitive below about 3 m/s (Faiman model, §5.1); mount beside the module at module height so it sees the same wind.
@@ -216,7 +216,7 @@ Aligned to the supervisor's 2026-09-30 direction `[REC]`. Sequencing rule unchan
 
 ## 4. PV measurement load — option C `[DECIDED]`
 
-**Status:** recommended 2026-09-29; `Decision: adopt option C, PWM-switched resistors with ESP32 control, as the PV measurement load (2026-10-01, decided by Asim for the team).` The supervisor is informed at Gate A; any objection from him reopens this section. Part numbers remain `[OPEN]` (list below). Under the new direction it matters even more: the temperature-induced loss is estimated from power, and a load that holds the module off its MPP distorts exactly that estimate.
+**Status:** recommended 2026-09-29; `Decision: adopt option C, PWM-switched resistors with ESP32 control, as the PV measurement load (2026-10-01, decided by Asim for the team).` The supervisor approved it in principle on 2026-11-10 (details not discussed). Part numbers remain `[OPEN]` (list below). Under the new direction it matters even more: the temperature-induced loss is estimated from power, and a load that holds the module off its MPP distorts exactly that estimate.
 
 **Why the load choice matters `[REC — physics-based]`:** module power depends on the operating point on the I-V curve. A fixed resistor matches the MPP only near one condition; on the illustrative model it captures about 63 % of available power at 500 W/m² and 45 °C cell temperature. At low irradiance the operating point sits in the current-source region, where power barely depends on temperature, so the thermal effect appears near zero; on hot middays it is exaggerated. A battery with a PWM controller pins the module near 13.5 V, and its captured fraction *improves* as the module heats, which inverts the effect being measured. **The earlier recommendation of a fixed resistive load at Vmp is superseded.**
 
