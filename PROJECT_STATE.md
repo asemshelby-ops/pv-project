@@ -1,6 +1,6 @@
 # Graduation Project — Master State File
 
-**Last updated:** 2026-11-04
+**Last updated:** 2026-11-10
 **Governs:** all *status* questions (what is decided / pending / open). When this file conflicts with any other project file, chat, memory note, the team explainer page or the supervisor deck on status, **this file wins**.
 **Does not replace:** `literature-research-and-design-decisions.md` (its literature findings remain valid; §10 lists which of its status items and framings are overridden). The **Excel BOM** remains authoritative for part numbers, quantities, and prices.
 
@@ -328,6 +328,52 @@ The supervisor has now given his direction (§1.1), so the earlier "direction sh
 5. **Air-conditioner condensate as a free water source** — Shah et al., Sustainability 15:15431 (2023) `[LIT]`; it also cleans the glass, so it must be a separate test.
 
 **Not recommended within the timeline `[REC]`:** reinforcement learning on the ESP32; solar tracking; a battery management system; a passive (e.g. hydrogel) cooling arm; any plant-scale claim from one module.
+
+**Closed-loop water temperature — Decision 2026-11-06 (Asim) `[REC]`:** cooling depends on T_module − T_water. A spare DS18B20 in the tank logs T_water; the decision rule uses measured T_water instead of ambient, so it refuses to pump warm water. `[EST]` a burst for a 3 °C spike removes ~26 kJ; a 20 L tank needs ~84 kJ/°C → ~0.3 °C per burst; the bigger risk is solar gain on tank, gutter and pipes → tank shaded under the module, white or insulated, covered, 20–30 L. Daily water-level or tank weight logs give the water loss (evaporation + drift) for the water-efficiency metric.
+
+**Two make-or-break risks and early de-risking — 2026-11-06 `[REC]`:**
+1. Natural ≥ 3 °C spikes may be rare in Makkah (the hard synthetic data already showed this). Does not kill the project: controlled spikes give training events and spike frequency is itself a result. De-risk: install outdoors and log temperature + irradiance from day one, before the spray loop; after one week we know the natural spike rate.
+2. (Most serious) The pump may cost more than it recovers: the no-evaporation simulation says > ~10 W cannot pay back; spray pumps are often 17–33 W. Does not kill the project: evaporation in Makkah may multiply cooling (unknown until measured), low PWM duty cuts draw, and a refusing decision rule is a correct result → operating envelope. De-risk: on the pump's arrival day, bucket test (real draw) + 30 s spray on the module in sun (measured temperature drop).
+Smaller risks: 1.3 W measurement signal (load + irradiance correction), short logging window (controlled spikes), no anemometer (NASIM works, weaker).
+
+**Scalability and limitations framing — Decision 2026-11-06 (Asim):** the rig is a single-module proof of concept, not a plant system. Say so before the examiners ask; it is a limitation, not a flaw, unless the team over-claims.
+- Does NOT transfer as-is: spraying every module (plants have hundreds of thousands of modules; water is scarce and costly in KSA; a spike costs only ~1–2 % of power `[EST]`, so water, pumps and maintenance may exceed the gain); per-module temperature sensors.
+- DOES transfer (the project's real value): the NASIM detector runs on data plants already have (met station + string/inverter power) and separates thermal (temporary) loss from soiling (clean) and faults (repair) — useful for O&M; the net-energy decision rule ("cool only when it pays") can time any existing cooling or cleaning system; the operating envelope answers when water cooling is worth it.
+- Full system fits: commercial rooftops, hotels, farms with irrigation networks and PV.
+- Defence wording: "The rig is a single-module proof of concept. What transfers to plants is the detection algorithm and the decision rule, because they run on data the plant already has. The spray itself suits small and medium systems where water is available." The report must have explicit Limitations and Scalability sections; never claim "improves the efficiency of the Kingdom's PV plants".
+
+**Upgrade candidates — proposed 2026-11-05 `[REC]`, to be discussed in detail later (not started; core first):**
+1. Digital twin: identify C, u0, u1 for our module from the first two weeks of data; run the model on the ESP32 beside the real module (fixes CUSUM's model-error weakness).
+2. Optimal burst control (MPC-lite): with the twin, choose pump duty and duration for maximum net energy and minimum water — the supervisor's "optimization-like".
+3. Live dashboard over ESP32 WiFi (SCADA-style); can run in parallel, e.g. a teammate.
+4. Water efficiency: cheap flow sensor; litres per watt recovered.
+5. Conference paper if real results are good.
+Order: 1 after two weeks of data; 2 and 4 after the pump works; 3 any time in parallel; 5 last.
+
+**Supervisor meeting outcome — 2026-11-10 (reported by Asim) `[STATED]`:** this supersedes the order of work above.
+- Priority now: publish one research paper with a narrow, specific, simpler scope; expansion (cooling, pump, diagnose-before-spray, reference panel, extra parts) comes after the paper — the supervisor is open to any expansion then.
+- Cooling and pump are set aside for now. No anemometer in this phase. Stick to the agreed specs, no over-engineering.
+- Start measurements now: finish the DAQ, install outdoors, log, analyse.
+- Definition change: the supervisor counts the temperature rise when the sun returns after a cloud as a thermal spike. Detector labels and features must no longer require stable irradiance; label spikes by rapid temperature rise, and record the driver (irradiance step vs. wind/other) as a separate field.
+- Open: exact paper topic, target venue and deadline — to confirm with the supervisor.
+- The supervisor will buy a data logger and lend it to the team (reported 2026-11-10; model unknown). Planned use: reference instrument to validate the ESP32 DAQ (temperatures, V, I, PYR20 analog) and a parallel record for the paper; ESP32 stays for the PWM load, I-V sweeps and real-time NASIM.
+
+**Engineering review notes — 2026-11-10 (from a review Asim ran with Gemini and an engineer; assessed by Claude) `[REC]`:**
+- Load resistance: 1.5 Ω clips the sweep at D = 1 to V ≥ ≈ 8.8 V (5.88 A × 1.5 Ω), so Isc is not measured and shading steps can hide. Recommend ≈ 0.75 Ω (2 × 1.5 Ω parallel): V_min ≈ 4.4 V, MPP at D ≈ 0.23, start-of-sweep pulse ≈ 29 A → MOSFET pulse rating ≥ 40 A, low R_DS(on). Average resistor dissipation unchanged (≤ panel power). Isc estimated from the flat region. Pending team decision.
+- Sweep settling: τ ≈ C × (R_eff ∥ panel dynamic resistance); worst case near Isc ≈ 2000 µF × 1.5 Ω ≈ 3 ms → wait 5τ ≈ 15–20 ms per D step, then INA226 read (≈ 1.1 ms conversion, 4-sample average) → ≈ 30 ms/step, ≈ 1.5 s for 50 steps. Verify by logging V every 1 ms after one step.
+- Freewheel: fast Schottky across the resistor bank (cathode to +), ≥ 60 V, rated for the pulse current, plus TVS on the MOSFET; confirm in the BOM.
+- Placement: resistor bank on a separate shaded stand, downwind, ≈ ≥ 1.5 m from the module and the BME280 (engineering judgment; verify with air-temperature readings with the load on vs off).
+- Deferred with cooling (per supervisor): add evaporation to the twin (m'' = h_m(ρ_sat(T_panel) − RH·ρ_sat(T_air)), q = m''·h_fg, calibrate h_m from post-spray decay; humidity from BME280, not assumed); bucket test adds D_min for a full spray cone; thermal-shock guard in the decision rule as a ΔT(panel − water) limit taken from manufacturer cleaning guidance or a stated conservative assumption; reference panel upwind, ≈ ≥ 2 m lateral, verified with water-sensitive paper.
+- Framing: utility plants generally don't water-cool by day (thermal-shock, salts, cost; often night cleaning) — common practice, cite a source before the report. Target segments: (1) medium systems (hotels, hospitals, commercial, farms) = full system; (2) utility plants = NASIM software only (inverter/met data, cost-based cleaning scheduling); excluded: single-module systems (e.g. street lights).
+- Terms: digital twin = calibrated physics model running on the ESP32; physical twin = the second reference panel.
+- Future (post-paper) SCADA simulation: 120 modules, 6 strings × 20, one spray zone/valve per string, NASIM schedules zones; shows all six cases at once. Corrections: 120 × 100 W ≈ 12 kW (≈ 50 kW needs ≈ 400 W commercial modules, scaled from our curve, stated as an assumption); string length is set by inverter max voltage and cold-day Voc, not a fixed standard of 20.
+
+**Team proposal for the 2026-11-09 supervisor meeting — "diagnose before spraying" + reference panel `[PROPOSED]` (2026-11-06):** pending supervisor approval; nothing bought until then.
+- NASIM becomes a multi-cause classifier from I-V sweeps + temperatures + irradiance: thermal spike → cooling burst (only if net gain > pump + water cost); soiling (Isc/G drops, curve shape normal) → one cleaning spray; partial shading (bypass-diode step) → no spray, alert; series-resistance fault (FF drop) → no spray, maintenance alert; cloud → nothing. Fits the title's "Sudden Degradation Detection"; events are produced on demand (windbreak, uniform shade mesh, cardboard on a cell, small series power resistor) → solves rare-spike risk.
+- Second identical 100 W module (126.1 SAR) as an untouched reference → cooling gain measured as ΔP between panels; 3–5 day matching run; both panels wiped every morning (front spray cleans); swap roles mid-campaign. Needs a 2nd PWM load + 3rd INA226 (PaHub ch 2).
+- Final comparison: no action / thermostat / NASIM on alternating days vs the reference — net Wh, pump Wh, litres, L/kWh, wrong-spray count, per-class F1 and delay.
+- Extra cost `[EST]` ≈ 280–700 SAR for the team (optional MLX90640 thermal camera included at the top end). Soiling & fault detection moves from upgrade to core; spike prediction dropped.
+- Novelty: I-V-based fault diagnosis exists in the literature; claim only the coupling with a cost-aware on-device spray decision, "to the authors' knowledge".
 
 **Five-question filter for any new idea `[REC]`:**
 1. Does the research question stay the same?

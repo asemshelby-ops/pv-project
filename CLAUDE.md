@@ -8,7 +8,25 @@ Team: 5 — 3 Mechatronics (Asim, lead) + 2 Mechanical. Most of the software wor
 on Asim; keep tasks for teammates small, dated and with one defined output.
 Supervisor: د. عبدالإله الحمياني. Lab access and purchase review: د. عبدالمجيد.
 
-Last synced: 2026-11-04. Full status, reasons and sources: ./PROJECT_STATE.md
+Last synced: 2026-11-10. Full status, reasons and sources: ./PROJECT_STATE.md
+
+## CURRENT PHASE — 2026-11-10 (overrides anything below that conflicts)
+- Priority: one published research paper, narrow and simple: characterize thermal
+  spikes on our module in Makkah's hot-dry climate (frequency, size, cause, power
+  cost via gamma measured from I-V sweeps) and detect them in real time on the ESP32
+  (NASIM vs threshold vs CUSUM). Expansion (cooling, pump, diagnose-before-spray,
+  reference panel, SCADA) only after the paper.
+- Deferred: cooling, pump (ENABLE_PUMP 0), anemometer (HAS_ANEMOMETER 0, wind = NaN).
+- Spike definition (supervisor): the rise when the sun returns after a cloud COUNTS.
+  Do not require stable irradiance; label the cause (irradiance step vs. other).
+- Load: R_LOAD = 0.75 ohm (2 x 1.5 ohm parallel) so the sweep reaches ~4.4 V and Isc.
+  Start-of-sweep pulse ~29 A [EST] -> MOSFET >= 40 A pulse, low R_DS(on). Per-step
+  settle 5*tau ~15-20 ms, INA226 1.1 ms conversion x4 avg [EST, verify on bench].
+- Timestamps: RTC and logs in UTC; NASIM adds +3 h internally. Run set_rtc.py first.
+- The supervisor lends a commercial data logger: reference for validating the ESP32
+  DAQ (temps, V, I, PYR20 analog); align with /markers.csv button presses.
+- Stand: workshop-built mild-steel stand (drawings PS-01..03), tilt 20 deg, facing
+  true south; PYR20 on a bracket coplanar with the module.
 (copy of the claude.ai Project file; if they differ, the Project copy wins). The Excel
 BOM is authoritative for part numbers, quantities and prices. Team explainer page
 (Arabic, interactive, includes a 3D simulation of the rig):
@@ -133,6 +151,7 @@ Controller: ESP32 (Arduino framework). Raspberry Pi: optional (logging/dashboard
 - Conditions: clean the module every morning and log it (washing raises power — separate
   washing from cooling); PYR20 out of the spray; spray in SHORT BURSTS; the controller
   decides when and how long.
+- Closed loop, water temperature (2026-11-06): the cooling power depends on T_module - T_water, not T_module - Ta. Put a spare DS18B20 in the tank (T_water column). The decision rule must use measured T_water (dTw = min(5, T_module - T_water)), so it refuses to pump when the water is too warm. [EST] one burst for a 3 degC spike removes ~26 kJ; a 20 L tank needs ~84 kJ per degC, so ~0.3 degC per burst - the bigger risk is sun on the tank, gutter and pipes: tank in the shade under the module, white or insulated, covered; 20-30 L. Log the water level or weigh the tank daily (evaporation + drift loss = water-efficiency metric).
 - The supervisor will buy a data logger: a reference instrument, not a replacement for
   the ESP32 DAQ.
 
