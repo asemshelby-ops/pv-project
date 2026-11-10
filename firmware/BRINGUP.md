@@ -4,6 +4,15 @@ One device at a time: wire it, flash its test sketch, compare with "correct outp
 then move on. Pins: [PINMAP.md](PINMAP.md). Example output lines below show the FORMAT
 only — they are not measurements.
 
+## Before logging
+
+1. Set the RTC to UTC: flash `tests/ds3231`, close the serial monitor, then run
+   `.venv/Scripts/python firmware/tools/set_rtc.py COM3` (step 2).
+2. Confirm the RTC reads UTC: the ds3231 test must print Makkah time **minus 3 h**, matching
+   `python -c "import datetime as d; print(d.datetime.now(d.timezone.utc))"` to the second.
+3. Flash the logger and press the marker button once: Serial shows
+   `# marker: <date>,<HH:MM:SS.mmm>,<millis>` with a UTC time, and `/markers.csv` gains that row (step 9).
+
 ## Build and flash
 
 ```bash
@@ -17,6 +26,10 @@ upload with `arduino-cli upload -p COM3 --input-dir out/firmware_build/logger fi
 
 Every sketch drives the pump (GPIO32) and load (GPIO33) outputs LOW first. Even so, fit
 the 10 kΩ gate pull-downs before connecting any MOSFET.
+
+Build switches in `pv_config.h` (decisions 2026-11-10): `ENABLE_PUMP 0` — cooling is deferred,
+so pump code is compiled out (not deleted); `HAS_ANEMOMETER 0` — no anemometer in this phase,
+so the logger writes `NaN` in the wind column.
 
 ### Pinned build environment (every `sketch.yaml`)
 
@@ -69,7 +82,8 @@ Do the same for each M5 unit if it is ever wired without the PaHub.
 | SQW, 32K | not connected |
 
 Set the time: run the sketch, close the serial monitor, then
-`.venv/Scripts/python firmware/tools/set_rtc.py COM3` (Makkah local time = UTC+3 from the PC clock).
+`.venv/Scripts/python firmware/tools/set_rtc.py COM3` (UTC from the PC clock). The RTC holds
+UTC; every logged timestamp is UTC, and the logger adds +3 h (Makkah) only for NASIM's inputs.
 
 Correct output: one line per second, the seconds counting up, die temperature near room
 temperature, and no "time not set" note after setting.
@@ -112,7 +126,7 @@ altitude and the weather; compare with a nearby weather station).
 |---|---|
 | ESP32 → PaHub input port | HY2.0-4P: black GND, red 5 V, yellow SDA → GPIO21, white SCL → GPIO22 (through the level shifter if step 1 said so) |
 | PaHub port "0" (= chip channel 0) | INA226-10A **panel** unit |
-| PaHub port "1" (= chip channel 1) | INA226-10A **pump** unit |
+| PaHub port "1" (= chip channel 1) | INA226-10A **pump** unit — deferred: the test reads it only when `ENABLE_PUMP` is 1 |
 | Panel unit current path | In the + lead **between the module and the load capacitor** (CLAUDE.md) |
 
 First test with a bench supply and a resistor (for example 12 V across a power resistor),
@@ -122,8 +136,9 @@ Correct output:
 - The scan lists the PCA9548A's 8 chip channels (0–7); port "n" is channel n (bench check
   2026-11-05). Upstream devices (0x70, and 0x68/0x57 when the RTC is connected) appear on
   every channel.
-- The scan shows `0x70` on the main bus, `0x41` on channel 0 and on channel 1, and nothing at
-  0x41 on the main bus.
+- The scan shows `0x70` on the main bus, `0x41` on channel 0 (and on channel 1 if the pump unit
+  is plugged in), and nothing at 0x41 on the main bus. With `ENABLE_PUMP 0` only the panel unit
+  is started and printed.
 - Plug and unplug Grove cables with USB disconnected: hot-plugging glitched the bus on our bench,
   and a half-seated cable made one unit disappear from the scan.
 - `IDs 0x5449 / 0x2260`; `current LSB 500.0 uA`. The INA226 library rounds 10 A / 32768 = 305 µA
@@ -141,7 +156,8 @@ Correct output:
 | Readings stuck or noisy | Default conversion time and averaging (not yet chosen; **TODO** from the TI datasheet, PROJECT_STATE §4) |
 
 Range: ±10 A and 0–30 V bus (M5 docs). The 100 W module's Voc is 21.5 V and Isc 5.88 A,
-inside the range. **After** the load capacitor, the pulses reach about 14 A → the unit must
+inside the range. **After** the load capacitor, the pulses reach about Voc ÷ `R_LOAD` =
+21.5 V ÷ 0.75 Ω ≈ 29 A `[EST]` (`R_LOAD` in `pv_config.h`, decision 2026-11-10) → the unit must
 stay on the module side.
 
 ## 5. DS18B20 ×5 (+ water/tank) — `tests/ds18b20`
@@ -258,9 +274,22 @@ is not accurate there (ESP-IDF docs). Use Modbus for low light.
 | One leg | GPIO27 (internal pull-up) |
 | Other leg | GND |
 
-Check with the logger: each press prints `# marker: date,time,millis` and appends to
-`/markers.csv`. The CSV schema has no test_marker column yet: it is a proposed addition
-awaiting confirmation (CLAUDE.md), so presses go to their own file.
+Check with the logger: each press prints `# marker: date,time,millis` and appends the same
+row to `/markers.csv` (header `date,time,millis`), for example
+`2026-11-05,07:12:34.567,1234567`:
+
+- `date`, `time` — UTC, time with milliseconds (`HH:MM:SS.mmm`), for alignment with an
+  external data logger.
+- `millis` — ESP32 uptime in ms at the press (taken in the interrupt).
+
+The DS3231 counts whole seconds, so the logger notes `millis()` at the moment the RTC second
+changes (after the first sample, then every 60 s) and times each press from that edge.
+Accuracy is a few ms `[EST]`: check it against the external logger. A press before the
+first edge is found, or with the RTC missing, writes `,,millis`. 200 ms debounce.
+
+The 10 s CSV schema has no test_marker column yet: it is a proposed addition awaiting
+confirmation (CLAUDE.md), so presses go to their own file. Rows written before 2026-11-10
+hold local time with whole seconds.
 
 ## 10. Logger — `firmware/logger`
 
@@ -268,20 +297,23 @@ Correct output on Serial:
 
 ```
 # PV Phase 0 logger. NASIM-GBT (no wind, double) trained on SYNTHETIC data.
+# timestamps are UTC (DS3231)
 date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm
 # status: DS3231=ok; BME280=ok; PaHub=ok; INA226 panel=ok; DS18B20=ok; PYR20 Modbus=ok; microSD=ok;
-2026-11-05,10:00:00,41.1250,...,812,18.0120,4.8810,87.9134,,,0
+2026-11-05,07:00:00,41.1250,...,812,18.0120,4.8810,87.9134,NaN,,0
 ```
 
+- Date and time are UTC (10:00 in Makkah = 07:00 in the log).
 - One row every 10 s; the time column steps by 10 s with no drift (millis schedule).
 - Missing devices → empty fields, and the logger keeps running. Missing devices are retried every 60 s.
-- `p` is empty outside 06:00–18:00, during the first 10 min of data each day (warm-up),
+- `p` is empty outside 06:00–18:00 Makkah time (03:00–15:00 UTC in the log), during the first 10 min of data each day (warm-up),
   and when T1–T5, ambient, irradiance or the time is missing.
-- `wind` stays empty until an anemometer is approved and wired.
-- SD files: `/YYYYMMDD.csv` per day, with a header line.
+- `wind` is `NaN` (not measured) while `HAS_ANEMOMETER` is 0; an empty field elsewhere means a failed read.
+- SD files: `/YYYYMMDD.csv` per UTC day (03:00 to 03:00 Makkah time), with a header line.
 
 | Symptom | Cause |
 |---|---|
 | Date/time empty | RTC missing or not set (step 2) |
+| Time 3 h ahead of UTC | RTC still on Makkah local time: re-run `set_rtc.py` (Before logging) |
 | `# warning: sample period overrun` | A device is blocking for too long: look at the status line |
 | T1..T5 in the wrong order | `T_ROM` not filled in yet (step 5) |
