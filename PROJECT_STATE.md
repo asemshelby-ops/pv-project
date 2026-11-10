@@ -388,7 +388,7 @@ Record each evaluated idea as `Decision: … (date, decided by …)`.
 
 ## 9. Consolidated open items
 
-**Resolved by the supervisor on 2026-11-10:** returning-irradiance rises count as spikes; anemometer deferred; pump and cooling deferred until after the paper; he lends a data logger (model to confirm). Items on interpretation, anemometer approval and pump type are closed for this phase.
+**Resolved by the supervisor on 2026-11-10:** returning-irradiance rises count as spikes; anemometer deferred; pump and cooling deferred until after the paper; he lends a data logger (model to confirm). He approved the PWM resistive load (option C) in principle, without discussing details; the change to 0.75 Ω is a team-level detail inside that approval. Items on interpretation, anemometer approval and pump type are closed for this phase.
 
 **Pending — supervisor**
 1. Paper: exact topic, target venue and deadline
