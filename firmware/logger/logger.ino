@@ -26,6 +26,7 @@ static const int NASIM_START_MIN = 6 * 60;    // detector window = synthetic day
 static const int NASIM_END_MIN = 18 * 60;     // config.DAY_START / DAY_END (local time)
 static const int32_t UTC_OFFSET_S = 3 * 3600; // Makkah = UTC+3: NASIM's time inputs are local
 static const uint8_t RETRY_EVERY = 6;         // retry missing devices every 6 samples (60 s)
+static const uint8_t RESYNC_EVERY = 6;        // re-find the RTC second edge every 60 s
 
 // Back-sheet sensors T1..T5 by ROM. TODO: fill in after the water-bath cross-calibration
 // and mounting (ds18b20 test sketch prints the ROMs). While a row is all zero, T1..T5
@@ -46,6 +47,11 @@ gbt_detector_t det;
 int det_doy = -1;                 // day the detector state belongs to
 
 volatile uint32_t mark_ms = 0;    // last button press (ISR), 0 = none pending
+
+// Millisecond UTC for marker rows. The DS3231 counts whole seconds, so the logger notes
+// millis() at the moment the RTC second changes: UTC second anchor_s began at anchor_ms.
+uint32_t anchor_s = 0;            // 0 = no anchor (RTC missing or not set)
+uint32_t anchor_ms = 0;
 const char *HEADER =
     "date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm";
 
@@ -184,14 +190,36 @@ void sample(uint32_t n) {
   }
 }
 
+// Polls the RTC until its second changes and records that edge (blocks up to ~1.1 s).
+// The edge is found to within one RTC read over I2C, a few ms [EST: check on the bench].
+// Repeated every RESYNC_EVERY samples so the ESP32 crystal drift between edges stays small.
+void syncRtcEdge() {
+  anchor_s = 0;
+  if (!rtc.ok() || !rtc.read() || !rtc.timeValid) return;
+  const uint32_t s0 = rtc.time().unixtime();
+  const uint32_t start = millis();
+  while (millis() - start < 1100) {
+    if (!rtc.read()) return;
+    const uint32_t s = rtc.time().unixtime();
+    if (s != s0) {
+      anchor_ms = millis();
+      anchor_s = s;
+      return;
+    }
+  }
+}
+
+// One row per press: UTC date, UTC time with milliseconds, and millis() at the press.
 void logMarker() {
   uint32_t ms = mark_ms;
   mark_ms = 0;
-  char line[48];
-  if (rtc.ok() && rtc.read() && rtc.timeValid) {
-    const DateTime t = rtc.time();
-    snprintf(line, sizeof(line), "%04u-%02u-%02u,%02u:%02u:%02u,%lu", t.year(), t.month(),
-             t.day(), t.hour(), t.minute(), t.second(), (unsigned long)ms);
+  char line[64];
+  if (anchor_s) {
+    const int64_t utc_ms = (int64_t)anchor_s * 1000 + (int32_t)(ms - anchor_ms);
+    const DateTime t((uint32_t)(utc_ms / 1000));
+    snprintf(line, sizeof(line), "%04u-%02u-%02u,%02u:%02u:%02u.%03u,%lu", t.year(), t.month(),
+             t.day(), t.hour(), t.minute(), t.second(), (unsigned)(utc_ms % 1000),
+             (unsigned long)ms);
   } else {
     snprintf(line, sizeof(line), ",,%lu", (unsigned long)ms);
   }
@@ -224,5 +252,7 @@ void loop() {
     Serial.println("# warning: sample period overrun, schedule resynchronised");
     next = millis() + SAMPLE_PERIOD_MS;
   }
-  sample(n++);
+  sample(n);
+  if (n % RESYNC_EVERY == 0 || !anchor_s) syncRtcEdge();  // after the row: may block ~1 s
+  n++;
 }
