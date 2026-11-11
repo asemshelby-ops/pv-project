@@ -156,8 +156,9 @@ Correct output:
 | Readings stuck or noisy | Default conversion time and averaging (not yet chosen; **TODO** from the TI datasheet, PROJECT_STATE §4) |
 
 Range: ±10 A and 0–30 V bus (M5 docs). The 100 W module's Voc is 21.5 V and Isc 5.88 A,
-inside the range. **After** the load capacitor, the pulses reach about Voc ÷ `R_LOAD` =
-21.5 V ÷ 0.75 Ω ≈ 29 A `[EST]` (`R_LOAD` in `pv_config.h`, decision 2026-11-10) → the unit must
+inside the range. **After** the load capacitor, the pulses reach about Voc ÷ `R_BRANCH` =
+21.5 V ÷ 1.5 Ω ≈ 14 A `[EST]` in each branch, ≈ 29 A in total while both branches conduct
+during a sweep (`R_BRANCH`, `R_SWEEP` in `pv_config.h`, decision 2026-11-11) → the unit must
 stay on the module side.
 
 ## 5. DS18B20 ×5 (+ water/tank) — `tests/ds18b20`

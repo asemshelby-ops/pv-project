@@ -53,8 +53,15 @@ constexpr uint8_t PYR20_FC = 0x04;             // manual: FC 3 or 4; its read ex
 constexpr uint32_t PWM_FREQ_HZ = 20000;        // load: ~20 kHz (CLAUDE.md); pump: above hearing
 constexpr uint8_t PWM_RES_BITS = 10;
 
-// ---- Measurement load (option C) -----------------------------------------------------
-constexpr float R_LOAD = 0.75f;                // ohm, resistor bank (decision 2026-11-10)
+// ---- Measurement load (option C, two branches; decision 2026-11-11) --------------------
+// Two identical resistor branches, each with its own MOSFET, in parallel across the module:
+//   branch A  switched all day: holds the module at its MPP          -> module sees R_BRANCH / D
+//   branch B  switched only during an I-V sweep, with the same duty  -> module sees R_SWEEP / D
+// Design: docs/paper/07-load-firmware-spec.md. Gate pin of branch B: not assigned yet.
+constexpr uint8_t LOAD_BRANCHES = 2;
+constexpr float R_BRANCH = 1.5f;                       // ohm, each branch
+constexpr float R_HOLD = R_BRANCH;                     // 1.5 ohm: branch A alone (MPP hold)
+constexpr float R_SWEEP = R_BRANCH / LOAD_BRANCHES;    // 0.75 ohm: A and B together (sweep)
 
 // ---- Logging -------------------------------------------------------------------------
 constexpr uint32_t SAMPLE_PERIOD_MS = 10000;   // one CSV row every 10 s (CLAUDE.md)
