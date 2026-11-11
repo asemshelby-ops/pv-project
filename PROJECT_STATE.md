@@ -216,7 +216,7 @@ Aligned to the supervisor's 2026-09-30 direction `[REC]`. Sequencing rule unchan
 
 ## 4. PV measurement load — option C `[DECIDED]`
 
-**Status:** recommended 2026-09-29; `Decision: adopt option C, PWM-switched resistors with ESP32 control, as the PV measurement load (2026-10-01, decided by Asim for the team).` The supervisor approved it in principle on 2026-11-10 (details not discussed). Part numbers remain `[OPEN]` (list below). Under the new direction it matters even more: the temperature-induced loss is estimated from power, and a load that holds the module off its MPP distorts exactly that estimate.
+**Status:** recommended 2026-09-29; `Decision: adopt option C, PWM-switched resistors with ESP32 control, as the PV measurement load (2026-10-01, decided by Asim for the team).` The supervisor approved it in principle on 2026-11-10 (details not discussed). Part numbers remain `[OPEN]` (list below). **Note 2026-11-11:** the sizing table below was computed for 1.5 Ω; for the current 0.75 Ω the stresses are in `docs/paper/06-load-bench-test-protocol.md` §1 `[EST]` — pulses 24–29 A and capacitor ripple ≈ 10 A RMS (not ≈ 6 A). Under the new direction it matters even more: the temperature-induced loss is estimated from power, and a load that holds the module off its MPP distorts exactly that estimate.
 
 **Why the load choice matters `[REC — physics-based]`:** module power depends on the operating point on the I-V curve. A fixed resistor matches the MPP only near one condition; on the illustrative model it captures about 63 % of available power at 500 W/m² and 45 °C cell temperature. At low irradiance the operating point sits in the current-source region, where power barely depends on temperature, so the thermal effect appears near zero; on hot middays it is exaggerated. A battery with a PWM controller pins the module near 13.5 V, and its captured fraction *improves* as the module heats, which inverts the effect being measured. **The earlier recommendation of a fixed resistive load at Vmp is superseded.**
 
@@ -396,7 +396,7 @@ Record each evaluated idea as `Decision: … (date, decided by …)`.
 3. After the paper is agreed: the title wording suggestion (§1)
 
 **Pending — team (paper phase)**
-- Confirm the 0.75 Ω load (already set in firmware config, R_LOAD = 0.75) and buy the load parts sized for ~29 A pulses
+- Confirm the 0.75 Ω load (already set in firmware config, R_LOAD = 0.75) and buy the load parts sized for ~29 A pulses. Before buying, choose `[REC, 2026-11-11]`: one 0.75 Ω bank with a capacitor bank rated ≥ 10 A RMS ripple, or two 1.5 Ω branches with the second switched in only during sweeps (`docs/paper/06-load-bench-test-protocol.md` §1)
 - Stand: send drawings PS-01..03 to the workshop after measuring the module frame holes and the PYR20 base
 - Finish the DAQ: solder BME280, PYR20 in sun + Modbus, DS18B20 water-bath calibration
 - Run the BRINGUP "Before logging" checklist (set_rtc.py to UTC, marker test), then install outdoors and log
@@ -408,24 +408,31 @@ Record each evaluated idea as `Decision: … (date, decided by …)`.
 3. *High* — the Python pipeline assumes local-time CSV; the logger writes UTC. No ingestion layer, and no handling of gaps or missing values.
 4. *High* — logger fragility: one failed read resets NASIM (≥ 10 min without detection); RTC, BME280 and INA226 are not re-read for up to 60 s after one error; `T_ROM` is empty, so T1..T5 follow bus-scan order and can re-map after a re-scan.
 5. *High* — timestamp integrity for the data-logger comparison: no uptime column, rows without RTC time go to `/nodate.csv` unrecoverably, irradiance is read ≈ 0.8 s after the timestamp, no RTC drift check during the campaign.
-6. *High* — no uncertainty budget, γ method, validation-day protocol or cleaning protocol yet; data-logger model unknown.
+6. *High* — no uncertainty budget, γ method, validation-day protocol or cleaning protocol yet; data-logger model unknown. *(First versions written 2026-11-11, see Stage 2 below; the data-logger model is still unknown.)*
 7. *High* — evaluation: `mixed` events (more numerous than scored spikes on the hard data) are excluded; detector differences sit inside the seed spread with no confidence intervals; CUSUM and the generator share one thermal model.
 8. *Medium* — claims: a few weeks in Nov–Dec cannot give "frequency in Makkah's climate"; without an anemometer the cause label can only be irradiance-driven vs. not.
 9. *Medium* — `/markers.csv` has no event type and cleaning is not logged anywhere; a marker is lost when the SD card is not mounted.
-10. *Medium* — records that contradict the current phase: tilt 20° (stand) vs 21° in `config.py` and `nasim_config.h`; the §4 sizing table still shows 1.5 Ω and ≥ 15 A pulses (now 0.75 Ω, ≈ 29 A `[EST]`); §3 and §6 still treat irradiance rises as a separate, gated class. `literature-research-and-design-decisions.md` and the Excel BOM are not in the repository, so they were not reviewed.
+10. *Medium* — records that contradict the current phase: tilt 20° (stand) vs 21° in `config.py` and `nasim_config.h` *(set to 20° on 2026-11-11)*; the §4 sizing table still shows 1.5 Ω and ≥ 15 A pulses (now 0.75 Ω, ≈ 29 A `[EST]`); §3 and §6 still treat irradiance rises as a separate, gated class. `literature-research-and-design-decisions.md` and the Excel BOM are not in the repository, so they were not reviewed *(the literature doc was added under `docs/` on 2026-11-11: Aug 2026, pre-pivot, background and source index only)*.
+
+**Stage 2 measurement-validity package — 2026-11-11 (Claude) `[REC]`, in `docs/paper/`:**
+- Decisions by Asim (2026-11-11): work on branch `paper-package`, no push; tilt set to 20° in `config.py` and `nasim_config.h` (fixed workshop stand; re-measure at installation; the exported NASIM models still carry 21° features until the retraining); markers stay one press = one line on a daily log sheet, no press-count coding; data-logger protocol written for generic channels `[ASSUMPTION]`; the load firmware is specified now and coded when the parts arrive.
+- Budget result `[EST]`: a 3 °C rise is measured to ≈ 0.05 °C (k = 1); V·I resolves ≈ 0.02 % relative change; absolute G is ≈ 3.4–6.7 % (the PYR20 "5 %" does not say of reading or of full scale). So the power cost of a spike is computed as γ·ΔT_cell, not read from measured power, and its uncertainty is set by γ (target ≤ 10 % relative, k = 1).
+- γ method: shade the module (not the PYR20), uncover near solar noon, sweep every 15 s while it heats; ≥ 6 runs on ≥ 3 days; cross-check normalised by the sweep's own I_sc. IEC 60891:2021 covers such procedures, but its text has not been read — do not claim conformity `[OPEN]`.
+- Detector consequence of the 10 Nov definition, to implement in the analysis stage: threshold rule without the irradiance gate; CUSUM on the temperature increment (the residual version stays as a NASIM feature); `mixed` events scored.
+- Still to measure or obtain: reference thermometer for the water bath; PYR20 accuracy basis (ask the seller); M5 shunt tolerance and cable resistance (bench B2); data-logger model.
 
 **EWA — optional, not on the critical path `[DECIDED]`**
 - Gave approval in principle, then stopped responding (as of 2026-09-29). The team proceeds independently and keeps the channel open for specific steps (e.g. PYR20 calibration comparison, O&M session on soiling, facility visit).
 
 **Open — technical**
-- Spike definition (threshold + window) and detection window length (§3, §6)
+- Spike definition (threshold + window) and detection window length (§3, §6) — defined for the paper in `docs/paper/03-spike-definition-and-metrics.md` (θ = 3 °C in W = 10 min, cause by explained fraction of the irradiance step); to be checked once on the first two weeks of data, then frozen
 - How often spikes occur in Makkah; controlled spike tests from the first week (§3)
 - Irradiance-normalization method and the thermal/non-thermal separation logic (§5.1)
 - Thermal model form for path 3M (Mechanical team) and how it is calibrated on Phase 1 data
 - Load parts and settings (§4 `[OPEN]` list)
 - ESP32 variant; Raspberry Pi role (§6)
-- Uncertainty budget — before data collection
-- Written cleaning protocol
+- Uncertainty budget — first version written (`docs/paper/01-uncertainty-budget.md`); its `[MEASURE]` items are filled on the bench and on the validation day
+- Written cleaning protocol — written (`docs/paper/05-daily-logging-and-cleaning.md`)
 - PYR20 plane-of-array mounting; deep study of Modbus RTU (frame structure, function codes, CRC) before implementing it
 - Clear-sky model identity (§7); panel tilt and azimuth measured at installation (§7)
 - Phase 3: nozzle and pump selection on measured draw, flow and pressure; spray burst length; washing-effect test; water quality (distilled or RO)
@@ -454,6 +461,7 @@ Record each evaluated idea as `Decision: … (date, decided by …)`.
 ## 11. Working documents
 
 - **This file** — status authority.
+- **`docs/paper/` (2026-11-11)** — measurement-validity package for the paper: 01 uncertainty budget, 02 γ from I-V sweeps, 03 spike definition and metrics, 04 validation-day protocol, 05 daily logging and cleaning (with the log sheet), 06 load bench-test protocol, 07 load firmware spec.
 - **Literature doc** — findings still valid: §1.1 prior art, §2 effect size, §3.1 soiling, §3.3 wind, §4 cold-water budget (as an extension), §5 BOM additions, §6 ML guidance.
 - **Team explainer page** (Arabic, interactive, 14 chapters): https://claude.ai/artifact/H2WhpioJVv6wuYGeHgnJP6 — **updated 2026-09-30 (version 13) to match this file:** new title and direction, spike decision balance, threshold-vs-AI detection demo, single-panel loss signal with the in-plane clear-sky index, the §1.2 interpretation table, and the phase plan Gate A → 0 → 1 → 2 → Gate B → 3P/3M → 4. **Version 14 (same day)** adds the targeted-search results, the spike physics and the parts review. Versions 15–18 (Sep 30 – Nov 3) track the decisions above. **Version 19 (2026-11-03)** adds chapter 1 «المنظومة وهي تشتغل»: a three.js model of the planned rig (100 W module at 21°, perforated pipe or spray nozzles, gutter, tank and pump, controller box with detector and pump lamps, irradiance sensor at panel tilt, five back-sheet sensors, anemometer, air sensor in a shield, PWM resistor load on a shaded heatsink; cables grey and water pipes in the water colour, as in the system chapter) with hotspots giving each part's role and its toolkit status, and an illustrative simulation: Faiman thermal model with an uncooled twin, spike button (wind −1 m/s for 20 min), detector (rise ≥ 2.5 °C within 10 min, irradiance gate 5 %, 10-min silence, own-cooling compensation), the net-power burst rule and the 45/35 °C fixed threshold running in parallel on the same weather, a film/spray toggle, energy HUD, 60-min chart and counters. Every number comes from the page or this file except one labelled assumption (ambient and water 30 °C).
 - **Supervisor deck "قراران قبل الشراء"**: https://claude.ai/artifact/RVVFqQoC4WcQVHVzjDYvxH — the load decision (option C, adopted by the team on 2026-10-01) is still current; its direction shortlist is superseded by §1.1 and §8.
