@@ -24,16 +24,21 @@ from the NASIM alarm.
 
 | Item | Value | Source |
 |---|---|---|
-| Load | resistor bank switched by an N-MOSFET through a gate driver, capacitor on the module side | PROJECT_STATE §4 |
-| `R_LOAD` | 0.75 Ω | `pv_config.h` (decision 2026-11-10) |
-| PWM | GPIO33, LEDC, 20 kHz | `pv_config.h` |
+| Load | **two branches** in parallel across the module, each a 1.5 Ω resistor bank switched by its own N-MOSFET through a gate-driver channel; one capacitor bank on the module side | decision 2026-11-11 |
+| `R_BRANCH`, `LOAD_BRANCHES` | 1.5 Ω, 2 → `R_HOLD` = 1.5 Ω (branch A alone), `R_SWEEP` = 0.75 Ω (A and B) | `pv_config.h` |
+| PWM, branch A | GPIO33, LEDC, 20 kHz | `pv_config.h` |
+| PWM, branch B | second LEDC channel on the same timer (same frequency and phase); **GPIO not assigned yet** (§11) | — |
 | PWM resolution | 11 bit `[REC]` (now 10 bit in `pv_config.h`; 80 MHz / 20 kHz allows 11, PINMAP) | to change with the load code |
 | Current and voltage | panel INA226 unit, between module and capacitor | CLAUDE.md |
 | Heatsink temperature | one spare DS18B20 on the resistor heatsink, by ROM | new; needed for the trip |
-| Two-branch option | `LOAD_BRANCHES 1` or `2`; with 2, a second gate on a spare GPIO is enabled only during sweeps | bench protocol §1, team decision pending |
 
-With 11 bits, one duty step at the MPP (D ≈ 0.23) changes `R_eff` by 0.21 % and the
-module voltage by ≈ 0.1 % (≈ 19 mV) `[EST]`, because near the MPP `dV/V ≈ −½ · dD/D`.
+Branch rule: **branch A is the only one switched in `HOLD`; branch B is switched only in
+`SWEEP`, with the same duty as A.** The module then sees `R_HOLD / D` in hold and
+`R_SWEEP / D` in a sweep. Reasons and part stresses: bench protocol §1.
+
+With 11 bits, one duty step in hold at the MPP (D ≈ 0.46) changes `R_eff` by 0.11 % and
+the module voltage by ≈ 0.05 % (≈ 10 mV) `[EST]`, because near the MPP
+`dV/V ≈ −½ · dD/D`.
 
 ## 3. Modes
 
@@ -50,10 +55,10 @@ module voltage by ≈ 0.1 % (≈ 19 mV) `[EST]`, because near the MPP `dV/V ≈ 
 
 | Mode | Duty | Notes |
 |---|---|---|
-| `OFF` (0) | 0 | night, low light, before the first valid reading |
-| `HOLD` (1) | regulated | constant-voltage hold at `V_set` |
-| `SWEEP` (2) | sequence | ≈ 1.5 s; rows are never sampled during it |
-| `TRIP` (3) | 0 | latched; reason logged |
+| `OFF` (0) | A 0, B 0 | night, low light, before the first valid reading |
+| `HOLD` (1) | A regulated, B 0 | constant-voltage hold at `V_set` |
+| `SWEEP` (2) | A and B, same sequence | ≈ 1.6 s; rows are never sampled during it |
+| `TRIP` (3) | A 0, B 0 | latched; reason logged |
 
 `GAMMA_RUN` is not a mode of its own: it is `HOLD` + `SWEEP` with `SWEEP_PERIOD = 15 s`,
 started by a serial command (`GAMMA <minutes>`) and ended by its timer. A laptop is at
@@ -66,11 +71,11 @@ Sequence, started right after a 10 s row has been written (so the next row is �
 | # | Action | Time `[EST]` |
 |---|---|---|
 | 1 | Read G over Modbus (`G_before`); take the latest T1..T5 | 30 ms |
-| 2 | Duty 0, wait 50 ms, read → `V_oc` | 60 ms |
-| 3 | **Coarse pass:** 24 duties, logarithmic from 0.02 to 1.00. At each: set duty, wait `t_settle`, trigger one conversion, wait for conversion-ready, store (k, D, V, I) | 24 × 30 ms |
+| 2 | Duty 0 on both branches, wait 50 ms, read → `V_oc` | 60 ms |
+| 3 | **Coarse pass**, both branches: 24 duties, logarithmic from 0.02 to 1.00. At each: set the same duty on A and B, wait `t_settle`, trigger one conversion, wait for conversion-ready, store (k, D, V, I) | 24 × 30 ms |
 | 4 | Find the coarse point with the largest V·I, at index m | — |
 | 5 | **Fine pass:** 24 duties, linear between coarse points m − 1 and m + 1 | 24 × 30 ms |
-| 6 | Largest V·I of all points → `V_set` and its duty → `HOLD` at that duty | — |
+| 6 | Largest V·I of all points, at duty `D_best` → `V_set`. Branch B off; branch A continues in `HOLD` from `D = min(1, 2 · D_best)`, which is the same `R_eff` with one branch | — |
 | 7 | Read G again (`G_after`) | 30 ms |
 | 8 | Append the points and one summary line to the SD card | 50 ms |
 
@@ -118,7 +123,7 @@ the curve (≈ 9 V), and the logged power is meaningless. `V_mp` moves little wi
 irradiance, so holding the voltage keeps the module near its MPP through the very events
 the paper studies.
 
-Every 250 ms `[ASSUMPTION]`:
+Branch A only. Every 250 ms `[ASSUMPTION]`:
 1. Read V and I (64-average reading).
 2. `e = (V − V_set) / V_set`.
 3. `D ← D · (1 + K · e)`, K = 1.0 `[ASSUMPTION]`, change limited to ±10 % of D per step,
@@ -186,7 +191,7 @@ as the row file. A 1 GB card holds more than a year.
 
 | Event | Action |
 |---|---|
-| Boot, reset, flashing | PWM pin not driven → gate pull-down holds the MOSFET off (already in every sketch) |
+| Boot, reset, flashing | PWM pins not driven → the pull-down on each gate-driver input holds both MOSFETs off. `pvOutputsOff()` must drive **both** load pins LOW once branch B has a GPIO |
 | Heatsink ≥ `T_TRIP` | `TRIP`, duty 0. `T_TRIP` = 80 °C `[ASSUMPTION]` until the resistor derating curve is read (bench B0) |
 | Heatsink sensor missing or invalid | `TRIP` |
 | I > 9.5 A (unit range ±10 A) | `TRIP` |
@@ -211,6 +216,8 @@ hazard by itself; the heatsink trip covers the rest.
 |---|---|
 | Sweep finds the MPP | `V·I` of the best point within 0.5 % of the simulated `P_mp`, for G from 200 to 1000 W/m² and T from 25 to 70 °C |
 | Coarse pass reaches below 0.5 · V_oc | true at G = 1000 W/m² |
+| Hand-over at the end of a sweep | with branch B dropped and `D_A = 2 · D_best`, the module voltage changes by less than 1 % |
+| Branch rule | the duty of branch B is 0 in every mode except `SWEEP` |
 | Hold after a 50 % irradiance step | voltage back within 1 % of `V_set` in ≤ 2 s; power ≥ 97 % of the new `P_mp` |
 | Mode machine | `OFF → HOLD → SWEEP → HOLD`; every fault → `TRIP`; trip clears only after 5 min |
 | Row grid | with sweeps and markers injected, row times stay on the 10 s grid |
@@ -229,12 +236,19 @@ Then the bench protocol B1–B9 on real hardware. "Works" is claimed only after 
 | `HOLD_PERIOD_MS`, `HOLD_GAIN` | 250, 1.0 | bench B3, B8 |
 | `VSET_FRACTION_OF_VOC` | 0.78 | literature check |
 | `T_TRIP_C` | 80 | bench B0, B5 |
-| `LOAD_BRANCHES` | 1 | team decision (bench protocol §1) |
+| `LOAD_BRANCHES`, `R_BRANCH` | 2, 1.5 Ω (set in `pv_config.h` on 2026-11-11) | decided |
 | `PWM_RES_BITS` | 11 | — |
 
-## 11. Decisions needed before coding
+## 11. Decisions
 
-1. One 0.75 Ω bank with a ≥ 10 A RMS capacitor bank, or two 1.5 Ω branches (bench
-   protocol §1).
-2. Confirm the five new row columns (§7).
-3. Which spare DS18B20 goes on the heatsink, and its ROM.
+Decided (Asim, 2026-11-11):
+- Two 1.5 Ω branches; A holds, B joins only in sweeps.
+- The five new row columns of §7 (`D`, `load_mode`, `sweep_id`, `uptime_ms`, `status`),
+  appended at the end of each row.
+
+Still needed before coding:
+1. GPIO for the gate of branch B. Free pins on this board are few (PINMAP). GPIO14 is
+   free but toggles during boot; a toggling gate would only connect a 1.5 Ω resistor to
+   the module for a few ms, which is harmless `[EST]`, but it must be seen on the scope in
+   bench step B1. GPIO32 is clean but reserved for the pump (deferred). `[REC]` GPIO14.
+2. Which spare DS18B20 goes on the heatsink, and its ROM.

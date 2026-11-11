@@ -1,9 +1,11 @@
 # PWM resistor load — bench-test protocol
 
 Status: protocol, 2026-11-11, written before the parts arrive. The load is option C of
-PROJECT_STATE §4 with `R_LOAD = 0.75 Ω` (team decision 2026-11-10; supervisor approved the
-load in principle). Order of work: this protocol on a lab DC supply, then the 100 W
-module. The firmware it tests is specified in `07-load-firmware-spec.md`.
+PROJECT_STATE §4 in its **two-branch form** (decision by Asim, 2026-11-11): two identical
+1.5 Ω resistor branches, each with its own MOSFET. Branch A alone holds the MPP all day;
+branch B is switched in only during I-V sweeps, which makes 0.75 Ω in total. Order of
+work: this protocol on a lab DC supply, then the 100 W module. The firmware it tests is
+specified in `07-load-firmware-spec.md`.
 
 All electrical numbers below come from the seller listing of the module (V_mp 18 V,
 I_mp 5.55 A, V_oc 21.5 V, I_sc 5.88 A) and ideal switching. They are `[EST]` and are
@@ -11,33 +13,39 @@ re-measured in the steps named.
 
 ## 1. Stresses the parts must survive `[EST]`
 
-The module sees `R_eff = R / D`. With R = 0.75 Ω:
+The module sees `R_eff = R / D`, with R = 1.5 Ω in hold (branch A) and R = 0.75 Ω in a
+sweep (A and B, same duty).
 
-| Quantity | Formula | At MPP (STC listing) | Worst case |
+| Quantity | Formula | Hold, branch A alone (all day) | Sweep, A + B (≈ 1.6 s per minute) |
 |---|---|---|---|
-| Duty at MPP | `D = R · I_mp / V_mp` | 0.23 | ≈ 0.26 on a hot noon (lower V_mp) |
-| Current pulse in MOSFET and resistors | `V / R` | 24 A | 28.7 A at sweep start (V = V_oc) |
-| MOSFET RMS current | `(V/R) · √D` | 11.5 A | — |
-| **Capacitor ripple current, RMS** | `(V/R) · √(D(1 − D))` | **10.1 A** | ≈ 7–10 A all day |
-| Resistor pulse power | `V² / R` | 432 W during the on-time | 616 W at sweep start |
-| Resistor mean power | = module power | ≤ 100 W | — |
-| Ripple voltage, capacitive part, C = 2000 µF | `I_mp (1 − D) / (f C)` | 0.11 V p-p | — |
-| Ripple voltage, ESR part | `(V/R) · ESR` | 0.24 V p-p for 10 mΩ total | — |
-| Lowest sweep voltage | `I_sc · R` | 4.4 V | + wiring and MOSFET drop |
+| Duty at MPP | `D = R · I_mp / V_mp` | 0.46 (≈ 0.51 on a hot noon) | 0.23 |
+| Current pulse in each MOSFET and branch | `V / 1.5 Ω` | 12 A | up to 14.3 A at sweep start (V = V_oc) |
+| Current pulse drawn from the capacitor | `V / R` | 12 A | up to 28.7 A |
+| MOSFET RMS current | `(V/1.5) · √D` | 8.2 A (A) | short, ≤ 8 A each |
+| **Capacitor ripple current, RMS** | `(V/R) · √(D(1 − D))` | **6.0 A, continuous** | up to 10.1 A for less than 1 s |
+| Resistor pulse power, per branch | `V² / 1.5 Ω` | 216 W during the on-time | 308 W at sweep start |
+| Resistor mean power | share of module power | A: ≤ 100 W | B: ≈ 1.3 W averaged (≈ 5 W in γ mode, a sweep every 15 s) |
+| Ripple voltage, capacitive part, C = 2000 µF | `I_mp (1 − D) / (f C)` | 0.075 V p-p | 0.11 V p-p |
+| Ripple voltage, ESR part | `(V/R) · ESR` | 0.12 V p-p for 10 mΩ total | 0.24 V p-p |
+| Lowest sweep voltage | `I_sc · 0.75 Ω` | — | 4.4 V + wiring and MOSFET drop |
 
-**New finding to settle before buying `[REC]`.** PROJECT_STATE §4 sized the capacitor
-for ≈ 6 A RMS; that figure was for 1.5 Ω. Halving the resistance to 0.75 Ω raises the
-continuous ripple current to ≈ 10 A RMS. Two ways to handle it:
-- (a) keep one 0.75 Ω bank and buy a capacitor bank rated for ≥ 10 A RMS ripple at
-  20 kHz and at Makkah enclosure temperatures, with margin (several low-ESR parts in
-  parallel; take the ripple rating from each part's datasheet, not from capacitance);
-- (b) two 1.5 Ω branches, each with its own MOSFET. Branch A alone holds the MPP
-  (D ≈ 0.46, pulses 12 A, capacitor ripple ≈ 6 A RMS). Branch B is switched in only
-  during sweeps, giving 0.75 Ω and the 4.4 V sweep floor for 1–2 s a minute. It costs one
-  more MOSFET and driver channel and one GPIO.
+What the two branches buy: one 0.75 Ω bank would load the capacitor with ≈ 10 A RMS all
+day. With branch A alone in hold it is ≈ 6 A RMS, the value PROJECT_STATE §4 was sized
+for, and each MOSFET sees pulses of about 14 A and not 29 A. The 4.4 V sweep floor is
+kept. Cost: a second MOSFET, a second gate-driver channel, a second 1.5 Ω bank and one
+GPIO.
 
-Both meet the measurement need. (a) is fewer parts; (b) halves the continuous stress.
-The team chooses; the firmware spec supports both with one compile-time switch.
+Parts to buy `[REC]`:
+- 2 × resistor bank, 1.5 Ω. Bank A: ≥ 100 W at Makkah ambient from the maker's derating
+  curve, on the heatsink. Bank B carries little mean power; the same part as A is the
+  simple choice, and any smaller part must have a pulse rating for 308 W over ≈ 2 s.
+- 2 × N-MOSFET, V_DS ≥ 60 V, pulse current ≥ 30 A, low R_DS(on).
+- Gate driver with two channels and 3.3 V logic inputs (or two single drivers), each
+  input with its own pull-down.
+- Capacitor bank ≥ 2000 µF, ≥ 35 V, rated for ≥ 6 A RMS ripple at 20 kHz with margin at
+  enclosure temperature (several low-ESR parts in parallel; take the ripple rating from
+  each part's datasheet, not from the capacitance).
+- Freewheel Schottky diode across each bank; TVS at each MOSFET.
 
 ## 2. Equipment
 
@@ -57,15 +65,15 @@ Criteria marked `[ASSUMPTION]` are proposals.
 
 | Step | What | How | Pass |
 |---|---|---|---|
-| **B0** Parts check | resistors, capacitors, MOSFET, driver, diode, TVS | Measure each resistor and the assembled bank (4-wire, or 2-wire with the lead resistance subtracted). Read the MOSFET, capacitor and resistor datasheets: pulse current, ripple rating, derating curve. | Bank within ±5 % of 0.75 Ω; MOSFET pulse rating ≥ 40 A; capacitor ripple rating ≥ the §1 value with margin; resistor power rating at 50 °C ambient ≥ 100 W from its derating curve |
-| **B1** Gate drive, no power | PWM and reset behaviour | Scope (or multimeter on DC) at the gate with the power stage unpowered: duty 0, 25, 50, 100 %. Then hold the ESP32 in reset and re-flash it. | 20 kHz; gate stays LOW through reset and flashing (pull-down works); duty 0 at boot |
+| **B0** Parts check | resistors, capacitors, MOSFET, driver, diode, TVS | Measure each resistor and the assembled bank (4-wire, or 2-wire with the lead resistance subtracted). Read the MOSFET, capacitor and resistor datasheets: pulse current, ripple rating, derating curve. | Each bank within ±5 % of 1.5 Ω and the two within 2 % of each other; each MOSFET pulse rating ≥ 30 A; capacitor ripple rating ≥ 6 A RMS with margin; bank A power rating at 50 °C ambient ≥ 100 W from its derating curve; bank B pulse rating as in §1 |
+| **B1** Gate drive, no power | PWM and reset behaviour | Scope (or multimeter on DC) at **both** gates with the power stage unpowered: duty 0, 25, 50, 100 % in hold mode (A only) and in sweep mode (A and B). Then hold the ESP32 in reset and re-flash it. | 20 kHz; gate B stays LOW in hold mode and follows gate A in sweep mode; both gates stay LOW through reset and flashing (pull-downs work); duty 0 at boot |
 | **B2** Low power, meter check | INA226 against the multimeters | Supply 12 V, current limit 2 A. Step the duty so the current is ≈ 0.5, 1, 1.5, 2 A. At each: INA226 V and I, multimeter V at the supply terminals **and** at the unit, multimeter I. | I gain factor (INA / meter) constant within ±0.3 % over the four points → record it as the shunt calibration. V at the unit within ±0.3 % of the meter there. Cable resistance = (V_supply − V_unit) / I recorded. Also record which terminal the unit senses V_BUS on (open TODO in BRINGUP) |
-| **B3** Supply as a crude module | R_eff = R / D | Supply 21 V, limit 5.9 A (short tests) or 4.7 A (long tests, ≈ 100 W). Sweep D from 0 to 1 slowly by hand command. Below the limit the supply holds 21 V and `I = 21·D/0.75`; above it the current holds and `V = I·0.75/D`. | Measured (V, I) within ±5 % of these formulas over the whole range; no oscillation at the knee (if the supply hunts between its two modes, note the duty range and avoid it) |
+| **B3** Supply as a crude module | R_eff = R / D | Supply 21 V, limit 5.9 A (short tests) or 4.7 A (long tests, ≈ 100 W). Sweep D from 0 to 1 slowly by hand command, first with branch A alone (R = 1.5 Ω), then with both (R = 0.75 Ω). Below the limit the supply holds 21 V and `I = 21·D/R`; above it the current holds and `V = I·R/D`. | Measured (V, I) within ±5 % of these formulas over the whole range, for both cases; the two branches share the current within ±5 % (clamp meter, or the voltage across each bank); no oscillation at the knee (if the supply hunts between its two modes, note the duty range and avoid it) |
 | **B4** Settling time | wait needed after a duty step | Step D between two values in the current-limited region; log V with the fastest INA226 setting (140 µs conversion, no averaging) for 50 ms. Repeat near V_oc and near the lowest voltage. | Time to stay within 0.2 % of the final value → `t_settle`; the firmware uses 1.5 × the worst case. Compare with the 15–20 ms estimate of PROJECT_STATE §9 |
-| **B5** Heat run | thermal design | 30 min at ≈ 100 W (21 V, 4.7 A limit, duty in the current-limited region). Every 5 min: temperature of resistor body, heatsink, MOSFET, capacitors, diode. | All below their datasheet limits with ≥ 20 °C margin at bench ambient (outdoors will be ≈ 15–20 °C hotter `[ASSUMPTION]`); bank resistance drift recorded; then the over-temperature trip test: warm the heatsink sensor → duty goes to 0 and the trip is logged |
+| **B5** Heat run | thermal design | 30 min at ≈ 100 W (21 V, 4.7 A limit, duty in the current-limited region). Branch A alone, as in hold. Every 5 min: temperature of resistor body, heatsink, MOSFET, capacitors, diode. Then 5 min with a sweep every 15 s (γ mode) and read bank B and MOSFET B. | All below their datasheet limits with ≥ 20 °C margin at bench ambient (outdoors will be ≈ 15–20 °C hotter `[ASSUMPTION]`); bank resistance drift recorded; then the over-temperature trip test: warm the heatsink sensor → duty goes to 0 and the trip is logged |
 | **B6** Ripple and interference | measurement quality | With the load at the MPP-like point: scope the voltage at the INA226 input (ripple p-p). Then run the full logger for 10 min with PWM off and 10 min with PWM on. | INA226 readings with the chosen averaging: standard deviation ≤ 0.05 % of V and of I `[ASSUMPTION]`. Modbus CRC errors, DS18B20 bad readings and I2C errors: no more with PWM on than with PWM off |
 | **B7** Faults | safe failure | (1) Reset the ESP32 while the load runs. (2) Unplug the INA226 cable while holding. (3) Pull the supply connector under load. (4) Check the reverse-polarity protection with the supply current-limited to 0.2 A. | (1) load turns off, restarts cleanly. (2) duty freezes, error logged, no runaway. (3) nothing fails; scope shows the turn-off spike below the MOSFET and TVS ratings. (4) no current flows, nothing heats |
-| **B8** First sun | the real module | Clear midday. Connect the module. Ten sweeps back to back, then 10 min of hold with a sweep every 60 s. Multimeter V_oc at the module connectors. | V_oc (INA, cable-corrected) within ±0.3 % of the meter. P_mp of the ten sweeps: standard deviation ≤ 0.3 % `[ASSUMPTION]` at steady G. Sweep reaches below 0.5 · V_oc. Hold voltage within ±1 % of the last sweep's V_mp. P_mp plausible against the listing scaled by G (a sanity check only: the listing has no temperature data) |
+| **B8** First sun | the real module | Clear midday. Connect the module. Ten sweeps back to back, then 10 min of hold with a sweep every 60 s. Multimeter V_oc at the module connectors. | V_oc (INA, cable-corrected) within ±0.3 % of the meter. P_mp of the ten sweeps: standard deviation ≤ 0.3 % `[ASSUMPTION]` at steady G. Sweep reaches below 0.5 · V_oc. Hold voltage within ±1 % of the last sweep's V_mp, with no visible jump when branch B drops out at the end of a sweep. P_mp plausible against the listing scaled by G (a sanity check only: the listing has no temperature data) |
 | **B9** Reference check | independent I-V | If an electronic load or I-V tracer can be borrowed, or with the data logger on the validation day: same module, same minutes. | P_mp within ±2 % `[ASSUMPTION]`; differences explained |
 
 ## 4. Records to keep

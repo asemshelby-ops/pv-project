@@ -19,8 +19,10 @@ Last synced: 2026-11-10. Full status, reasons and sources: ./PROJECT_STATE.md
 - Deferred: cooling, pump (ENABLE_PUMP 0), anemometer (HAS_ANEMOMETER 0, wind = NaN).
 - Spike definition (supervisor): the rise when the sun returns after a cloud COUNTS.
   Do not require stable irradiance; label the cause (irradiance step vs. other).
-- Load: R_LOAD = 0.75 ohm (2 x 1.5 ohm parallel) so the sweep reaches ~4.4 V and Isc.
-  Start-of-sweep pulse ~29 A [EST] -> MOSFET >= 40 A pulse, low R_DS(on). Per-step
+- Load (decision 2026-11-11): two 1.5 ohm branches, each with its own MOSFET. Branch A
+  alone holds the MPP (D ~0.46); branch B is added only during I-V sweeps (0.75 ohm
+  total) so the sweep reaches ~4.4 V and Isc. Pulse ~14 A per MOSFET [EST] -> each
+  MOSFET >= 30 A pulse, low R_DS(on); capacitor ripple ~6 A RMS continuous. Per-step
   settle 5*tau ~15-20 ms, INA226 1.1 ms conversion x4 avg [EST, verify on bench].
 - Timestamps: RTC and logs in UTC; NASIM adds +3 h internally. Run set_rtc.py first.
 - The supervisor lends a commercial data logger: reference for validating the ESP32
