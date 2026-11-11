@@ -1,6 +1,6 @@
 # Graduation Project — Master State File
 
-**Last updated:** 2026-11-10
+**Last updated:** 2026-11-11
 **Governs:** all *status* questions (what is decided / pending / open). When this file conflicts with any other project file, chat, memory note, the team explainer page or the supervisor deck on status, **this file wins**.
 **Does not replace:** `literature-research-and-design-decisions.md` (its literature findings remain valid; §10 lists which of its status items and framings are overridden). The **Excel BOM** remains authoritative for part numbers, quantities, and prices.
 
@@ -401,6 +401,18 @@ Record each evaluated idea as `Decision: … (date, decided by …)`.
 - Finish the DAQ: solder BME280, PYR20 in sun + Modbus, DS18B20 water-bath calibration
 - Run the BRINGUP "Before logging" checklist (set_rtc.py to UTC, marker test), then install outdoors and log
 - Literature: read the full texts of the closest works for the paper (§1.6)
+
+**Stage 1 audit of docs, firmware and Python — 2026-11-11 (Claude) `[REC]`:** checked: 58 pytest tests pass; the logger builds (459 kB flash); on-board double-precision parity holds (`out/replay/replay.md`). Ranked gaps for the paper:
+1. *Critical* — no firmware drives the load: no MPP hold and no I-V sweep exist, so the logger records the module at open circuit (V = Voc, I ≈ 0, P ≈ 0). γ and the power cost cannot be measured yet, and an open-circuit module runs hotter than a loaded one `[EST]`.
+2. *Critical* — the code still encodes the pre-10-Nov spike definition (irradiance rises scored as false alarms, threshold rule gated on flat irradiance, labels from the simulator's hidden wind), and no labelling rule exists for real data, where there is no wind truth.
+3. *High* — the Python pipeline assumes local-time CSV; the logger writes UTC. No ingestion layer, and no handling of gaps or missing values.
+4. *High* — logger fragility: one failed read resets NASIM (≥ 10 min without detection); RTC, BME280 and INA226 are not re-read for up to 60 s after one error; `T_ROM` is empty, so T1..T5 follow bus-scan order and can re-map after a re-scan.
+5. *High* — timestamp integrity for the data-logger comparison: no uptime column, rows without RTC time go to `/nodate.csv` unrecoverably, irradiance is read ≈ 0.8 s after the timestamp, no RTC drift check during the campaign.
+6. *High* — no uncertainty budget, γ method, validation-day protocol or cleaning protocol yet; data-logger model unknown.
+7. *High* — evaluation: `mixed` events (more numerous than scored spikes on the hard data) are excluded; detector differences sit inside the seed spread with no confidence intervals; CUSUM and the generator share one thermal model.
+8. *Medium* — claims: a few weeks in Nov–Dec cannot give "frequency in Makkah's climate"; without an anemometer the cause label can only be irradiance-driven vs. not.
+9. *Medium* — `/markers.csv` has no event type and cleaning is not logged anywhere; a marker is lost when the SD card is not mounted.
+10. *Medium* — records that contradict the current phase: tilt 20° (stand) vs 21° in `config.py` and `nasim_config.h`; the §4 sizing table still shows 1.5 Ω and ≥ 15 A pulses (now 0.75 Ω, ≈ 29 A `[EST]`); §3 and §6 still treat irradiance rises as a separate, gated class. `literature-research-and-design-decisions.md` and the Excel BOM are not in the repository, so they were not reviewed.
 
 **EWA — optional, not on the critical path `[DECIDED]`**
 - Gave approval in principle, then stopped responding (as of 2026-09-29). The team proceeds independently and keeps the channel open for specific steps (e.g. PYR20 calibration comparison, O&M session on soiling, facility visit).
