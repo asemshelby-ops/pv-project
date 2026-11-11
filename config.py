@@ -23,7 +23,8 @@ FAIMAN_U1 = 6.84            # [LIT] pvlib Faiman default, W s/(m3 K)
 LAT, LON = 21.42, 39.83     # Makkah (PROJECT_STATE sec.7)
 ALTITUDE_M = 277            # [ASSUMPTION] approximate site altitude
 TZ = "Asia/Riyadh"          # UTC+3, no daylight saving
-TILT_DEG = 21.0             # [CLAUDE.md] tilt ~21 deg
+TILT_DEG = 20.0             # [CLAUDE.md] workshop stand fixed at 20 deg (2026-11-10);
+                            # re-measure the real tilt at installation
 AZIMUTH_DEG = 180.0         # [ASSUMPTION] due south; measure at installation
 DAY_START, DAY_END = "06:00:00", "18:00:00"   # logged window, local time
 START_DATE = "2026-11-15"   # [ASSUMPTION] first synthetic day (test season)

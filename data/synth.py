@@ -1,7 +1,7 @@
 """Synthetic days for the spike-detection pipeline. EVERY VALUE IS SYNTHETIC.
 
 One day = 06:00-18:00 local at 10 s. For each day:
-  1. In-plane clear-sky irradiance (pvlib Ineichen, Makkah, tilt 21 deg, south)
+  1. In-plane clear-sky irradiance (pvlib Ineichen, Makkah, tilt config.TILT_DEG, south)
      x a daily haze factor x cloud transients.
   2. Ambient temperature and humidity: smooth daily curves.
   3. Wind: diurnal mean + slow random variation (Ornstein-Uhlenbeck) + injected
