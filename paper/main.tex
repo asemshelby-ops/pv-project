@@ -1,0 +1,539 @@
+% Draft, 2026-11-12. IEEE conference template (IEEEtran, conference mode).
+% NOT COMPILED on the authoring machine (no LaTeX installed): build it on Overleaf or with
+%   pdflatex main && bibtex main && pdflatex main && pdflatex main
+% Sections I-V and VIII are written in full. Sections VI-VII are structured placeholders:
+% every \todo{...} needs real data or a decision. Figures and tables are pulled from
+% paper/results/, which is a copy of the output folder of
+%   python -m analysis.pipeline --data <SD copy> --out paper/results
+% Until that folder holds REAL results, the placeholders print instead.
+% No number from synthetic data may be moved into Sections VI-VII.
+\documentclass[conference]{IEEEtran}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{cite}
+\DeclareUnicodeCharacter{00B0}{\ensuremath{^\circ}}
+\DeclareUnicodeCharacter{00B1}{\ensuremath{\pm}}
+\DeclareUnicodeCharacter{00B2}{\ensuremath{^2}}
+\DeclareUnicodeCharacter{03B1}{\ensuremath{\alpha}}
+\DeclareUnicodeCharacter{03B2}{\ensuremath{\beta}}
+\DeclareUnicodeCharacter{03B3}{\ensuremath{\gamma}}
+
+\newcommand{\degC}{\ensuremath{^\circ}C}
+\newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+\newcommand{\resultdir}{results}
+% A figure from the analysis output, or a labelled box while it does not exist.
+\newcommand{\resultfig}[4]{% file stem, width, caption, label
+  \begin{figure}[t]\centering
+  \IfFileExists{\resultdir/#1.pdf}{\includegraphics[width=#2]{\resultdir/#1.pdf}}%
+  {\fbox{\parbox{0.9\columnwidth}{\centering\vspace{6mm}\texttt{\detokenize{#1}.pdf}\\
+   produced by \texttt{analysis/report.py} from real data\vspace{6mm}}}}
+  \caption{#3}\label{#4}\end{figure}}
+% A table written by analysis/report.py (it carries its own caption and label tab:<stem>).
+\newcommand{\resulttable}[1]{%
+  \IfFileExists{\resultdir/#1.tex}{\input{\resultdir/#1.tex}}%
+  {\begin{table}[t]\centering\caption{Placeholder for \texttt{\detokenize{#1}.tex}.}
+   \label{tab:#1}\fbox{\parbox{0.9\columnwidth}{\centering
+   written by \texttt{analysis/report.py} from real data}}\end{table}}}
+
+\begin{document}
+
+\title{Thermal Spikes on a PV Module in Makkah: Field Characterisation and Real-Time
+Detection on a Microcontroller\\
+{\large \todo{working title; the supervisor chooses the final one}}}
+
+\author{\IEEEauthorblockN{\todo{Author names, in the order the supervisor decides}}
+\IEEEauthorblockA{Department of Mechanical Engineering (Mechatronics)\\
+Umm Al-Qura University, Makkah, Saudi Arabia\\
+\todo{e-mail addresses}}}
+
+\maketitle
+
+\begin{abstract}
+The temperature of a photovoltaic (PV) module does not only drift with the day; it also
+rises in steps of several degrees within minutes, for example when the sun returns after
+a cloud. Such fast rises are well studied as a modelling problem, but they are rarely
+described as events: how often they occur at a site, how large they are, what drives
+them and what they cost in power. This paper characterises these \emph{thermal spikes},
+defined as a rise of the module temperature of at least 3\,\degC{} within 10\,min, on a
+100\,W module in Makkah, Saudi Arabia, using a low-cost instrument built around an ESP32
+microcontroller: five back-sheet temperature sensors, an in-plane irradiance sensor and a
+two-branch switched resistive load that both holds the module at its maximum-power point
+and sweeps its current--voltage curve. The temperature coefficient of power, absent from
+the module's documentation, is measured outdoors from these sweeps. Three detectors run
+on the microcontroller every 10\,s and are scored event by event: a temperature-rise
+threshold, a CUSUM on the temperature increment, and a small gradient-boosted tree model.
+The comparison asks how early each detector raises its alarm and how many false alarms
+that costs. \todo{Two to three sentences of results from Section VI: observation period,
+spikes per day by cause, power cost per spike, and the lead time and false-alarm rate of
+each detector.}
+\end{abstract}
+
+\begin{IEEEkeywords}
+photovoltaic module temperature, thermal transient, event detection, CUSUM, gradient
+boosted trees, TinyML, microcontroller, temperature coefficient, I--V curve
+\end{IEEEkeywords}
+
+\section{Introduction}
+The power of a crystalline-silicon PV module falls as its temperature rises; reported
+field values of the power temperature coefficient lie between 0.30 and 0.45\,\%/\degC{}
+in absolute value \cite{kaldellis2014}, and the many correlations in use are reviewed in
+\cite{skoplaki2009}. In a hot, dry climate the module spends most of the day far above
+the 25\,\degC{} of its rating, so its temperature is a first-order variable of its yield.
+
+Module temperature is usually discussed as a level: models give it from irradiance, air
+temperature and wind at steady state \cite{king2004,faiman2008}, and cooling systems
+switch on when it crosses a set value \cite{moharram2013}. But the temperature also
+moves fast. A module has a thermal time constant of about six minutes \cite{herteleer2023},
+so a step in irradiance or a lull in the wind appears as a rise of several degrees
+within minutes. A growing body of work models these dynamics so that predicted
+temperature follows measured temperature at second-to-minute scales
+\cite{jones2001,armstrong2010,lobera2013,veldhuis2015,barry2020,prilliman2020,herteleer2023}.
+
+What that work does not provide, in the literature we read, is a description of the
+fast rises as events. For a given module and site we could not find how often they
+occur, how large they are, which share follows an irradiance step, and what they cost in
+power; nor could we find such measurements for western Saudi Arabia. The question
+matters for any action that should be taken \emph{during} a rise, such as a short burst
+of cooling: the action is only useful if the rise is recognised while most of it is
+still to come.
+
+This leads to the question of this paper: \emph{how often do thermal spikes occur on a
+fixed 100\,W module in Makkah during the measurement period, what drives them, what do
+they cost in power, and how early can a microcontroller detect them?} We call a thermal
+spike a rise of the module temperature of at least 3\,\degC{} within 10\,min, whatever
+its cause; the rise that follows the return of the sun after a cloud is included.
+
+The contributions are deliberately modest.
+\begin{enumerate}
+\item A documented low-cost instrument: an ESP32 logger with five back-sheet sensors,
+an in-plane silicon irradiance sensor and a two-branch switched resistive load that
+holds the maximum-power point and sweeps the I--V curve, with an uncertainty budget and
+a comparison against a commercial data logger.
+\item A characterisation of thermal spikes on one module over a stated period: frequency,
+size, duration, cause (irradiance-driven or not) and power cost, the last through a
+temperature coefficient measured on this module by an outdoor transient method
+\cite{king1997}.
+\item A comparison, on the microcontroller, of three detectors scored at event level.
+The comparison is framed around \emph{detection lead time and false alarms}, not around
+a headline accuracy: with a rise defined by a threshold, a threshold rule will find
+nearly every event sooner or later, so the useful question is how much earlier another
+detector fires and at what cost in false alarms.
+\end{enumerate}
+To the authors' knowledge, fast temperature rises of a PV module have not been reported
+as discrete events with their frequency, cause and power cost from field measurements in
+Makkah, and detectors of such events have not been compared in real time on a low-cost
+microcontroller. This statement rests on a limited search, described in Section~II.
+
+The paper does not claim a climate statistic (one module, one site, one period), a
+cooling benefit, a new thermal model or a new I--V tracer topology, and it reports the
+detector comparison whichever way it comes out.
+
+\section{Related Work}
+\subsection{Module temperature: steady state and dynamics}
+The Sandia model gives the back-surface temperature as
+$T_m = E\,\exp(a+b\,W\!S)+T_a$ and the cell temperature as $T_c = T_m + (E/E_0)\,\Delta T$,
+with $\Delta T = 3$\,\degC{} for an open-rack glass/cell/polymer-sheet module and a
+stated accuracy of about $\pm5$\,\degC{} \cite{king2004}. Faiman showed on seven module
+types that a modified Hottel--Whillier--Bliss equation predicts module temperature to
+within the cell-to-cell differences inside a module \cite{faiman2008}; its
+implementation in pvlib \cite{pvlib2023} is the thermal model used in this work. Wind is
+decisive: at a test site in Bolzano, models that include wind predicted cell temperature
+better than those that do not for most technologies \cite{schwingshackl2013}.
+
+Steady-state models fail when conditions change faster than the module follows. Jones
+and Underwood treated the module as a non-steady energy balance and reported agreement
+within 6\,K for 95\,\% of the time under cloudy conditions \cite{jones2001}. Armstrong
+and Hurley argued that a steady-state model cannot be justified during rapidly changing
+conditions and proposed an RC model \cite{armstrong2010}; Torres Lobera and Valkealahti
+validated a dynamic model on three months of 1-s data \cite{lobera2013}. Empirical and
+filter-based corrections followed: a model for transient weather at 1-min resolution
+\cite{veldhuis2015}, an exponential smoothing kernel that halved the error of a
+steady-state model \cite{barry2020}, a weighted moving average over the previous 20\,min
+\cite{prilliman2020}, and a simplified energy balance checked on a case with passing
+clouds \cite{hannouch2024}. Herteleer et al.\ analysed 24 datasets from 15 sites and
+report a thermal time constant of $(6.3\pm1.0)$\,min for fixed-mount systems
+\cite{herteleer2023}; we use this value for the detection window and for the cause label.
+
+All of these treat a fast change as something to model. None of those we read reports
+the rises as events with their frequency, size, cause and power cost.
+
+\subsection{Temperature coefficients measured outdoors}
+King et al.\ describe an outdoor procedure: the module is shaded until it is near air
+temperature, then uncovered, and I--V curves are measured while it heats, with the
+module temperature taken as the average of several sensors on the rear surface. They
+name two difficulties: non-uniform temperature during the transient, and a back-surface
+temperature that does not represent the cell temperature \cite{king1997}. Coefficients
+have also been estimated from long-term field data with irradiance and spectral
+corrections \cite{paudyal2021}. IEC~60891 defines the correction procedures and the
+determination of their factors \cite{iec60891}; we describe our own procedure and do not
+claim conformity with the standard.
+
+\subsection{Low-cost monitoring and I--V tracing}
+Methods to obtain I--V curves are reviewed in \cite{duran2008,zhu2020,morales2021}; the
+last lists six topologies, one of which uses the duty cycle of a DC--DC converter to
+emulate a resistor. Low-cost tracers have been built on open microcontroller platforms
+\cite{papageorgas2015} and with a relay-switched resistor bank \cite{machado2025}.
+Low-cost monitoring systems have been compared with commercial instruments
+\cite{paredes2018} and designed to the accuracy requirements of the monitoring standard
+\cite{lopezvargas2019,iec61724}. Our load switches resistors by pulse-width modulation,
+without an inductor, and uses the same circuit to hold the maximum-power point and to
+sweep the curve. We did not find this arrangement in the papers we read; we do not
+claim it as new.
+
+\subsection{Event detection and learning on microcontrollers}
+Sequential change detection goes back to Page's CUSUM \cite{page1954}; methods for time
+series are surveyed in \cite{aminikhanghahi2017}. Benchmarks for real-time detectors
+score how early an anomaly is found \cite{lavin2015}, and precision and recall have been
+extended from points to ranges \cite{tatbul2018}; our metrics belong to this family.
+Gradient-boosted trees \cite{ke2017} remain strong on medium-sized tabular data
+\cite{grinsztajn2022}, and tree models can run in a few kilobytes of memory
+\cite{kumar2017}; the field is reviewed in \cite{ray2022}.
+
+In PV, the closest systems we read differ in kind. Novak and Landkamer use ESP32 nodes
+to sense and transmit, while the decision to cool is taken on a single-board computer
+from the panel temperature, the coolant state and weather trends \cite{novak2026}.
+Mellit classifies infrared images of modules with a convolutional network on a
+single-board computer \cite{mellit2022}. We did not find a detector of thermal
+transients that runs on the microcontroller itself and is scored at event level against
+simple baselines. \todo{Before submission: read \cite{herteleer2023}, \cite{king1997}
+and \cite{novak2026} in full and repeat the search for on-microcontroller detection;
+most works above were read at abstract level.}
+
+\section{System}
+\subsection{Module and site}
+The module is a 100\,W mono-crystalline unit of the 12\,V class. Its seller lists
+$V_{mp}=18$\,V, $I_{mp}=5.55$\,A, $V_{oc}=21.5$\,V and $I_{sc}=5.88$\,A; no temperature
+coefficients, operating-cell temperature or cell count are published, which is why the
+coefficient is measured here. It is mounted on a fixed open rack at a tilt of
+20$^\circ$ facing true south \todo{tilt and azimuth as measured at installation;
+coordinates and a photograph of the site}.
+
+\subsection{Sensors and logger}
+Table~\ref{tab:instrument} lists the measured quantities. An ESP32 reads all sensors
+every 10\,s and writes one row to a microSD card with a UTC timestamp from a
+temperature-compensated real-time clock. Five digital temperature sensors are fixed to
+the back sheet behind cell centres; their mean is the module temperature $T_m$. The
+irradiance sensor is mounted in the plane of the module. A button on the logger writes a
+time mark for every deliberate action at the rig; a daily log sheet gives each mark its
+meaning. \todo{State which sensors were calibrated in the common water bath and against
+which reference.}
+
+\begin{table}[t]
+\caption{Measured quantities and instruments.}
+\label{tab:instrument}
+\centering
+\begin{tabular}{lll}
+\toprule
+Quantity & Instrument & Interface \\
+\midrule
+Back-sheet temperature ($\times5$) & DS18B20 & 1-Wire \\
+Air temperature, humidity & BME280, shielded & I$^2$C \\
+In-plane irradiance & PYR20 silicon sensor & RS-485 Modbus \\
+Module voltage and current & INA226, 5\,m$\Omega$ shunt & I$^2$C \\
+Time & DS3231 clock, UTC & I$^2$C \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Measurement load}
+The module must work at its maximum-power point (MPP) for its temperature and its power
+to be those of a module in service, and its I--V curve must be swept to measure the
+maximum power directly. One circuit does both. Two identical branches, each a
+1.5\,$\Omega$ resistor bank switched by its own MOSFET at 20\,kHz, are connected across
+the module behind an input capacitor. With duty cycle $D$ the module sees an effective
+resistance
+\begin{equation}
+R_\mathrm{eff} = R/D ,
+\end{equation}
+with $R=1.5\,\Omega$ when branch~A switches alone and $R=0.75\,\Omega$ when both switch
+together. Branch~A alone holds the module at the voltage of the last measured MPP.
+Once a minute both branches sweep the duty cycle for about 1.6\,s: a coarse pass from
+open circuit down to about 4.4\,V, then a fine pass around the maximum. The current
+sensor sits between the module and the capacitor, so each recorded pair $(V,I)$ lies on
+the module's own curve. Using the second branch only during sweeps halves the ripple
+current the capacitor carries all day. \todo{Final part values, the measured settling
+time and the bench results (docs/paper/06); a one-line schematic figure.}
+
+\subsection{On-device detection}
+The detectors of Section~IV-D run on the same microcontroller on every 10-s sample. The
+tree model is exported to plain C \cite{m2cgen}. \todo{Time per update, flash and RAM
+measured on the board with the final model.}
+
+\section{Methodology}
+\subsection{Definition of a thermal spike}
+Reference labels are made offline, with the whole day in view; the detectors see only
+past samples. This separation matters: because a spike is defined by a threshold on the
+rise, a causal threshold rule fires at the moment the rise \emph{reaches} the threshold
+and never before. The comparison is therefore about how early and how reliably a
+detector fires while the rise is still developing.
+
+Let $T_s$ be the module temperature smoothed with a centred 3-sample median and a
+centred 1-min mean. With a window $W=10$\,min,
+\begin{equation}
+R(t) = T_s(t) - \min_{t-W\le u\le t} T_s(u).
+\end{equation}
+A spike exists when $R(t)\ge\theta$, $\theta=3$\,\degC. Its onset $t_\mathrm{on}$ is the
+latest minimum of $T_s$ in the window that ends at the first crossing $t_\theta$; its
+peak $t_\mathrm{pk}$ is the first maximum after $t_\theta$ that is not exceeded during
+the next 5\,min; its size is $A=T_s(t_\mathrm{pk})-T_s(t_\mathrm{on})$. The threshold is
+three times the normal heating rate of about 0.1\,\degC/min reported in
+\cite{moharram2013}, and the window is about 1.6 thermal time constants
+\cite{herteleer2023}. Rises between 2 and 3\,\degC{} are recorded as minor rises and are
+neutral in scoring. Events are kept only when the sun is more than about 11$^\circ$
+above the horizon and outside excluded periods: 30\,min after each logged cleaning, and
+the shade-and-uncover runs of Section~IV-C.
+
+\subsection{Cause and origin}
+Wind is not measured, so the cause is labelled only as irradiance-driven or not. Let
+$\Delta G$ be the difference between the mean irradiance during the event and the lowest
+1-min mean in the 10\,min before it. A first-order lag gives the rise this step explains,
+\begin{equation}
+\Delta T_G = \frac{\Delta G}{U_\mathrm{eff}}
+\left(1-e^{-(t_\mathrm{pk}-t_\mathrm{on})/\tau}\right),
+\end{equation}
+with $\tau=6.3$\,min \cite{herteleer2023} and $U_\mathrm{eff}$ fitted on event-free
+clear-sky data of the campaign \todo{fitted value; starting value 35\,W/(m$^2$K)}. The
+event is labelled \emph{irradiance} when $f_G=\Delta T_G/A\ge 2/3$,
+\emph{non-irradiance} when $f_G\le 1/3$, and \emph{mixed} otherwise. A second field
+records the origin: natural, or one of the controlled tests (a shade mesh of about 20\,\%
+over module and sensor, removed after 20\,min; a windbreak for 20\,min). Controlled
+tests have a known cause, so they also serve to check the cause rule.
+
+\subsection{Temperature coefficient and power cost}
+The coefficient $\gamma$ of the maximum power is measured by the outdoor transient
+method of \cite{king1997}. Near solar noon on a clear day the module, but not the
+irradiance sensor, is shaded for 25\,min and then uncovered; the load sweeps the I--V
+curve every 15\,s for 20\,min while the module heats. For each sweep the maximum power
+$P_{mp}$ is the vertex of a parabola fitted to the points within 3\,\% of the largest
+power. The cell temperature is $T_c=T_m+\Delta T\,G/G_0$ with $\Delta T=3$\,\degC{}
+\cite{king2004}; the first 2\,min after uncovering are dropped, because the cells lead
+the back sheet there. Sweeps during which the irradiance changed by more than 2\,\% are
+rejected. A least-squares line through
+$P^*=P_{mp}\,G_\mathrm{ref}/G$ against $T_c-25$ gives intercept $a$ and slope $b$, and
+\begin{equation}
+\gamma = b/a .
+\end{equation}
+As a check that does not use the irradiance sensor, the same regression on
+$P_{mp}/I_{sc}$ gives $\gamma-\alpha$, where $\alpha$ is the coefficient of the
+short-circuit current. The power cost of a spike is then
+\begin{equation}
+\Delta P/P = \gamma\,\Delta T_c,\qquad
+\Delta T_c = A + \Delta T\,\Delta G/G_0 .
+\end{equation}
+It is computed, not read from the measured power, for the reason given in Section~V.
+
+\subsection{Detectors}
+All three use the causal 3-sample median of $T_m$ and are silent for 10\,min after an
+alarm.
+\begin{itemize}
+\item \emph{Threshold}: alarm when the rise over the last 10\,min is at least
+$\theta_a$. No irradiance condition is applied, since irradiance-driven rises count.
+\item \emph{CUSUM}: $S_k=\max(0,\,S_{k-1}+(T_k-T_{k-1})-\kappa)$ on the temperature
+increment, alarm when $S_k\ge h$ \cite{page1954}.
+\item \emph{Gradient-boosted trees}: at most 50 trees of depth four \cite{ke2017} on
+ten features that the microcontroller computes: temperature rise over 2, 5 and 10\,min;
+relative irradiance change over 2\,min and range over 10\,min; clear-sky index;
+cosine of the solar zenith angle; temperature excess over air per unit irradiance; and
+the residual of a first-order thermal model \cite{faiman2008} with its CUSUM. The
+target is the first 10\,min of every spike. The alarm requires the output to exceed a
+threshold on two consecutive samples.
+\end{itemize}
+
+\subsection{Evaluation}
+Days are split chronologically into training (60\,\%), validation (20\,\%) and test
+(20\,\%), by whole local days. Every setting ($\theta_a$; $\kappa$, $h$; the output
+threshold) is chosen on the validation days and the test days are scored once.
+
+An alarm matches a spike when it falls between the onset and 2\,min after the peak. The
+first match is a true positive; a spike without a match is missed; an alarm outside
+every spike, minor rise and excluded period is a false alarm. We report precision,
+recall and $F_1$, and recall and $F_1$ per cause (with all false alarms in the
+precision, since a false alarm has no cause). The quantities the comparison rests on
+are:
+\begin{itemize}
+\item the \emph{detection delay} $t_\mathrm{alarm}-t_\mathrm{on}$;
+\item the \emph{lead} $t_\theta-t_\mathrm{alarm}$ over the moment the rise reaches
+3\,\degC, positive when the alarm comes first;
+\item the \emph{share of the rise remaining} at the alarm,
+$(T_s(t_\mathrm{pk})-T_s(t_\mathrm{alarm}))/A$;
+\item \emph{false alarms per day}.
+\end{itemize}
+Intervals are 95\,\% percentile intervals from 2000 bootstrap resamples of whole days;
+differences between detectors are computed on the same resampled days. A difference
+whose interval contains zero is reported as not detectable. The alarms written by the
+logger are compared with the same rows replayed offline.
+
+\subsection{Verification of the analysis chain on synthetic data}
+Before any field data existed, the complete chain was run on 150 synthetic days written
+in the logger's file formats. This verifies the software only. The synthetic module
+follows the same first-order thermal model that one of the features uses, its spikes are
+large (median 6.6\,\degC) and most follow a deep, abrupt cloud, and the rate of events
+is set by the generator, not by any climate. On the 30 synthetic test days all three
+detectors found nearly every spike and their $F_1$ values (0.97 to 0.99) could not be
+told apart; the tree model alarmed a median of 1.8\,min after onset against 7.3\,min for
+the threshold rule, with no false alarm against 0.07 per day, and it missed four spikes,
+none of them irradiance-driven. These numbers are not results of this paper. They are
+the reason the field comparison is framed around lead time and false alarms, and they
+show where to look: at the spikes that no irradiance step announces.
+\todo{Decide with the supervisor whether this subsection stays; if space is short, keep
+its first two sentences only.}
+
+\section{Measurement Uncertainty}
+Uncertainties follow the GUM \cite{gum2008}: datasheet limits are treated as rectangular
+distributions and combined in quadrature; Table~\ref{tab:uncertainty} gives the result.
+Entries marked with a dagger rest on an assumed value until the measurement named in the
+text replaces it.
+
+\begin{table}[t]
+\caption{Standard uncertainties ($k=1$) before field calibration.}
+\label{tab:uncertainty}
+\centering
+\begin{tabular}{lll}
+\toprule
+Quantity & Absolute & Change within 10\,min \\
+\midrule
+$T_m$ (mean of five) & 0.14--0.31\,\degC & 0.03--0.05\,\degC$^\dagger$ \\
+$T_c$ from $T_m$ & adds 0.5\,\degC$^\dagger$ & only if $G$ changes \\
+Air temperature & 0.65\,\degC$^\dagger$ & 0.1\,\degC$^\dagger$ \\
+Irradiance & 3.4--6.7\,\% & \todo{measured} \\
+Voltage & 0.11\,\% & 0.01\,\% \\
+Current & 0.59\,\%$^\dagger$ & 0.01\,\% \\
+Power & 0.60\,\%$^\dagger$ & 0.02\,\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\emph{Temperature.} Each sensor is specified to $\pm0.5$\,\degC; the mean of five lies
+between 0.14\,\degC{} (independent errors) and 0.31\,\degC{} (fully correlated). A rise
+within one event is a difference of readings minutes apart, so offsets cancel and only
+resolution and noise remain: about 0.05\,\degC, sixty times smaller than the 3\,\degC{}
+that defines a spike. The cell-to-back offset \cite{king2004} cancels at steady
+irradiance and enters an irradiance-driven rise through $\Delta G$.
+
+\emph{Irradiance.} The sensor is a silicon device with a stated accuracy of 5\,\% and a
+directional error of 3\,\%; whether the 5\,\% refers to the reading or to full scale is
+not stated \todo{seller's answer}, which gives the range in the table. Irradiance is
+therefore used only for steps, ratios and stability checks, never as an absolute
+reference.
+
+\emph{Electrical quantities.} The current is limited by the tolerance of the shunt,
+assumed to be 1\,\% until it is compared with a reference ammeter. Changes over minutes
+are resolved to about 0.02\,\% of power.
+
+\emph{Consequence.} A 3\,\degC{} spike changes the power by roughly one percent, which
+the electrical chain resolves easily but which cannot be separated from the effect of
+irradiance when irradiance is known to a few percent. The power cost is therefore
+computed as $\gamma\,\Delta T_c$, and its uncertainty is that of $\gamma$.
+
+\emph{Temperature coefficient.} Scatter within one run contributes about 2\,\% of
+$\gamma$. The systematic terms are larger: the cell-to-back offset builds from zero to
+about 2.7\,\degC{} during a run, which would overstate $|\gamma|$ by about 13\,\% over a
+20\,\degC{} span if ignored and leaves about 2.6\,\% after correction; a drift of
+0.5\,\% in the irradiance reading during a run would bias $\gamma$ by about 6\,\% for a
+coefficient of $-0.4$\,\%/\degC. The reported value is the mean over runs on several
+days, with uncertainty $\sqrt{s^2/n+u_B^2}$, $s$ being the spread between runs.
+\todo{Replace the estimates of this paragraph with the measured spread.}
+
+\emph{Time.} The clock drifts by at most 0.17\,s per day between 0 and 40\,\degC; the
+offset is checked weekly. Within one row the readings are taken within about one second.
+
+\section{Results}
+\emph{This section holds no results yet. Each item names the figure or table that
+\texttt{analysis/pipeline.py} writes and the sentence it must support.}
+
+\subsection{Instrument validation}
+\resulttable{table5_validation}
+\resultfig{fig5_validation}{\columnwidth}{ESP32 minus reference logger against their
+mean, back-sheet sensor T3. \todo{dates}}{fig:validation}
+\todo{From Table~\ref{tab:table5_validation}: clock lag; bias and limits of agreement of
+temperature, of the 10-min rise, of irradiance (same sensor, two read-outs: this checks
+the read-out, not the sensor), voltage and current; which acceptance criteria were met.
+State the reference logger's model and its own accuracy.}
+
+\subsection{Thermal spikes}
+\resultfig{fig1_example_day}{\columnwidth}{One day: module and air temperature,
+irradiance, labelled spikes by cause, and the alarms of the three detectors.
+\todo{date}}{fig:day}
+\resultfig{fig2_spike_statistics}{\columnwidth}{Spike size by cause, and number of
+spikes per day.}{fig:stats}
+\resulttable{table1_spike_statistics}
+\resulttable{table6_cause_check}
+\todo{Observation period, valid days and hours. From Table~\ref{tab:table1_spike_statistics}:
+natural spikes per day with a 95\,\% interval, by cause; size, duration and rate. Minor
+rises. From Table~\ref{tab:table6_cause_check}: agreement of the cause rule with the
+controlled tests. Natural and controlled events are reported separately.}
+
+\subsection{Temperature coefficient and power cost}
+\resultfig{fig4_gamma}{\columnwidth}{Irradiance-corrected maximum power against cell
+temperature for all shade-and-uncover runs.}{fig:gamma}
+\resulttable{table4_gamma}
+\todo{$\gamma$ with expanded uncertainty, number of runs and days; the
+$I_{sc}$-normalised value; $\alpha$ and $\beta$; comparison with the field range of
+\cite{kaldellis2014} and the values of \cite{king1997}. Then the power cost per spike
+(median and range) and summed per day, from the last column of
+Table~\ref{tab:table1_spike_statistics}.}
+
+\subsection{Detection}
+\resulttable{table2_detection}
+\resulttable{table3_per_cause}
+\resultfig{fig3_detection_delay}{\columnwidth}{Share of spikes detected against time
+from onset; the dotted line marks the median time at which the rise reaches
+3\,\degC.}{fig:delay}
+\todo{Number of spikes in training, validation and test days; tuned settings. Lead
+with the two quantities the comparison rests on: (i) lead time and share of the rise
+remaining, from Table~\ref{tab:table2_detection} and Fig.~\ref{fig:delay}, with the
+paired difference between the tree model and each baseline and its interval; (ii) false
+alarms per day with intervals. Then precision, recall and $F_1$, saying plainly whether
+their differences are detectable. Then recall per cause from
+Table~\ref{tab:table3_per_cause}, especially for spikes that are not irradiance-driven.
+If fewer than 50 training and 20 test spikes were collected, the threshold and CUSUM are
+the main result and the tree model is exploratory.}
+
+\subsection{Agreement on the device}
+\resulttable{table7_parity}
+\todo{Alarm mismatches between the logger and the offline replay of the same rows;
+detector blackouts; time per update and memory on the board. Requires the on-board
+replay to be re-run with the final model.}
+
+\section{Discussion}
+\todo{Write after the results. Points to cover, each tied to a table or figure:}
+\begin{itemize}
+\item \todo{What the lead time is worth: with a time constant of about 6\,min, an alarm
+$x$ minutes earlier leaves $y$\,\% of the rise still to come
+(Table~\ref{tab:table2_detection}). Say for which later use this matters.}
+\item \todo{Whether the learned detector earns its place: if its lead holds only for
+irradiance-driven spikes, a simple irradiance-step rule may do as well; test that claim
+on the per-cause table before making it.}
+\item \todo{False alarms: what one false alarm per day would cost a later action.}
+\item \todo{Natural against controlled events: do they differ in size and rate?}
+\item \todo{How rare natural spikes were, and what that means for the question.}
+\end{itemize}
+\emph{Limitations}, to be kept whatever the results:
+one module, one site and a short period, so no climate statistic; a silicon irradiance
+sensor of 5\,\% stated accuracy; back-sheet rather than cell temperature; no wind
+measurement, so the cause is only irradiance-driven or not; controlled events are not
+natural events; reference labels and the threshold detector share one signal, which the
+hindsight-versus-causal design addresses but does not remove; the tree model's internal
+thermal model uses literature parameters, not ones fitted to this module
+\todo{unless refitted}.
+
+\section{Conclusion}
+\todo{Three or four sentences after the results: how often spikes occurred and what
+drove them; their power cost; how much earlier than a threshold rule a detector on a
+microcontroller raised its alarm, and at how many false alarms per day; what the next
+step is.} The instrument, the definitions and the analysis code are documented so that
+the measurement can be repeated on another module or site.
+
+\section*{Acknowledgment}
+\todo{Supervisor, laboratory access, workshop that built the stand, lender of the data
+logger. State the use of AI tools as the venue requires.}
+
+\bibliographystyle{IEEEtran}
+\bibliography{refs}
+
+\end{document}
