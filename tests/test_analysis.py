@@ -40,17 +40,17 @@ def test_ingest_converts_utc_to_local_and_segments(rig):
     assert (q["completeness"] == 1.0).all() and (q["segments"] == 1).all()
 
 
-def test_ingest_gap_and_missing_value_start_new_segments(rig, tmp_path):
+def test_ingest_bridges_one_missing_value_and_breaks_at_a_long_gap(rig, tmp_path):
     out, _, _, _ = rig
     f = sorted(out.glob("2*.csv"))[0]
     lines = f.read_text().splitlines()
     cells = lines[500].split(",")
-    cells[9] = ""                                              # irradiance missing in one row
+    cells[9] = ""                                              # one unusable row: bridged
     lines[500] = ",".join(cells)
-    del lines[1000:1010]                                       # a 100 s gap
+    del lines[1000:1010]                                       # 10 rows absent: a new segment
     (tmp_path / f.name).write_text("\n".join(["# status: test"] + lines) + "\n")
     df = ingest.read_logger(tmp_path)
-    assert ingest.detector_frame(df)["segment"].nunique() == 3
+    assert ingest.detector_frame(df)["segment"].nunique() == 2
     assert (df["segment"] == -1).sum() >= 1
 
 

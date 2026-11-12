@@ -5,11 +5,15 @@ time, because the detector features (solar geometry) and the day split are local
   * `date`, `time`      rewritten to LOCAL time (the schema the detect/ code expects)
   * `date_utc`, `time_utc`, `t_utc`   the logger's own timestamps, kept
   * `t_local`           naive local timestamp
-  * `segment`           id of an unbroken run of complete in-window rows (>= 0), else -1.
-                        A new segment starts at a new local day, after a gap above
-                        config.GAP_S, or after a row with a missing detector input.
-                        (Stricter than the firmware since 2026-11-12: on the board NASIM
-                        skips such a row and resets only after 5 in a row.)
+  * `segment`           id of the detector run a usable row belongs to (>= 0), else -1.
+                        Usable = in the day window, every detector input present, time
+                        from the RTC. The rule is the board's (firmware/logger): a row
+                        that is not usable, or absent from the file, is skipped and the
+                        run goes on; config.DET_RESET_AFTER_FAILS (5) such rows in a row
+                        start a new segment, i.e. up to 4 are bridged. A new local day
+                        or a restart of the board (uptime_ms falls) also starts one.
+                        Skipped rows stay at -1, so inside a segment two rows can be up
+                        to 50 s apart: the detectors count samples, as on the board.
   * `D`, `load_mode`, `sweep_id`, `uptime_ms`, `status`   the five columns the logger
                         appends since 2026-11-12 (docs/paper/07 sec. 7). Files written
                         before that load too; the columns are then empty (NaN / <NA>).
@@ -74,11 +78,15 @@ def read_logger(src, calib=None):
     df["t_local"] = local.dt.tz_localize(None)
 
     in_window = (df["time"] >= config.DAY_START) & (df["time"] < config.DAY_END)
-    use = in_window & df[REQUIRED].notna().all(axis=1)
-    step = df["t_utc"].diff().dt.total_seconds()
-    new = use & (~use.shift(fill_value=False) | (step > config.GAP_S)
-                 | (df["date"] != df["date"].shift()))
-    df["segment"] = np.where(use, new.cumsum() - 1, -1)
+    use = in_window & df[REQUIRED].notna().all(axis=1) & (df["time_source"] == "rtc")
+    u = df[use]
+    # rows the detector did not get between two usable rows: unusable ones and absent ones
+    skipped = (u["t_utc"].diff().dt.total_seconds() / config.DT_S).round() - 1
+    new = (skipped.isna() | (skipped >= config.DET_RESET_AFTER_FAILS)
+           | (u["date"] != u["date"].shift())
+           | (u["uptime_ms"].astype("float64").diff() < 0))
+    df["segment"] = -1
+    df.loc[use, "segment"] = new.cumsum() - 1
     return df
 
 

@@ -188,6 +188,15 @@ CAUSE_F_IRRADIANCE = 2 / 3  # [ASSUMPTION] explained fraction >= 2/3 -> "irradia
 CAUSE_F_NON = 1 / 3         # [ASSUMPTION] explained fraction <= 1/3 -> "non_irradiance"
 MATCH_GRACE_MIN = 2         # [ASSUMPTION] an alarm up to 2 min after the peak still matches
 CLEANING_EXCLUDE_MIN = 30   # [ASSUMPTION] excluded after a logged cleaning
-GAP_S = 15.0                # a step above 15 s between rows starts a new detector segment
+# A detector skips a row it cannot use (input or time missing, or the row is absent) and
+# keeps its state; this many such rows in a row reset it. ONE value for the board
+# (NASIM_DET_RESET_AFTER_FAILS in nasim_config.h, used by firmware/logger) and for the
+# offline segments (analysis/ingest.py). 5 rows = 50 s; up to 4 are bridged.
+DET_RESET_AFTER_FAILS = 5   # [ASSUMPTION] Asim, 2026-11-12
+# Reviewer checks (docs/paper/12 sec. 3), all [ASSUMPTION]:
+G_STEP_GRID = (0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0)  # relative rise of G in 2 min
+MATCH_FA_PER_DAY = (0.05, 0.1, 0.2, 0.5)   # false-alarm budgets at which detectors are compared
+MATCH_MIN_RECALL = 0.9                     # a setting must still find 90 % of the validation spikes
+CAUSE_SENSITIVITY = ((0.25, 0.75), (1 / 3, 2 / 3), (0.4, 0.6), (0.5, 0.5))  # (non, irradiance) limits
 PAPER_SPLIT = (0.6, 0.2, 0.2)   # chronological train / validation / test, whole local days
 CELL_BACK_DT_C = CELL_MINUS_BACK_C   # same Sandia offset, used by the gamma analysis

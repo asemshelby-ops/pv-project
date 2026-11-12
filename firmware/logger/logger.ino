@@ -35,8 +35,9 @@ static const uint8_t RETRY_EVERY = 6;         // retry missing devices every 6 s
 static const uint8_t RESYNC_EVERY = 6;        // re-find the RTC second edge every 60 s
 // A row with a missing detector input is skipped by the detector, which keeps its state.
 // Only this many skipped rows in a row clear the state (the 10 s spacing the features
-// assume is then too far off). 5 rows = 50 s, against feature windows of up to 10 min.
-static const uint8_t DET_RESET_AFTER_FAILS = 5;
+// assume is then too far off). The value is config.py DET_RESET_AFTER_FAILS, through the
+// generated nasim_config.h: the offline analysis (analysis/ingest.py) uses the same one.
+static const uint8_t DET_RESET_AFTER_FAILS = NASIM_DET_RESET_AFTER_FAILS;
 
 // Back-sheet sensors T1..T5 by ROM (row 0 = T1 ... row 4 = T5).
 // TODO(user): fill in all five rows after the water-bath cross-calibration and mounting.

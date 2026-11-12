@@ -21,4 +21,5 @@
 #define NASIM_N5 30
 #define NASIM_N10 60
 #define NASIM_SILENCE_N 60
+#define NASIM_DET_RESET_AFTER_FAILS 5
 #endif

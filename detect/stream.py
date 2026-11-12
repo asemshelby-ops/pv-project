@@ -33,7 +33,8 @@ def samples(days):
     wind = (days["wind"].to_numpy(dtype=float) if "wind" in days
             else np.full(len(days), np.nan))
     # A detector restarts at each new logged day -- or, for real logger data, at each
-    # new `segment` (analysis/ingest.py): a new day, a gap, or a row with a missing input.
+    # new `segment` (analysis/ingest.py): a new day, a restart of the board, or
+    # config.DET_RESET_AFTER_FAILS rows in a row that the detector could not use.
     date = days["segment" if "segment" in days else "date"].to_numpy()
     for i in range(len(days)):
         yield (i == 0 or date[i] != date[i - 1],

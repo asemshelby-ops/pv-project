@@ -7,6 +7,7 @@ import re
 import pandas as pd
 import pytest
 
+import config
 from analysis import fake_logger, ingest
 from data import synth
 from data.schema import (LOGGER_EXTRA_COLUMNS, STATUS_BITS, decode_status, has_status)
@@ -148,3 +149,69 @@ def test_firmware_header_line_equals_the_format_the_tests_use():
     header = "".join(re.findall(r"\"([^\"]*)\"", literal))
     assert header.split(",") == fake_logger.HEADER + fake_logger.EXTRA
     assert header.split(",")[-5:] == LOGGER_EXTRA_COLUMNS
+
+
+# --- detector segments: the board's rule (config.DET_RESET_AFTER_FAILS) -------------------------
+
+def _drop(folder, rows):
+    """Remove data rows (0 = first row) from the first day file: rows that never reached the card."""
+    f = sorted(folder.glob("2*.csv"))[0]
+    lines = f.read_text().splitlines()
+    f.write_text("\n".join(l for k, l in enumerate(lines) if k - 1 not in set(rows)) + "\n")
+
+
+def _segments(folder):
+    df = ingest.read_logger(folder)
+    return df, ingest.detector_frame(df)["segment"].nunique()
+
+
+def test_four_unusable_rows_are_bridged_and_five_start_a_new_segment(days, tmp_path):
+    assert config.DET_RESET_AFTER_FAILS == 5
+    fake_logger.write_logger_files(days, tmp_path)
+    _, n0 = _segments(tmp_path)                                  # one segment per day
+    for row in range(300, 304):
+        _edit(tmp_path, row, irradiance="")
+    df, n = _segments(tmp_path)
+    assert n == n0 and (df["segment"].iloc[300:304] == -1).all()  # skipped, the run goes on
+    assert df["segment"].iloc[299] == df["segment"].iloc[304]
+    _edit(tmp_path, 304, irradiance="")                          # the fifth in a row
+    df, n = _segments(tmp_path)
+    assert n == n0 + 1 and df["segment"].iloc[305] == df["segment"].iloc[299] + 1
+
+
+def test_absent_rows_count_like_unusable_ones(days, tmp_path):
+    fake_logger.write_logger_files(days, tmp_path)
+    _, n0 = _segments(tmp_path)
+    _drop(tmp_path, range(300, 304))                             # 4 rows never written: bridged
+    assert _segments(tmp_path)[1] == n0
+    _edit(tmp_path, 600, T3="")
+    _edit(tmp_path, 601, T_ambient="")
+    _drop(tmp_path, [602, 603])                                  # 2 unusable + 2 absent = 4
+    assert _segments(tmp_path)[1] == n0
+    _drop(tmp_path, range(900, 905))                             # 5 absent: a new segment
+    assert _segments(tmp_path)[1] == n0 + 1
+    _edit(tmp_path, 1200, irradiance="")
+    _drop(tmp_path, range(1201, 1205))                           # 1 unusable + 4 absent = 5
+    assert _segments(tmp_path)[1] == n0 + 2
+
+
+def test_a_restart_of_the_board_and_a_row_without_rtc_time(days, tmp_path):
+    fake_logger.write_logger_files(days, tmp_path)
+    _, n0 = _segments(tmp_path)
+    _edit(tmp_path, 100, date="", time="", status=BIT["RTC_INVALID"])
+    df, n = _segments(tmp_path)                                  # the board skipped that row
+    assert n == n0 and df["segment"].iloc[100] == -1 and df["time_source"].iloc[100] == "uptime"
+    for row in range(400, 420):                                  # uptime_ms falls: a restart
+        _edit(tmp_path, row, uptime_ms=4000 + 10000 * (row - 400))
+    df, n = _segments(tmp_path)
+    assert n == n0 + 1 and df["segment"].iloc[400] == df["segment"].iloc[399] + 1
+
+
+def test_board_and_analysis_share_one_reset_constant():
+    from export import run as ex
+    header = (ROOT / "export/c/generated/nasim_config.h").read_text()
+    assert header == ex.config_header()                          # the committed file is current
+    assert f"#define NASIM_DET_RESET_AFTER_FAILS {config.DET_RESET_AFTER_FAILS}\n" in header
+    ino = (ROOT / "firmware/logger/logger.ino").read_text()
+    assert "DET_RESET_AFTER_FAILS = NASIM_DET_RESET_AFTER_FAILS;" in ino
+    assert "GAP_S" not in (ROOT / "analysis/ingest.py").read_text()
