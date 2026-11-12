@@ -219,19 +219,34 @@ def fig_validation(esp, ref_values, name, out):
 
 # --- tables -----------------------------------------------------------------------------
 
-def latex(df, caption, label):
+def latex(df, caption, label, wide=False):
+    """One booktabs table. wide=True spans both columns of the IEEE layout (table*)."""
+    env = "table*" if wide else "table"
     esc = lambda s: str(s).replace("_", r"\_").replace("%", r"\%").replace("°", r"$^\circ$")  # noqa: E731
     head = " & ".join(esc(c) for c in df.columns)
     body = "\n".join(" & ".join(esc(v) for v in row) + r" \\" for row in df.astype(str).to_numpy())
-    return (f"\\begin{{table}}[t]\n\\caption{{{caption}}}\n\\label{{{label}}}\n\\centering\n"
-            f"\\begin{{tabular}}{{l{'r' * (len(df.columns) - 1)}}}\n\\toprule\n{head} \\\\\n"
-            f"\\midrule\n{body}\n\\bottomrule\n\\end{{tabular}}\n\\end{{table}}\n")
+    # text columns (the first one, detector, setting) left-aligned, numbers right-aligned
+    spec = "".join("l" if k == 0 or c in ("detector", "setting") else "r"
+                   for k, c in enumerate(df.columns))
+    return (f"\\begin{{{env}}}[t]\n\\caption{{{esc(caption)}}}\n\\label{{{label}}}\n\\centering\n"
+            f"\\footnotesize\\setlength{{\\tabcolsep}}{{4pt}}\n"
+            f"\\begin{{tabular}}{{{spec}}}\n\\toprule\n{head} \\\\\n"
+            f"\\midrule\n{body}\n\\bottomrule\n\\end{{tabular}}\n\\end{{{env}}}\n")
+
+
+# Tables too wide for one IEEE column: written as table*, and pulled into paper/main.tex
+# with \resulttablewide (tests/test_analysis.py checks that the two lists agree).
+WIDE_TABLES = {"table1_spike_statistics", "table2_detection", "table4_gamma",
+               "table5_validation", "table8_matched_false_alarms"}
+# Figures drawn at the full text width (TWO_COL): pulled in with \resultfigwide (figure*).
+WIDE_FIGURES = {"fig1_example_day", "fig2_spike_statistics", "fig6_delay_vs_false_alarms"}
 
 
 def _write(df, out, name, caption):
     out = pathlib.Path(out)
     df.to_csv(out / f"{name}.csv", index=False)
-    (out / f"{name}.tex").write_text(latex(df, caption, f"tab:{name}"), encoding="utf-8")
+    (out / f"{name}.tex").write_text(latex(df, caption, f"tab:{name}", name in WIDE_TABLES),
+                                     encoding="utf-8")
     return df
 
 
@@ -275,13 +290,12 @@ def table_detection(results, out="."):
 
 def table_per_cause(results, out="."):
     r = results[results["detector"].isin(DETECTORS)]
-    t = pd.DataFrame({"detector": r["detector"]})
-    for c in CAUSES:
-        t[f"{c}: n"] = r[f"n_{c}"].to_numpy()
-        t[f"{c}: recall"] = r[f"recall_{c}"].map("{:.2f}".format).to_numpy()
-        t[f"{c}: F1"] = r[f"F1_{c}"].map("{:.2f}".format).to_numpy()
-        t[f"{c}: delay min"] = r[f"delay_median_min_{c}"].map(
-            lambda v: "-" if pd.isna(v) else f"{v:.1f}").to_numpy()
+    num = lambda v, f: "-" if pd.isna(v) else f"{v:{f}}"  # noqa: E731
+    rows = [{"cause": c if k == 0 else "", "n": x[f"n_{c}"] if k == 0 else "",
+             "detector": x["detector"], "recall": num(x[f"recall_{c}"], ".2f"),
+             "F1": num(x[f"F1_{c}"], ".2f"), "delay min": num(x[f"delay_median_min_{c}"], ".1f")}
+            for c in CAUSES for k, (_, x) in enumerate(r.iterrows())]
+    t = pd.DataFrame(rows)                 # one row per cause and detector: fits one column
     return _write(t, out, "table3_per_cause",
                   "Recall, F1 and median delay per cause; precision uses all false alarms.")
 
@@ -321,7 +335,7 @@ def table_cause_sensitivity(sens, out="."):
         "irradiance": sens["irradiance"], "non_irradiance": sens["non_irradiance"],
         "mixed": sens["mixed"], "relabelled": sens["relabelled"]})
     if "known_right" in sens:
-        t["known cause: right / mixed / opposite"] = [
+        t["known: right/mixed/opp."] = [
             f"{a}/{b}/{c} of {n}" for a, b, c, n in
             zip(sens.known_right, sens.known_mixed, sens.known_opposite, sens.known)]
     return _write(t, out, "table9_cause_sensitivity",

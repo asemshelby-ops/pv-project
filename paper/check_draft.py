@@ -23,8 +23,9 @@ cited = {k.strip() for group in re.findall(r"\\cite\{([^}]*)\}", body) for k in 
 problems += [f"cited but not in refs.bib: {k}" for k in sorted(cited - keys)]
 
 labels = set(re.findall(r"\\label\{([^}#]+)\}", body))
-labels |= {f"tab:{s}" for s in re.findall(r"\\resulttable\{([^}]+)\}", body)}
+labels |= {f"tab:{s}" for s in re.findall(r"\\resulttable(?:wide)?\{([^}]+)\}", body)}
 labels |= set(re.findall(r"\\resultfig\{[^}]+\}\{[^}]+\}\{.*?\}\{(fig:[^}]+)\}", body, flags=re.S))
+labels |= set(re.findall(r"\\resultfigwide\{[^}]+\}\{.*?\}\{(fig:[^}]+)\}", body, flags=re.S))
 refs = set(re.findall(r"\\ref\{([^}#]+)\}", body))
 problems += [f"\\ref without label: {r}" for r in sorted(refs - labels)]
 
@@ -37,7 +38,7 @@ plain = body.replace("\\{", "").replace("\\}", "")
 if plain.count("{") != plain.count("}"):
     problems.append(f"braces: {plain.count('{')} open, {plain.count('}')} close")
 
-pulled = re.findall(r"\\result(?:fig|table)\{([^}]+)\}", body)
+pulled = re.findall(r"\\result(?:fig|table)(?:wide)?\{([^}]+)\}", body)
 problems += [f"not written by analysis/report.py: {s}" for s in pulled
              if f'"{s}"' not in report and s != "table7_parity"]
 

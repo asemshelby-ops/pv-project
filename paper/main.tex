@@ -33,12 +33,25 @@
   {\fbox{\parbox{0.9\columnwidth}{\centering\vspace{6mm}\texttt{\detokenize{#1}.pdf}\\
    produced by \texttt{analysis/report.py} from real data\vspace{6mm}}}}
   \caption{#3}\label{#4}\end{figure}}
+% The same across both columns (figure*), for figures drawn at the full text width.
+\newcommand{\resultfigwide}[3]{% file stem, caption, label
+  \begin{figure*}[t]\centering
+  \IfFileExists{\resultdir/#1.pdf}{\includegraphics[width=\textwidth]{\resultdir/#1.pdf}}%
+  {\fbox{\parbox{0.9\textwidth}{\centering\vspace{6mm}\texttt{\detokenize{#1}.pdf}\\
+   produced by \texttt{analysis/report.py} from real data\vspace{6mm}}}}
+  \caption{#2}\label{#3}\end{figure*}}
 % A table written by analysis/report.py (it carries its own caption and label tab:<stem>).
 \newcommand{\resulttable}[1]{%
   \IfFileExists{\resultdir/#1.tex}{\input{\resultdir/#1.tex}}%
   {\begin{table}[t]\centering\caption{Placeholder for \texttt{\detokenize{#1}.tex}.}
    \label{tab:#1}\fbox{\parbox{0.9\columnwidth}{\centering
    written by \texttt{analysis/report.py} from real data}}\end{table}}}
+% A table that report.py writes as table* (both columns); same placeholder, full width.
+\newcommand{\resulttablewide}[1]{%
+  \IfFileExists{\resultdir/#1.tex}{\input{\resultdir/#1.tex}}%
+  {\begin{table*}[t]\centering\caption{Placeholder for \texttt{\detokenize{#1}.tex}.}
+   \label{tab:#1}\fbox{\parbox{0.9\textwidth}{\centering
+   written by \texttt{analysis/report.py} from real data}}\end{table*}}}
 
 \begin{document}
 
@@ -473,7 +486,7 @@ offset is checked weekly. Within one row the readings are taken within about one
 \texttt{analysis/pipeline.py} writes and the sentence it must support.}
 
 \subsection{Instrument validation}
-\resulttable{table5_validation}
+\resulttablewide{table5_validation}
 \resultfig{fig5_validation}{\columnwidth}{ESP32 minus reference logger against their
 mean, back-sheet sensor T3. \todo{dates}}{fig:validation}
 \todo{From Table~\ref{tab:table5_validation}: clock lag; bias and limits of agreement of
@@ -482,12 +495,12 @@ the read-out, not the sensor), voltage and current; which acceptance criteria we
 State the reference logger's model and its own accuracy.}
 
 \subsection{Thermal spikes}
-\resultfig{fig1_example_day}{\columnwidth}{One day: module and air temperature,
+\resultfigwide{fig1_example_day}{One day: module and air temperature,
 irradiance, labelled spikes by cause, and the alarms of the four detectors.
 \todo{date}}{fig:day}
-\resultfig{fig2_spike_statistics}{\columnwidth}{Spike size by cause, and number of
+\resultfigwide{fig2_spike_statistics}{Spike size by cause, and number of
 spikes per day.}{fig:stats}
-\resulttable{table1_spike_statistics}
+\resulttablewide{table1_spike_statistics}
 \resulttable{table6_cause_check}
 \resulttable{table9_cause_sensitivity}
 \todo{Observation period, valid days and hours. From Table~\ref{tab:table1_spike_statistics}:
@@ -500,7 +513,7 @@ limits (1/3 and 2/3) are moved, and whether any conclusion depends on them.}
 \subsection{Temperature coefficient and power cost}
 \resultfig{fig4_gamma}{\columnwidth}{Irradiance-corrected maximum power against cell
 temperature for all shade-and-uncover runs.}{fig:gamma}
-\resulttable{table4_gamma}
+\resulttablewide{table4_gamma}
 \todo{$\gamma$ with expanded uncertainty, number of runs and days; the
 $I_{sc}$-normalised value; $\alpha$ and $\beta$; comparison with the field range of
 \cite{kaldellis2014} and the values of \cite{king1997}. Then the power cost per spike
@@ -508,13 +521,13 @@ $I_{sc}$-normalised value; $\alpha$ and $\beta$; comparison with the field range
 Table~\ref{tab:table1_spike_statistics}.}
 
 \subsection{Detection}
-\resulttable{table2_detection}
+\resulttablewide{table2_detection}
 \resulttable{table3_per_cause}
 \resultfig{fig3_detection_delay}{\columnwidth}{Share of spikes detected against time
 from onset; the dotted line marks the median time at which the rise reaches
 3\,\degC.}{fig:delay}
-\resulttable{table8_matched_false_alarms}
-\resultfig{fig6_delay_vs_false_alarms}{\columnwidth}{Left: shortest median delay each
+\resulttablewide{table8_matched_false_alarms}
+\resultfigwide{fig6_delay_vs_false_alarms}{Left: shortest median delay each
 detector reaches with at most the given number of false alarms per day, among its
 settings that find at least 90\,\% of the spikes; open markers are the $F_1$-tuned
 settings. Right: highest recall reached within the same number of false alarms. Test

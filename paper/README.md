@@ -16,11 +16,13 @@ Upload `main.tex` and `refs.bib` to Overleaf (the `IEEEtran` class is available 
 pdflatex main && bibtex main && pdflatex main && pdflatex main
 ```
 
-Expect small fixes on the first build. Known ones: Tables 2, 3 and 8
-(`table2_detection.tex`, `table3_per_cause.tex`, `table8_matched_false_alarms.tex`) are
-wide; in the two-column layout they will need `table*` or fewer columns.
-`fig6_delay_vs_false_alarms` has two panels and is drawn for the full text width
-(`figure*`, `\textwidth`); at column width its labels are small.
+Expect small fixes on the first build. Wide items now span both columns: tables 1, 2,
+4, 5 and 8 are written as `table*` (list `WIDE_TABLES` in `analysis/report.py`, pulled in
+with `\resulttablewide`), and figures 1, 2 and 6 are placed as `figure*` at `\textwidth`
+(`WIDE_FIGURES`, `\resultfigwide`). Table 3 was reshaped to one row per cause and
+detector so that it fits one column. All tables are set in `\footnotesize`. None of this
+has been compiled: check the widths on the first Overleaf build (table 8 has 9 columns
+and is the one most likely to need a shorter header).
 
 ## Filling in the results
 

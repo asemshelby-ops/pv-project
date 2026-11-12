@@ -6,7 +6,8 @@ import pandas as pd
 import pytest
 
 import config
-from analysis import detection, events, fake_logger, gamma, ingest, metrics, pipeline, validate
+from analysis import (detection, events, fake_logger, gamma, ingest, metrics, pipeline, report,
+                      validate)
 from data import synth
 from detect import gbt, stream
 from detect.cusum_inc import CusumIncDetector
@@ -211,6 +212,23 @@ def test_pipeline_runs_end_to_end_with_the_reviewer_outputs(rig, tmp_path):
     for name in ("fig6_delay_vs_false_alarms.pdf", "table8_matched_false_alarms.tex",
                  "table9_cause_sensitivity.csv", "detection_curves.csv"):
         assert (tmp_path / name).exists(), name
+    # wide tables span both columns; table 3 is one row per cause and detector
+    for stem in report.WIDE_TABLES - {"table4_gamma", "table5_validation"}:   # no load, no reference here
+        assert "\\begin{table*}" in (tmp_path / f"{stem}.tex").read_text(encoding="utf-8"), stem
+    assert "\\begin{table}" in (tmp_path / "table3_per_cause.tex").read_text(encoding="utf-8")
+    t3 = pd.read_csv(tmp_path / "table3_per_cause.csv")
+    assert list(t3.columns) == ["cause", "n", "detector", "recall", "F1", "delay min"]
+    assert len(t3) == len(metrics.CAUSES) * len(report.DETECTORS)
+
+
+def test_paper_pulls_wide_tables_and_figures_with_the_wide_macros():
+    import pathlib
+    import re
+    tex = (pathlib.Path(__file__).resolve().parent.parent / "paper/main.tex").read_text(encoding="utf-8")
+    assert set(re.findall(r"^\\resulttablewide\{([^}]+)\}", tex, re.M)) == report.WIDE_TABLES
+    assert set(re.findall(r"^\\resultfigwide\{([^}]+)\}", tex, re.M)) == report.WIDE_FIGURES
+    narrow = set(re.findall(r"^\\result(?:table|fig)\{([^}]+)\}", tex, re.M))
+    assert not narrow & (report.WIDE_TABLES | report.WIDE_FIGURES)
 
 
 def test_gamma_recovers_the_generator_coefficient(tmp_path):
