@@ -106,6 +106,12 @@ from the observation time used for rates:
 - γ runs (`02-gamma-from-iv.md`): from the shading until 30 min after uncovering;
 - logged maintenance, and any period with a missing sensor.
 
+Implemented 2026-11-12 (`analysis/metrics.py`, `observation_hours`): the valid
+observation time of a day is the number of rows the detector received that lie outside
+every excluded window, times 10 s. A row the detector skipped (missing input, missing
+time, or absent from the file) is not counted. Low-sun periods stay in: an alarm there
+that matches nothing is a false alarm.
+
 ## 5. Spike statistics reported (characterisation)
 
 All for `natural` events, split by `cause`; controlled events in a separate table.
@@ -138,7 +144,7 @@ A detector produces alarm times. After an alarm it is silent for 10 min (unchang
 | Precision | `TP / (TP + FP)` |
 | F1 | harmonic mean of the two |
 | F1 per cause c | recall from the spikes of cause c; precision `TP_c / (TP_c + FP)` with **all** false alarms, because a false alarm has no cause. Stated in the table caption |
-| False alarms per day | `FP / valid days`; also per 100 valid daytime hours |
+| False alarms per day | `FP / (valid hours / 12)`: per 12 valid daytime hours, the length of the day window, so a day that lost 40 min to cleaning counts as 0.94 day. Also per 100 valid daytime hours (`FA_per_100h`) |
 | Detection delay | `t_alarm − t_on`: median, interquartile range, 90th percentile |
 | Lead over hindsight threshold | `t_θ − t_alarm`: positive = the alarm came before the rise reached 3 °C |
 | Rise remaining at the alarm | `(T_s(t_pk) − T_s(t_alarm)) / A`: the share of the spike still to come |
@@ -148,6 +154,16 @@ A detector produces alarm times. After an alarm it is silent for 10 min (unchang
 percentile intervals. Differences between detectors (F1, median delay) are computed on
 the same resampled days (paired) and reported with their intervals. A difference whose
 interval contains zero is reported as "no detectable difference".
+
+**Comparison at equal false-alarm budgets** (added 2026-11-12, reviewer point R2). A
+detector set to alarm readily is early by construction, so the delay at the F1-tuned
+settings is not enough. For each budget in `config.MATCH_FA_PER_DAY` (0.05, 0.1, 0.2,
+0.5 per day `[ASSUMPTION]`) each detector gets the setting with the shortest median delay
+on the validation days among those with validation false alarms ≤ budget and validation
+recall ≥ 0.9 (`MATCH_MIN_RECALL` `[ASSUMPTION]`: without a floor, a detector could look
+fast by finding only the easy spikes). That setting is scored on the test days; the
+realised test rate is reported next to the budget, since it need not equal it. Output:
+`table8_matched_false_alarms`, and `fig6_delay_vs_false_alarms` for every setting.
 
 **Data split.** Chronological, by whole local days: 60 % train, 20 % validation, 20 %
 test. Controlled-test days are spread over the three parts by the test schedule. Every
@@ -163,6 +179,7 @@ fewer, the threshold and CUSUM results are the primary result and NASIM is explo
 | (a) Threshold | rise ≥ 2.5 °C in 10 min **and** irradiance steady within 5 % | rise ≥ θ_a in 10 min; **no irradiance gate**; θ_a tuned on validation |
 | (b) CUSUM | on the residual of a thermal model driven by G and T_air | on the temperature increment: `S = max(0, S + (T_k − T_{k−1}) − κ)`, alarm at `S ≥ h`. The residual version explains irradiance rises away by design, so it would miss half of the new definition. It stays as a NASIM feature |
 | (c) NASIM-GBT | irradiance rises = hard negatives | positives = first 10 min of every spike, any cause; `mixed` events are scored, not excluded |
+| (d) Irradiance step | — | added 2026-11-12 (reviewer point R3): alarm when irradiance has risen by a fraction ≥ x within 2 min (`g_change_2m`, the same quantity NASIM gets as a feature); x tuned on validation. It never sees temperature. Purpose: if this one-line rule is as early as NASIM on irradiance-driven spikes, NASIM is justified only by the other spikes |
 
 ## 8. On-device agreement (ESP32 parity)
 
