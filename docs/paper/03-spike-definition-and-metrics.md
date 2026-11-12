@@ -286,3 +286,82 @@ first pilot week and again as days accumulate:
 .venv/Scripts/python -m analysis.campaign_days --results <pilot result folder>
 .venv/Scripts/python -m analysis.campaign_days --days 7 --spikes 12 --non-irradiance 4
 ```
+
+## 11. `[PROPOSAL]` Controlled non-irradiance spikes with the load (for the supervisor)
+
+Status: a proposal written 2026-11-12, **not decided and not implemented**. It needs the
+measurement load and its firmware, which do not exist yet. It changes nothing in §10.
+
+**Why.** The precondition of §10 needs at least 8 test spikes that are not
+irradiance-driven. If natural ones are rare (`analysis/campaign_days.py` on the pilot
+days will say), the only controlled source so far is the windbreak (§3), which is manual
+and depends on there being wind to block.
+
+**Idea.** While the load holds the module at its maximum-power point, part of the
+absorbed sunlight leaves as electrical power. Switch the load off (open circuit) and that
+power stays in the module as heat. Irradiance does not change, so the rise that follows
+has no irradiance step: by the rule of §3 it is labelled `non_irradiance`.
+
+**Expected rise `[EST]`.** Heat balance per unit area, steady state:
+`ΔT_ss = (P_el / A) / h`, and after t minutes `ΔT(t) = ΔT_ss · (1 − e^(−t/τ))`.
+
+| Quantity | Value | Basis |
+|---|---|---|
+| Module area A | 0.648 m² | listing: 1200 × 540 mm |
+| Electrical power removed, P_el | 80 W, range 70–90 W | `[EST]` 100 W module at ≈ 900 W/m² and hot; **not measured**, γ of this module is unknown. P_el / A ≈ 123 W/m² |
+| Time constant τ | 6.3 min | `[LIT]` Herteleer et al. 2023, fixed-mount systems; not this module |
+| Heat-loss coefficient, lower estimate h₁ | 25 + 6.84·v W/(m² K) | `[ASSUMPTION]` Faiman coefficients with pvlib defaults, used directly |
+| Heat-loss coefficient, corrected h₂ | (τα − η) · (25 + 6.84·v) | `[ASSUMPTION]` Faiman's coefficients are fitted to *incident* irradiance for a module at its operating point, so the loss per watt of heat is smaller by (τα − η); τα = 0.9 `[ASSUMPTION]`, η = P_el / (G·A) ≈ 0.14 |
+| Wind v | 1–3 m/s | `[ASSUMPTION]`; not measured (no anemometer) |
+| Open-circuit time | 10 min | `[PROPOSAL]`: the window of the spike definition (§2) |
+
+Rise after 10 min at open circuit (79.6 % of the steady-state rise), for P_el = 80 W:
+
+| Wind, m/s | with h₁ | with h₂ |
+|---|---|---|
+| 1.0 | 3.1 °C | 4.0 °C |
+| 1.5 | 2.8 °C | 3.7 °C |
+| 2.0 | 2.5 °C | 3.3 °C |
+| 3.0 | 2.2 °C | 2.8 °C |
+
+Over the whole range of the assumptions (P_el 70–90 W, wind 1–3 m/s, both h): **about
+1.9 to 4.7 °C in 10 min**. Steady state would be 2.4 to 5.9 °C, but a rise that takes
+longer than 10 min does not meet the definition.
+
+**What this means.** The expected rise sits **around the 3 °C threshold, not clearly above
+it**. In light wind and strong sun it should give a spike; in a breeze it gives a minor
+rise (2–3 °C), which is neutral in the scoring and does not count towards the
+precondition. So this method cannot be relied on to deliver the 8 events; it has to be
+tried first. The estimate also ignores that at open circuit the cell-to-back-sheet
+temperature difference changes slightly, and that heating by a stronger sun at the same
+moment would add to it.
+
+**Proposed procedure, if the supervisor agrees.**
+1. One trial first, on a clear day near solar noon, G ≥ 850 W/m² and steady (so that the
+   irradiance step is near zero): hold at the MPP for ≥ 30 min, open circuit for 10 min,
+   back to hold. Measure the rise. If it is below 3 °C in light wind, drop the method.
+2. If it works: at most a few trials per day, ≥ 30 min apart, on days spread over the
+   training, validation and test parts, with untouched periods in between as negative
+   controls.
+3. Each trial is logged: a marker press and a log-sheet line (`load off` / `load on`),
+   and `load_mode` in the CSV shows `off`. The rise gets `origin = ctl_load`.
+
+**What it costs.** No maximum-power data and no I-V sweeps during the 10 min and until
+the module has cooled again (≈ 20–30 min `[EST]`); those periods must be kept out of the
+energy totals and away from γ runs. The fall after reconnecting is a controlled cooling
+step, not a spike.
+
+**Limits to state in the paper.** A load-off rise is not a natural event: it is reported
+with the controlled events, separately from natural spikes, like the mesh and windbreak
+tests. It tests the detectors on a rise with no irradiance step and no change in air
+temperature; a wind lull looks similar in the back-sheet signal but is not the same
+physical cause.
+
+**Open questions for the supervisor (none of them changes §10).**
+- Whether to run this at all, given the marginal expected size.
+- §10 counts "valid spikes" on the test days and does not say whether controlled ones
+  count towards the 20 and the 8. That must be settled before the first field day, with
+  the other §10 numbers, and written there; this section does not settle it.
+- Needs before a trial: the load and its firmware (`07`), a `load off` / `load on` event
+  pair and the `ctl_load` origin in `analysis/ingest.py` and `analysis/events.py` (a
+  small change, not made), and γ from the first sweeps to replace the assumed P_el.
