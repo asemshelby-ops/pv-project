@@ -149,7 +149,8 @@ states the 5 mΩ shunt and the ±10 A range but **no shunt tolerance** `[DS]`.
 | RTC drift, 40–85 °C | ±3.5 ppm = 0.30 s/day | `[DS]`; the enclosure may exceed 40 °C in the sun |
 | RTC aging, first year | ±1 ppm | `[DS]` |
 | Timestamp resolution in the row | 1 s | logger.ino |
-| Read order inside one row | T: +0 to 0.75 s; G: ≈ +0.8 to 1.1 s after the timestamp | logger.ino + 750 ms conversion `[DS]`; `[MEASURE]` on the bench |
+| Read order inside one row | G: within ≈ 0.05 s of the timestamp `[EST]` (read first since 2026-11-12; up to 0.3 s if the sensor does not answer); T: ≈ +0.1 to 0.9 s | logger.ino: one Modbus exchange of 15 bytes at 9600 baud ≈ 16 ms + reply time, then BME280 and INA226, then the 750 ms conversion `[DS]`; `[MEASURE]` on the bench |
+| RTC drift, measured | logged at every setting | `firmware/tools/set_rtc.py` writes the RTC-minus-PC offset before setting and the drift since the last setting to `firmware/tools/rtc_set_log.csv`; replaces the datasheet rows once a few weeks exist |
 
 - 30 days without re-setting: up to 5–9 s. The weekly check in
   `05-daily-logging-and-cleaning.md` records the offset, so it can be corrected afterwards.

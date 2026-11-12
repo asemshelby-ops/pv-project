@@ -176,14 +176,14 @@ date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,win
 | Column | Meaning | Written today (no load hardware) |
 |---|---|---|
 | `D` | duty of branch A at the moment of the reading, 0–1 | `NaN` (not measured, like `wind`) |
-| `load_mode` | text: `none` = no load fitted. The load firmware will write `off`, `hold`, `sweep` (not expected in rows), `trip` | `none` |
+| `load_mode` | text: `none` = no load fitted; with the load: `off`, `hold`, `sweep` (not expected in rows), `trip` | `none` |
 | `sweep_id` | id of the last finished sweep; `0` = no sweep yet | `0` |
 | `uptime_ms` | `millis()` at the start of the row's readings: orders the rows and gives their spacing when the RTC time is missing; a fall = the board restarted. Wraps after 49.7 days | number |
 | `status` | bit field, decimal; `0` = nothing to report | number |
 
-Changed from the first version of this table: `load_mode = none` and `sweep_id = 0` while
-no load exists (Asim, 2026-11-12). `none` makes the column text, so the later modes are
-proposed as names instead of the numbers 0–3 `[REC]`: confirm when the load is coded.
+Changed from the first version of this table (decided by Asim, 2026-11-12): `load_mode`
+is text — `none`, `off`, `hold`, `sweep`, `trip` — instead of the numbers 0–3, and
+`sweep_id` is `0`, not empty, before the first sweep.
 
 `status` bits. The only definition in the firmware is
 `firmware/libraries/PvDaq/src/pv_status.h`; the analysis keeps the same table in
@@ -205,6 +205,19 @@ two. A bit is never renumbered once data exists; new bits are added at the end.
 Example: `status = 33` = 32 + 1 = `TROM_UNMAPPED` + `RTC_INVALID`. Until `T_ROM` is
 filled in, a clean row reads `32`, not `0`. Rows outside the 06:00–18:00 window are not
 "skipped" rows: the detector rests there by design and no bit is set.
+
+`[OPEN]` Time base of a skipped row. The detector features count samples and assume
+10 s between them. A skipped row is simply not counted, so after k skipped rows (k ≤ 4)
+a "10-minute" window really spans 10 min + k·10 s, and a rate over that window is
+understated by up to ≈ 7 %. Accepted for now (Asim, 2026-11-12). To settle when the
+threshold and CUSUM detectors are ported to the board: compute rises and rates from the
+real time between samples (`uptime_ms`), not from a fixed 10 s. The offline analysis
+follows the same rule on purpose, so it carries the same small error.
+
+Read order inside one row (since 2026-11-12): RTC time and `uptime_ms`, then at once the
+PYR20 irradiance (one Modbus exchange, ≈ 20–30 ms `[EST]`), then BME280, INA226, and last
+the DS18B20 conversion (750 ms). Before, the irradiance was read after the conversion,
+≈ 0.8 s late.
 
 Rows without RTC time are never dropped. They are written with `date` and `time` empty,
 their `uptime_ms` and bit 0, into the day file of the last row that had a time (or

@@ -85,6 +85,14 @@ Set the time: run the sketch, close the serial monitor, then
 `.venv/Scripts/python firmware/tools/set_rtc.py COM3` (UTC from the PC clock). The RTC holds
 UTC; every logged timestamp is UTC, and the logger adds +3 h (Makkah) only for NASIM's inputs.
 
+Drift record: before it sets the clock, the script asks the sketch for the RTC time
+(command `NOW`, answered at the RTC's second edge) and appends one line to
+`firmware/tools/rtc_set_log.csv`: the offset RTC − PC and, from the second run on, the
+drift in s/day and ppm since the previous setting. Re-run it weekly during the campaign
+(this needs the ds3231 test sketch flashed, then the logger flashed again) and commit the
+log file. Expect below ≈ 0.3 s/day (datasheet); an older ds3231 sketch without `NOW`
+still sets the clock, and the log line says the offset was not measured.
+
 Correct output: one line per second, the seconds counting up, die temperature near room
 temperature, and no "time not set" note after setting.
 `2026-11-05 14:30:01  die 27.25 C  [ok]`
@@ -315,6 +323,8 @@ date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,win
 - Date and time are UTC (10:00 in Makkah = 07:00 in the log).
 - One row every 10 s; the time column steps by 10 s with no drift (millis schedule).
 - Missing devices → empty fields, and the logger keeps running. Missing devices are retried every 60 s.
+- Read order in a row: time, then irradiance at once, then air, panel V/I, and the
+  DS18B20 conversion last (so the temperatures are ≈ 0.1–0.9 s after the timestamp `[EST]`).
 - `p` is empty outside 06:00–18:00 Makkah time (03:00–15:00 UTC in the log), during the first 10 min of data each day (warm-up),
   and when T1–T5, ambient, irradiance or the time is missing.
 - `wind` is `NaN` (not measured) while `HAS_ANEMOMETER` is 0; an empty field elsewhere means a failed read.
