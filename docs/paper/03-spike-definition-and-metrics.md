@@ -193,3 +193,76 @@ no `p` during the day window).
 `event_id, date_local, t_on, t_theta, t_pk, size_C, duration_s, max_rate_C_per_min,
 G_pre, G_ev, dG, f_G, dT_air, cause, origin, marker_ids, valid, note` — times in UTC,
 ISO 8601; `date_local` is the Asia/Riyadh date used for the day split.
+
+## 10. Pre-registered acceptance criteria for the detector claim
+
+Written 2026-11-12, **before any field data exists**, and after the synthetic checks of
+`11` §3a–§3c (so the synthetic results were known; the field results were not). The same
+text is in the paper's Evaluation section. The numbers below are `[ASSUMPTION]`s proposed
+on that date; Asim and the supervisor confirm or change them **before the first field
+day**. From the first field day on they are frozen: any change is listed in the paper as
+a deviation, with its reason.
+
+**Place of this claim in the paper.** The primary contribution is the field
+characterisation of spikes (§5). The detector result is secondary and is reported
+whichever way it comes out.
+
+**The claim (decided by Asim, 2026-11-12).** NASIM-GBT is the main detector. The claim is
+that *one* detector combines an early alarm, high recall and almost no false alarms. It
+is **not** claimed to be the earliest detector, and **no lead over CUSUM is claimed**.
+
+**How it is tested.** On the test days only, at the **primary budget of 0.2 false alarms
+per day**, every detector at the setting chosen on the validation days by the
+matched-budget procedure of §6. The budgets 0.05, 0.1 and 0.5 are reported as secondary
+and do not change the verdict.
+
+**Precondition.** At least 20 valid spikes on the test days, of which at least 8 are not
+irradiance-driven (`non_irradiance` or `mixed`), and the ≥ 50 training spikes of §6. If
+not met, the claim is not tested.
+
+| | Condition on the test days | Why this value |
+|---|---|---|
+| C1 false alarms | NASIM's false alarms ≤ 0.2 per day (per 12 valid hours) | the budget itself: about one false alarm a week |
+| C2 recall | NASIM's recall ≥ 0.90 | the same floor the setting had to meet on the validation days |
+| C3 early alarm | (a) median lead over the 3 °C crossing > 0; (b) median share of the rise remaining at the alarm ≥ 50 %; (c) NASIM minus threshold rule, paired difference in median delay: 95 % interval entirely below 0 | (a), (b): "early" means before the hindsight definition is met and with most of the rise still ahead; (c): earlier than the rule that defines the spike |
+
+- **The claim holds** if C1, C2 and C3 are all met.
+- **It is distinctive** if, in addition, no baseline (threshold, CUSUM, irradiance step)
+  at its own setting for the same budget *matches* it. A baseline matches when it meets
+  C1 and C2 and its median delay is not detectably longer than NASIM's (paired 95 %
+  interval of NASIM minus baseline includes zero or lies above it). With few events the
+  intervals are wide, so a baseline matches easily: the test is deliberately hard on
+  NASIM.
+
+**Wording, fixed now.** The paper uses exactly one of these, and no stronger sentence:
+
+| Outcome | Sentence |
+|---|---|
+| holds and distinctive | "At 0.2 false alarms per day the tree model was the only one of the four detectors that met all three conditions set in advance." |
+| holds, not distinctive | "The tree model met the three conditions set in advance, and so did [baseline]; for this module the simpler detector is sufficient." |
+| does not hold | "The tree model did not meet the conditions set in advance ([which]); [the baseline that met most of them] is the better choice here." |
+| precondition not met | "The number of spikes was too small to test the claim." The threshold and CUSUM results are then the detection result and NASIM is exploratory (§6). |
+
+**Always reported, whatever the outcome:** for each baseline, NASIM minus baseline in
+median delay and in recall with 95 % intervals; the realised test false-alarm rate next
+to the budget; the per-cause table. For CUSUM the delay difference is reported as a
+number with its interval and is never described as a lead.
+
+**Not allowed:** choosing the budget, the recall floor or the 50 % after seeing field
+results; replacing the test days; dropping a baseline; reporting only the budget at which
+NASIM looks best.
+
+**Check that the criteria can be met and can be failed (synthetic, `11` §3a).** At the
+primary budget NASIM (p ≥ 0.95): 0.07 false alarms per day, recall 1.00, lead +3.8 min,
+92 % of the rise remaining, delay difference to the threshold rule −4.1 min (−5.2 to
+−2.9) → holds. Baselines: the threshold rule meets C1 and C2 but is detectably later
+(the interval above) → no match. CUSUM is as early as NASIM (difference −0.1 min, −1.0
+to +0.8) but its recall is 0.87, below C2 → no match, **by a margin of three spikes in
+85**. The irradiance step has no qualifying setting. Synthetic outcome: "holds and
+distinctive", narrowly. That narrowness is the reason no claim is made over CUSUM, and
+the synthetic set must not be used to adjust these numbers.
+
+`[OPEN]` `analysis/pipeline.py` does not print this verdict yet. Missing pieces: the
+recall difference with its interval at the matched setting, and a pass/fail line per
+condition in `summary.md`. To add before the field analysis, without changing the
+criteria.

@@ -46,6 +46,12 @@ a finding.
 Check of that framing on the synthetic run (2026-11-12, `docs/paper/11` §3a–§3b): the
 tree model's lead over the threshold rule holds at equal false-alarm budgets, its lead
 over CUSUM does not, and an irradiance-step rule is as early on irradiance-driven
-spikes. The draft therefore no longer says the learned model is "earlier"; Section IV-F
-and the Results TODOs ask what it adds in recall and false alarms. Whether it stays the
-main detector is open until field data exist.
+spikes.
+
+**Decision (Asim, 2026-11-12, after that check).** NASIM-GBT stays the main detector,
+with a narrower claim: one detector that combines an early alarm, high recall and almost
+no false alarms, compared with every baseline at equal false-alarm budgets. No lead over
+CUSUM is claimed anywhere. The field characterisation is the paper's primary
+contribution; the detector test is secondary. What the field data must show, and the
+four sentences the paper may use, are fixed in `docs/paper/03` §10 and in the draft's
+"Acceptance criteria fixed in advance" subsection, written before any field data.

@@ -78,7 +78,8 @@ Per cause (recall / F1 / median delay in min; precision uses all false alarms):
 NASIM-GBT minus baseline on the same resampled days (mean, 95 % interval), at these
 F1-tuned settings:
 - against the tuned threshold: F1 −0.01 (−0.04 to +0.02); median delay −5.2 min (−6.3 to −3.5);
-- against CUSUM: F1 +0.01 (−0.03 to +0.05); median delay −3.0 min (−4.8 to −1.8);
+- against CUSUM: F1 +0.01 (−0.03 to +0.05); median delay −3.0 min (−4.8 to −1.8) — an
+  effect of the F1 tuning, **not a lead**: see §3a;
 - against the irradiance step: F1 +0.39 (+0.32 to +0.47); recall +0.48 (+0.41 to +0.57);
   false alarms −0.39 per day (−0.64 to −0.18); median delay on irradiance-driven spikes
   **+0.1 min (0.0 to +0.3)**, i.e. NASIM is not earlier there.
@@ -155,7 +156,10 @@ detectably earlier than a CUSUM tuned for speed, and **not** earlier than a one-
 irradiance rule on the spikes that rule can see. What NASIM offers on this data is the
 combination in one detector: early, recall 0.95–1.00, and 0 to 0.07 false alarms per
 day. Whether that combination is worth a learned model over "fast CUSUM + irradiance
-step" is the question for the field data. Cautions:
+step" is the question for the field data. Decision (Asim, 2026-11-12): NASIM stays the
+main detector with exactly that claim, no lead over CUSUM is claimed, and the criteria
+the field data must meet are fixed in `03` §10 (on this synthetic set: "holds and
+distinctive", narrowly — CUSUM misses the recall condition by three spikes). Cautions:
 1. The synthetic spikes are large (median 6.6 °C) and most follow a deep cloud, which an
    irradiance feature sees at once. Real spikes may be smaller and less clear-cut.
 2. NASIM misses 4 spikes, all in `non_irradiance` and `mixed`: with no irradiance step to

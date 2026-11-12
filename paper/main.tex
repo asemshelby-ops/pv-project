@@ -79,13 +79,16 @@ defined as a rise of the module temperature of at least 3\,\degC{} within 10\,mi
 microcontroller: five back-sheet temperature sensors, an in-plane irradiance sensor and a
 two-branch switched resistive load that both holds the module at its maximum-power point
 and sweeps its current--voltage curve. The temperature coefficient of power, absent from
-the module's documentation, is measured outdoors from these sweeps. Three causal detectors that use only 10-s samples available on the microcontroller
-are scored event by event: a temperature-rise
-threshold, a CUSUM on the temperature increment, and a small gradient-boosted tree model.
-The comparison asks how early each detector raises its alarm and how many false alarms
-that costs. \todo{Two to three sentences of results from Section VI: observation period,
-spikes per day by cause, power cost per spike, and the lead time and false-alarm rate of
-each detector.}
+the module's documentation, is measured outdoors from these sweeps. As a secondary
+result, a small gradient-boosted tree model that runs on the microcontroller is tested as
+a detector of these spikes. The claim tested is that this one detector combines an early
+alarm, high recall and almost no false alarms. It is scored event by event against three
+simple baselines (a temperature-rise threshold, a CUSUM on the temperature increment and
+an irradiance-step rule) at equal false-alarm budgets, and against acceptance criteria
+that were fixed before any field data existed. \todo{Two to three sentences of results
+from Section VI: observation period, spikes per day by cause, power cost per spike; then
+one sentence with the verdict on the detector claim in the wording fixed in
+Section~\ref{sec:prereg}.}
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -133,14 +136,19 @@ a comparison against a commercial data logger.
 size, duration, cause (irradiance-driven or not) and power cost, the last through a
 temperature coefficient measured on this module by an outdoor transient method
 \cite{king1997}.
-\item A comparison of three causal detectors, built for the microcontroller and scored at
-event level \todo{say ``running on the microcontroller'' only once all three do; see
-Section~\ref{sec:ondevice}}.
-The comparison is framed around \emph{detection lead time and false alarms}, not around
-a headline accuracy: with a rise defined by a threshold, a threshold rule will find
-nearly every event sooner or later, so the useful question is how much earlier another
-detector fires and at what cost in false alarms.
+\item A test of one detector built for the microcontroller, a small gradient-boosted
+tree model. The claim is narrow: that it \emph{combines} an early alarm, high recall and
+almost no false alarms in one detector. It is not claimed to be earlier than every
+simple rule. It is compared with a threshold rule, a CUSUM and an irradiance-step rule
+at equal false-alarm budgets, because a detector set to alarm readily is early by
+construction. What the field data must show for the claim to hold, and the sentence the
+paper uses if they do not, were written down before any field data existed
+(Section~\ref{sec:prereg}). \todo{say which detectors ran on the microcontroller; see
+Section~\ref{sec:ondevice}}
 \end{enumerate}
+The characterisation (item 2) is the primary contribution. The instrument supports it,
+and the detector test is a secondary result that the paper reports whichever way it
+comes out.
 To the authors' knowledge, fast temperature rises of a PV module have not been reported
 as discrete events with their frequency, cause and power cost from field measurements in
 Makkah, and detectors of such events have not been compared in real time on a low-cost
@@ -395,30 +403,67 @@ shortest median delay on the validation days among those that stay within the bu
 and still find at least 90\,\% of the validation spikes; that setting is then scored
 on the test days. We also show, for every setting, delay and recall against false alarms
 per day.
+
+\subsection{Acceptance criteria fixed in advance}\label{sec:prereg}
+The claim for the tree model is that one detector combines an early alarm, high recall
+and almost no false alarms. The following was written on 12 November 2026, before any
+field data existed and after the checks on synthetic data of
+Section~\ref{sec:synthetic}; any later change is reported as a deviation.
+
+All conditions are evaluated on the test days, at the \emph{primary budget} of 0.2 false
+alarms per day, with each detector at the setting chosen on the validation days as
+described above. The claim is evaluated only if the test days hold at least 20 valid
+spikes, at least 8 of them not irradiance-driven; otherwise the tree model is reported
+as exploratory.
+\begin{itemize}
+\item \emph{C1, false alarms}: at most 0.2 false alarms per day on the test days.
+\item \emph{C2, recall}: at least 0.90.
+\item \emph{C3, early alarm}: the median alarm comes before the rise reaches 3\,\degC{}
+(positive lead), with at least half of the rise still to come, and the paired difference
+in median delay from the threshold rule has a 95\,\% interval entirely below zero.
+\end{itemize}
+The claim \emph{holds} if C1 to C3 are all met. It is \emph{distinctive} if, in addition,
+no baseline at its own setting for the same budget meets C1 and C2 with a median delay
+that is not detectably longer than the tree model's (paired 95\,\% interval that
+includes zero or favours the baseline). The paper then uses one of four sentences, and no other:
+\begin{itemize}
+\item holds and distinctive: ``At 0.2 false alarms per day the tree model was the only
+one of the four detectors that met all three conditions set in advance.''
+\item holds, not distinctive: ``The tree model met the three conditions set in advance,
+and so did [baseline]; for this module the simpler detector is sufficient.''
+\item does not hold: ``The tree model did not meet the conditions set in advance
+([which]); [the baseline that met most of them] is the better choice here.''
+\item too few events: ``The number of spikes was too small to test the claim.''
+\end{itemize}
+For every baseline, including CUSUM, the paired difference in median delay is reported
+with its interval, but no lead over CUSUM is claimed: on synthetic data a CUSUM set for
+speed was as early as the tree model. The other budgets (0.05, 0.1 and 0.5 per day) are
+reported as secondary and do not change the verdict.
 Intervals are 95\,\% percentile intervals from 2000 bootstrap resamples of whole days;
 differences between detectors are computed on the same resampled days. A difference
 whose interval contains zero is reported as not detectable. The alarms written by the
 logger are compared with the same rows replayed offline.
 
-\subsection{Verification of the analysis chain on synthetic data}
+\subsection{Verification of the analysis chain on synthetic data}\label{sec:synthetic}
 Before any field data existed, the complete chain was run on 150 synthetic days written
 in the logger's file formats. This verifies the software only. The synthetic module
 follows the same first-order thermal model that one of the features uses, its spikes are
 large (median 6.6\,\degC) and most follow a deep, abrupt cloud, and the rate of events
 is set by the generator, not by any climate. On the 30 synthetic test days the three
 temperature-based detectors found nearly every spike and their $F_1$ values (0.97 to
-0.99) could not be told apart. At the settings with the best validation $F_1$ the tree
-model alarmed a median of 1.8\,min after onset, against 7.3\,min for the threshold rule
-and 5.7\,min for CUSUM. Two checks qualified this. At equal false-alarm budgets the lead
-over the threshold rule remained (4 to 5\,min), but a CUSUM set for speed alarmed after
-2.0\,min and its difference from the tree model was not detectable; it then found
-87\,\% of the spikes against 95 to 100\,\%. And a rule that alarms when the irradiance
-rises by half within 2\,min was as early as the tree model on irradiance-driven spikes
-(0.5 against 0.7\,min); it found 87\,\% of those and none of the others, with 0.39 false
-alarms per day against none. These numbers are not results of this paper. They set what
-the field comparison has to show: not that a learned model is earlier, but whether it
-adds recall and removes false alarms beyond what a fast CUSUM and an irradiance rule
-give.
+0.99) could not be told apart. At equal false-alarm budgets the tree model alarmed a
+median of 1.8\,min after onset and 4 to 5\,min before the threshold rule. It was not
+earlier than the other two baselines: a CUSUM set for speed alarmed after 2.0\,min, with
+no detectable difference from the tree model, and found 87\,\% of the spikes against 95
+to 100\,\%; a rule that alarms when the irradiance rises by half within 2\,min was as
+early on irradiance-driven spikes (0.5 against 0.7\,min), found 87\,\% of those and none
+of the others, and gave 0.39 false alarms per day. At the primary budget the tree model
+met the conditions of Section~\ref{sec:prereg} on this synthetic set (0.07 false alarms
+per day, recall 1.00, 92\,\% of the rise still to come) and no baseline matched it: the
+threshold rule was later, and CUSUM, although as early, fell short of the recall
+condition by three spikes in 85. These numbers are not results of this paper. They
+show that the conditions can be met and can be failed, and they are the reason the claim
+is about a combination of properties and not about being earliest.
 \todo{Decide with the supervisor whether this subsection stays; if space is short, keep
 its first two sentences only.}
 
@@ -532,8 +577,12 @@ detector reaches with at most the given number of false alarms per day, among it
 settings that find at least 90\,\% of the spikes; open markers are the $F_1$-tuned
 settings. Right: highest recall reached within the same number of false alarms. Test
 days.}{fig:tradeoff}
-\todo{Number of spikes in training, validation and test days; tuned settings. Lead
-with the two quantities the comparison rests on: (i) lead time and share of the rise
+\todo{Number of spikes in training, validation and test days; tuned settings. Open
+with the verdict on the tree model against C1 to C3 of Section~\ref{sec:prereg} at the
+primary budget (Table~\ref{tab:table8_matched_false_alarms}), in one of the four
+sentences fixed there, and list any deviation from that section. No lead over CUSUM is
+claimed; give its paired delay difference with the interval. Then
+the two quantities the comparison rests on: (i) lead time and share of the rise
 remaining, from Table~\ref{tab:table2_detection} and Fig.~\ref{fig:delay}, with the
 paired difference between the tree model and each baseline and its interval; (ii) false
 alarms per day with intervals. Then the same comparison at equal false-alarm budgets

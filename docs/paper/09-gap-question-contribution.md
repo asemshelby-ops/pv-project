@@ -35,7 +35,7 @@ read [9], [16] and [43] in full, and repeat the search for point 3.
 |---|---|---|---|
 | RQ1 | How frequent and how large are spikes, and what share is irradiance-driven? | event table from temperature and irradiance (`03` §2–§5) | temperatures, irradiance |
 | RQ2 | What is the power cost of a spike? | `γ · ΔT_cell`, with γ measured from I-V sweeps (`02`) | the PWM load and sweeps |
-| RQ3 | How do three on-device detectors compare: a temperature-rise threshold, CUSUM, and gradient-boosted trees (NASIM)? | event-level precision, recall, delay, false alarms per day, with day-bootstrap intervals (`03` §6) | ≥ 50 + 20 labelled events |
+| RQ3 (secondary) | Does one on-device detector, gradient-boosted trees (NASIM), combine an early alarm, high recall and almost no false alarms, when compared with a temperature-rise threshold, CUSUM and an irradiance-step rule at equal false-alarm budgets? Criteria fixed in advance: `03` §10 | event-level precision, recall, delay, false alarms per day, with day-bootstrap intervals (`03` §6) | ≥ 50 + 20 labelled events |
 
 RQ1 and RQ3 need only temperatures and irradiance. RQ2 needs the load. So logging can
 start before the load exists; those days are marked `load_mode = OFF` and are treated as
@@ -58,9 +58,13 @@ Three concrete deliverables behind that sentence:
   spikes per day, size and duration distributions, share that is irradiance-driven, and
   power cost using a temperature coefficient measured on this module by the outdoor
   transient method of [16].
-- **C3 — a detector comparison on the device.** Threshold, CUSUM and a small
-  gradient-boosted-tree model, each running on the ESP32, scored at event level, with
-  the agreement between the device and the offline computation reported.
+- **C3 — a test of one detector on the device (secondary).** A small
+  gradient-boosted-tree model on the ESP32, with the narrow claim that it combines an
+  early alarm, high recall and almost no false alarms; compared with a threshold rule,
+  CUSUM and an irradiance-step rule at equal false-alarm budgets, against acceptance
+  criteria written before any field data (`03` §10); scored at event level, with the
+  agreement between the device and the offline computation reported. No lead over CUSUM
+  is claimed (decision by Asim, 2026-11-12). **C2 is the primary contribution.**
 
 ## 4. What the paper does not claim
 
