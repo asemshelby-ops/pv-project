@@ -21,7 +21,9 @@ constexpr int RS485_TX = 25;      // ESP32 TX -> MAX3485 DI ("TXD" on most modul
 constexpr int RS485_RX = 26;      // ESP32 RX <- MAX3485 RO ("RXD")
 constexpr int PYR20_ANALOG = 34;  // ADC1_CH6
 constexpr int PUMP_PWM = 32;
-constexpr int LOAD_PWM = 33;
+constexpr int LOAD_A_PWM = 33;     // load branch A gate driver (MPP hold)
+constexpr int LOAD_B_PWM = 14;     // load branch B gate driver (sweeps only); toggles at boot
+                                   // (JTAG MTMS) -> 10 kOhm pull-down on the driver input
 constexpr int MARKER_BUTTON = 27;  // to GND, internal pull-up
 }  // namespace pins
 
@@ -57,7 +59,7 @@ constexpr uint8_t PWM_RES_BITS = 10;
 // Two identical resistor branches, each with its own MOSFET, in parallel across the module:
 //   branch A  switched all day: holds the module at its MPP          -> module sees R_BRANCH / D
 //   branch B  switched only during an I-V sweep, with the same duty  -> module sees R_SWEEP / D
-// Design: docs/paper/07-load-firmware-spec.md. Gate pin of branch B: not assigned yet.
+// Design: docs/paper/07-load-firmware-spec.md. Gates: pins::LOAD_A_PWM, pins::LOAD_B_PWM.
 constexpr uint8_t LOAD_BRANCHES = 2;
 constexpr float R_BRANCH = 1.5f;                       // ohm, each branch
 constexpr float R_HOLD = R_BRANCH;                     // 1.5 ohm: branch A alone (MPP hold)

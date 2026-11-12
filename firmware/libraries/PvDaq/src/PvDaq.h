@@ -10,12 +10,14 @@
 #include "pv_pyr20.h"
 #include "pv_sdcard.h"
 
-// Every sketch calls this first: pump and measurement-load MOSFETs OFF.
+// Every sketch calls this first: pump and both measurement-load MOSFETs OFF.
 inline void pvOutputsOff() {
   pinMode(pins::PUMP_PWM, OUTPUT);
   digitalWrite(pins::PUMP_PWM, LOW);
-  pinMode(pins::LOAD_PWM, OUTPUT);
-  digitalWrite(pins::LOAD_PWM, LOW);
+  pinMode(pins::LOAD_A_PWM, OUTPUT);
+  digitalWrite(pins::LOAD_A_PWM, LOW);
+  pinMode(pins::LOAD_B_PWM, OUTPUT);
+  digitalWrite(pins::LOAD_B_PWM, LOW);
 }
 
 // Probes every 7-bit I2C address and prints the ones that ACK. Returns how many answered.

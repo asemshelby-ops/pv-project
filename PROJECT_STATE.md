@@ -155,7 +155,7 @@ Sub-questions:
 | Host computer | Raspberry Pi | In BOM — role to be re-evaluated under TinyML (§6) |
 | Battery | QSSUN AGM 12 V 18 Ah | In BOM — **not a measurement load** (§4); not needed for the thesis |
 | Charge controller | Anern 30A MPPT (139 SAR); EPEVER XTRA1206N rejected on price | In BOM — **not a measurement load** (§4) |
-| PV measurement load | PWM-switched resistors, **two branches** (2026-11-11): 2 × 1.5 Ω resistor bank, 2 × N-MOSFET (V_DS ≥ 60 V, pulse ≥ 30 A), gate driver with two channels (3.3 V logic), capacitor bank ≥ 2000 µF rated ≥ 6 A RMS ripple, Schottky diode and TVS per branch | `[DECIDED]` 2026-10-01, team (§4); supervisor approved in principle on 2026-11-10; two-branch form `Decision:` 2026-11-11, Asim. Parts not bought yet |
+| PV measurement load | PWM-switched resistors, **two branches** (2026-11-11): 2 × 1.5 Ω resistor bank, 2 × N-MOSFET (V_DS ≥ 60 V, pulse ≥ 30 A), gate driver with two channels (3.3 V logic) with a 10 kΩ pull-down on each input, capacitor bank ≥ 2000 µF rated ≥ 6 A RMS ripple, Schottky diode and TVS per branch | `[DECIDED]` 2026-10-01, team (§4); supervisor approved in principle on 2026-11-10; two-branch form `Decision:` 2026-11-11, Asim. Parts not bought yet |
 
 **Proposed additions `[PENDING — supervisor]`** (literature doc §5):
 - **Anemometer — priority raised.** Clouds are rare in Makkah, so wind lulls are the most likely driver of thermal spikes; wind speed is needed both to explain spikes and as a detector feature `[REC]`. Key specs `[REC]`: starting threshold well below 1 m/s and 0.1 m/s resolution, because module temperature is most wind-sensitive below about 3 m/s (Faiman model, §5.1); mount beside the module at module height so it sees the same wind.
@@ -398,7 +398,7 @@ Record each evaluated idea as `Decision: … (date, decided by …)`.
 4. Validation-day acceptance criteria (`docs/paper/04-validation-day-protocol.md` §7) — proposed by the team, for his approval
 
 **Pending — team (paper phase)**
-- Buy the load parts for the two-branch load (§2 table, §4; parts list in `docs/paper/06-load-bench-test-protocol.md` §1). Choose the GPIO for the gate of branch B (`[REC]` GPIO14, `docs/paper/07-load-firmware-spec.md` §11)
+- Buy the load parts for the two-branch load (§2 table, §4; parts list in `docs/paper/06-load-bench-test-protocol.md` §1). `Decision: GPIO14 drives the gate driver of branch B, with a 10 kΩ pull-down on the driver input so the gate stays low during boot (2026-11-12, decided by Asim).` Set in `pv_config.h` (`LOAD_A_PWM` = 33, `LOAD_B_PWM` = 14); checked on the scope in bench step B1
 - Stand: send drawings PS-01..03 to the workshop after measuring the module frame holes and the PYR20 base
 - Finish the DAQ: solder BME280, PYR20 in sun + Modbus, DS18B20 water-bath calibration
 - Run the BRINGUP "Before logging" checklist (set_rtc.py to UTC, marker test), then install outdoors and log

@@ -27,7 +27,7 @@ from the NASIM alarm.
 | Load | **two branches** in parallel across the module, each a 1.5 Ω resistor bank switched by its own N-MOSFET through a gate-driver channel; one capacitor bank on the module side | decision 2026-11-11 |
 | `R_BRANCH`, `LOAD_BRANCHES` | 1.5 Ω, 2 → `R_HOLD` = 1.5 Ω (branch A alone), `R_SWEEP` = 0.75 Ω (A and B) | `pv_config.h` |
 | PWM, branch A | GPIO33, LEDC, 20 kHz | `pv_config.h` |
-| PWM, branch B | second LEDC channel on the same timer (same frequency and phase); **GPIO not assigned yet** (§11) | — |
+| PWM, branch B | GPIO14, second LEDC channel on the same timer (same frequency and phase); 10 kΩ pull-down on the driver input because GPIO14 toggles at boot | `pv_config.h` (decision 2026-11-12) |
 | PWM resolution | 11 bit `[REC]` (now 10 bit in `pv_config.h`; 80 MHz / 20 kHz allows 11, PINMAP) | to change with the load code |
 | Current and voltage | panel INA226 unit, between module and capacitor | CLAUDE.md |
 | Heatsink temperature | one spare DS18B20 on the resistor heatsink, by ROM | new; needed for the trip |
@@ -191,7 +191,7 @@ as the row file. A 1 GB card holds more than a year.
 
 | Event | Action |
 |---|---|
-| Boot, reset, flashing | PWM pins not driven → the pull-down on each gate-driver input holds both MOSFETs off. `pvOutputsOff()` must drive **both** load pins LOW once branch B has a GPIO |
+| Boot, reset, flashing | PWM pins not driven → the pull-down on each gate-driver input holds both MOSFETs off. `pvOutputsOff()` drives both load pins LOW (done 2026-11-12) |
 | Heatsink ≥ `T_TRIP` | `TRIP`, duty 0. `T_TRIP` = 80 °C `[ASSUMPTION]` until the resistor derating curve is read (bench B0) |
 | Heatsink sensor missing or invalid | `TRIP` |
 | I > 9.5 A (unit range ±10 A) | `TRIP` |
@@ -246,9 +246,8 @@ Decided (Asim, 2026-11-11):
 - The five new row columns of §7 (`D`, `load_mode`, `sweep_id`, `uptime_ms`, `status`),
   appended at the end of each row.
 
+- GPIO14 for the gate of branch B, with a 10 kΩ pull-down on the driver input so the
+  gate stays low during boot (Asim, 2026-11-12); verified in bench step B1.
+
 Still needed before coding:
-1. GPIO for the gate of branch B. Free pins on this board are few (PINMAP). GPIO14 is
-   free but toggles during boot; a toggling gate would only connect a 1.5 Ω resistor to
-   the module for a few ms, which is harmless `[EST]`, but it must be seen on the scope in
-   bench step B1. GPIO32 is clean but reserved for the pump (deferred). `[REC]` GPIO14.
-2. Which spare DS18B20 goes on the heatsink, and its ROM.
+1. Which spare DS18B20 goes on the heatsink, and its ROM.

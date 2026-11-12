@@ -24,7 +24,7 @@ arduino-cli monitor -p COM3 -c baudrate=115200
 The logger needs the NASIM include paths, so build it with `build_all.py logger`, then
 upload with `arduino-cli upload -p COM3 --input-dir out/firmware_build/logger firmware/logger`.
 
-Every sketch drives the pump (GPIO32) and load (GPIO33) outputs LOW first. Even so, fit
+Every sketch drives the pump (GPIO32) and both load outputs (branch A GPIO33, branch B GPIO14) LOW first. Even so, fit
 the 10 kΩ gate pull-downs before connecting any MOSFET.
 
 Build switches in `pv_config.h` (decisions 2026-11-10): `ENABLE_PUMP 0` — cooling is deferred,

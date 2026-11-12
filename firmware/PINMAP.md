@@ -27,7 +27,8 @@ on the Freenove GPIO extension board. Facts about the GPIOs are from the ESP-IDF
 | RS485 RX ← MAX3485 (RO / "RXD") | **26** | I | As above. |
 | PYR20 0–2 V analog | **34** | I (ADC1_CH6) | ADC1 (works with Wi-Fi); input-only pin is fine for an analog input and cannot be driven by mistake. |
 | Pump MOSFET gate (PWM) | **32** | O (LEDC) | Not strapping; high-impedance during reset, so the gate pull-down (10 kΩ) keeps the pump OFF until the firmware drives it LOW. |
-| Measurement-load MOSFET (PWM, ~20 kHz) | **33** | O (LEDC) | Same reasoning; the gate driver input also needs a pull-down so the load stays off during reset. |
+| Measurement-load branch B gate driver (PWM, sweeps only) | **14** | O (LEDC) | Decision 2026-11-12 (Asim). The only free output pin. It is a JTAG pin (MTMS) and toggles during boot, so the driver input has a **10 kΩ pull-down**; a toggle would at most connect one 1.5 Ω branch for a few ms `[EST]`. Checked on the scope in bench step B1. |
+| Measurement-load branch A gate driver (PWM, ~20 kHz) | **33** | O (LEDC) | Same reasoning; the gate driver input also needs a pull-down so the load stays off during reset. |
 | test_marker button (to GND) | **27** | I, internal pull-up | Needs an internal pull-up (34–39 have none); not strapping. Press = LOW. |
 
 Spare pins (kept free on purpose):
@@ -35,7 +36,6 @@ Spare pins (kept free on purpose):
 | GPIO | Note |
 |---|---|
 | 35, 36 (VP), 39 (VN) | ADC1, input-only: anemometer (pulse or analog, if approved) or a second analog channel. Need external pull-ups for a reed/pulse output. |
-| 14 | General purpose. Not chosen for the MOSFET gates: it is a JTAG pin (MTMS) and is reported to toggle during boot. |
 | 0, 2, 5, 12, 15 | Strapping — avoided. GPIO12 HIGH at reset selects 1.8 V flash and stops the board from booting. |
 
 ## I2C bus
