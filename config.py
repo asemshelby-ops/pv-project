@@ -197,6 +197,16 @@ DET_RESET_AFTER_FAILS = 5   # [ASSUMPTION] Asim, 2026-11-12
 G_STEP_GRID = (0.05, 0.1, 0.15, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0)  # relative rise of G in 2 min
 MATCH_FA_PER_DAY = (0.05, 0.1, 0.2, 0.5)   # false-alarm budgets at which detectors are compared
 MATCH_MIN_RECALL = 0.9                     # a setting must still find 90 % of the validation spikes
+# Acceptance criteria for the detector claim, fixed before any field data
+# (docs/paper/03 sec. 10). Approved provisionally by Asim 2026-11-12; the supervisor
+# confirms them before the first field day. After that: frozen, a change is a deviation.
+PREREG_BUDGET_FA_PER_DAY = 0.2     # primary false-alarm budget (must be in MATCH_FA_PER_DAY)
+PREREG_MAX_FA_PER_DAY = 0.2        # C1
+PREREG_MIN_RECALL = 0.90           # C2
+PREREG_MIN_REMAINING = 0.50        # C3b: share of the rise still to come at the alarm
+PREREG_MIN_TRAIN_SPIKES = 50       # precondition (03 sec. 6)
+PREREG_MIN_TEST_SPIKES = 20        # precondition
+PREREG_MIN_TEST_NON_IRR = 8        # precondition: test spikes labelled non_irradiance or mixed
 CAUSE_SENSITIVITY = ((0.25, 0.75), (1 / 3, 2 / 3), (0.4, 0.6), (0.5, 0.5))  # (non, irradiance) limits
 PAPER_SPLIT = (0.6, 0.2, 0.2)   # chronological train / validation / test, whole local days
 CELL_BACK_DT_C = CELL_MINUS_BACK_C   # same Sandia offset, used by the gamma analysis
