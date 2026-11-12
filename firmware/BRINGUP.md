@@ -176,7 +176,10 @@ steps, and all sensors agree within about 0.5 °C in the same air.
 
 Cross-calibration: all sensors in one stirred water bath (2–3 temperatures if possible),
 log for 10 min each, compute per-sensor offsets. Then copy each mounted sensor's ROM
-into `T_ROM` in `logger/logger.ino` (T1..T5 = positions on the back sheet).
+into `T_ROM` in `logger/logger.ino` (T1..T5 = positions on the back sheet). The logger
+also prints every ROM at boot and appends the list to `/rom_scan.txt` on the card, so
+the addresses can be read without flashing this test sketch. Fill in all five rows:
+until then the logger takes T1..T5 in scan order and sets status bit 32 in every row.
 
 | Symptom | Cause |
 |---|---|
@@ -299,10 +302,15 @@ Correct output on Serial:
 ```
 # PV Phase 0 logger. NASIM-GBT (no wind, double) trained on SYNTHETIC data.
 # timestamps are UTC (DS3231)
-date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm
+# boot ROM scan, UTC 2026-11-05 06:59:48: 5 DS18B20, T_ROM NOT filled in -> T1..T5 by scan order
+# 0,28-xx-xx-xx-xx-00-00-xx,crc ok,genuine pattern,T1
+# ... (one line per sensor; the same lines go to /rom_scan.txt)
+date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,D,load_mode,sweep_id,uptime_ms,status
 # status: DS3231=ok; BME280=ok; PaHub=ok; INA226 panel=ok; DS18B20=ok; PYR20 Modbus=ok; microSD=ok;
-2026-11-05,07:00:00,41.1250,...,812,18.0120,4.8810,87.9134,NaN,,0
+2026-11-05,07:00:00,41.1250,...,812,18.0120,4.8810,87.9134,NaN,,0,NaN,none,0,12345,32
 ```
+
+(The values in this example are illustrative, not measurements.)
 
 - Date and time are UTC (10:00 in Makkah = 07:00 in the log).
 - One row every 10 s; the time column steps by 10 s with no drift (millis schedule).
@@ -311,10 +319,19 @@ date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,win
   and when T1–T5, ambient, irradiance or the time is missing.
 - `wind` is `NaN` (not measured) while `HAS_ANEMOMETER` is 0; an empty field elsewhere means a failed read.
 - SD files: `/YYYYMMDD.csv` per UTC day (03:00 to 03:00 Makkah time), with a header line.
+- Last five columns: `D,load_mode,sweep_id` are `NaN,none,0` until the load exists;
+  `uptime_ms` is `millis()`; `status` is a bit field (table in
+  `docs/paper/07-load-firmware-spec.md` §7). `32` = `T_ROM` not filled in; `0` = clean.
+- One failed sensor read costs one row of `p` (status bit 64), not the detector state:
+  NASIM is reset only after 5 such rows in a row (bit 128, and a `# detector reset` line).
+- A row without RTC time is still written (date and time empty, status bit 1).
+- A day file started by the older firmware keeps its old 16-column header: after flashing
+  this version, start with a fresh day file (rename or move the old one off the card).
 
 | Symptom | Cause |
 |---|---|
-| Date/time empty | RTC missing or not set (step 2) |
+| Date/time empty, status odd | RTC missing or not set (step 2). The rows are kept; times are rebuilt from `uptime_ms` |
+| status has 256 | SD write needed a retry or rows were lost: check the card and its wiring |
 | Time 3 h ahead of UTC | RTC still on Makkah local time: re-run `set_rtc.py` (Before logging) |
 | `# warning: sample period overrun` | A device is blocking for too long: look at the status line |
-| T1..T5 in the wrong order | `T_ROM` not filled in yet (step 5) |
+| T1..T5 in the wrong order, status has 32 | `T_ROM` not filled in yet (step 5) |

@@ -167,13 +167,56 @@ are on the upstream bus at other addresses, so nothing collides.
 existing parsers still work. This uses the additions already proposed in CLAUDE.md
 ("confirm before coding") plus two from the audit:
 
-| Column | Meaning |
-|---|---|
-| `D` | duty at the moment of the reading, 0–1 |
-| `load_mode` | 0 OFF, 1 HOLD, 2 SWEEP (not expected in rows), 3 TRIP |
-| `sweep_id` | id of the last finished sweep; empty before the first |
-| `uptime_ms` | `millis()` at the row: recovers timing when the RTC read fails, shows resets |
-| `status` | bit field, one bit per device that failed at this row |
+Full header, in this order (written by the logger since 2026-11-12):
+
+```
+date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,D,load_mode,sweep_id,uptime_ms,status
+```
+
+| Column | Meaning | Written today (no load hardware) |
+|---|---|---|
+| `D` | duty of branch A at the moment of the reading, 0–1 | `NaN` (not measured, like `wind`) |
+| `load_mode` | text: `none` = no load fitted. The load firmware will write `off`, `hold`, `sweep` (not expected in rows), `trip` | `none` |
+| `sweep_id` | id of the last finished sweep; `0` = no sweep yet | `0` |
+| `uptime_ms` | `millis()` at the start of the row's readings: orders the rows and gives their spacing when the RTC time is missing; a fall = the board restarted. Wraps after 49.7 days | number |
+| `status` | bit field, decimal; `0` = nothing to report | number |
+
+Changed from the first version of this table: `load_mode = none` and `sweep_id = 0` while
+no load exists (Asim, 2026-11-12). `none` makes the column text, so the later modes are
+proposed as names instead of the numbers 0–3 `[REC]`: confirm when the load is coded.
+
+`status` bits. The only definition in the firmware is
+`firmware/libraries/PvDaq/src/pv_status.h`; the analysis keeps the same table in
+`data/schema.py` (`STATUS_BITS`, `decode_status`, `has_status`) and a test compares the
+two. A bit is never renumbered once data exists; new bits are added at the end.
+
+| Bit | Value | Name | Set when |
+|---|---|---|---|
+| 0 | 1 | `RTC_INVALID` | no valid RTC time at this row: `date` and `time` are empty |
+| 1 | 2 | `TEMP_FAIL` | at least one of T1..T5 gave no valid reading (its field is empty) |
+| 2 | 4 | `AMBIENT_FAIL` | BME280: no ambient temperature |
+| 3 | 8 | `IRRAD_FAIL` | PYR20: no irradiance |
+| 4 | 16 | `PANEL_FAIL` | panel INA226 or its PaHub channel: no V, I, P |
+| 5 | 32 | `TROM_UNMAPPED` | `T_ROM` in `logger.ino` is not filled in: T1..T5 follow the bus-scan order, not positions on the module |
+| 6 | 64 | `DET_SKIPPED` | the row was not given to NASIM (an input or the time is missing); the detector keeps its state |
+| 7 | 128 | `DET_RESET` | NASIM's state was cleared at this row: `DET_RESET_AFTER_FAILS` (5) skipped rows in a row. `p` is empty for the next 10 min |
+| 8 | 256 | `SD_RETRY` | this row needed a second SD write attempt, or the row(s) just before it did not reach the card |
+
+Example: `status = 33` = 32 + 1 = `TROM_UNMAPPED` + `RTC_INVALID`. Until `T_ROM` is
+filled in, a clean row reads `32`, not `0`. Rows outside the 06:00–18:00 window are not
+"skipped" rows: the detector rests there by design and no bit is set.
+
+Rows without RTC time are never dropped. They are written with `date` and `time` empty,
+their `uptime_ms` and bit 0, into the day file of the last row that had a time (or
+`/nodate.csv` if no row had one since boot). `analysis/ingest.py` rebuilds their time
+from `uptime_ms` and the nearest timed row of the same boot (good to ≈ 1 s, the RTC's
+step) and marks them `time_source = "uptime"`; rows it cannot place are counted, not
+hidden. Files written before 2026-11-12 (16 columns) still load; the five columns are
+then empty.
+
+`/rom_scan.txt`: appended at every boot — one title line (UTC time if known, number of
+sensors, whether `T_ROM` is used), then one line per DS18B20:
+`index,ROM,crc ok|CRC BAD,genuine pattern|clone?,column` (`T1`..`T5` or `-`).
 
 `voltage`, `current`, `power` keep their meaning: the 64-average reading at the row.
 In `HOLD` they are the held operating point (close to the MPP, not exactly it). `P_mp`
@@ -244,7 +287,8 @@ Then the bench protocol B1–B9 on real hardware. "Works" is claimed only after 
 Decided (Asim, 2026-11-11):
 - Two 1.5 Ω branches; A holds, B joins only in sweeps.
 - The five new row columns of §7 (`D`, `load_mode`, `sweep_id`, `uptime_ms`, `status`),
-  appended at the end of each row.
+  appended at the end of each row. Written by the logger since 2026-11-12, before the
+  load exists: `D = NaN`, `load_mode = none`, `sweep_id = 0`.
 
 - GPIO14 for the gate of branch B, with a 10 kΩ pull-down on the driver input so the
   gate stays low during boot (Asim, 2026-11-12); verified in bench step B1.
