@@ -335,8 +335,8 @@ short-circuit current. The power cost of a spike is then
 It is computed, not read from the measured power, for the reason given in Section~\ref{sec:uncertainty}.
 
 \subsection{Detectors}\label{sec:detectors}
-All three use the causal 3-sample median of $T_m$ and are silent for 10\,min after an
-alarm.
+Three detectors use the causal 3-sample median of $T_m$; a fourth, deliberately trivial
+one looks at irradiance only. All are silent for 10\,min after an alarm.
 \begin{itemize}
 \item \emph{Threshold}: alarm when the rise over the last 10\,min is at least
 $\theta_a$. No irradiance condition is applied, since irradiance-driven rises count.
@@ -349,12 +349,16 @@ cosine of the solar zenith angle; temperature excess over air per unit irradianc
 the residual of a first-order thermal model \cite{faiman2008} with its CUSUM. The
 target is the first 10\,min of every spike. The alarm requires the output to exceed a
 threshold on two consecutive samples.
+\item \emph{Irradiance step}: alarm when the irradiance has risen by a fraction $x$ or
+more within 2\,min. It never sees the temperature. It is included as a check on the
+tree model: for spikes that follow a returning sun, a one-line rule on the irradiance may
+be all that is needed, and the tree model must be shown to add something beyond it.
 \end{itemize}
 
 \subsection{Evaluation}
 Days are split chronologically into training (60\,\%), validation (20\,\%) and test
 (20\,\%), by whole local days. Every setting ($\theta_a$; $\kappa$, $h$; the output
-threshold) is chosen on the validation days and the test days are scored once.
+threshold; $x$) is chosen on the validation days and the test days are scored once.
 
 An alarm matches a spike when it falls between the onset and 2\,min after the peak. The
 first match is a true positive; a spike without a match is missed; an alarm outside
@@ -368,8 +372,16 @@ are:
 3\,\degC, positive when the alarm comes first;
 \item the \emph{share of the rise remaining} at the alarm,
 $(T_s(t_\mathrm{pk})-T_s(t_\mathrm{alarm}))/A$;
-\item \emph{false alarms per day}.
+\item \emph{false alarms per day}, counted per 12 valid daytime hours: excluded periods
+and samples the detector did not receive are removed from the observation time.
 \end{itemize}
+A detector that alarms more readily also alarms earlier, so delays are compared in two
+ways. First at the settings with the best validation $F_1$. Second at equal
+false-alarm budgets: for each budget, each detector is given the setting with the
+shortest median delay on the validation days among those that stay within the budget
+and still find at least 90\,\% of the validation spikes; that setting is then scored
+on the test days. We also show, for every setting, delay and recall against false alarms
+per day.
 Intervals are 95\,\% percentile intervals from 2000 bootstrap resamples of whole days;
 differences between detectors are computed on the same resampled days. A difference
 whose interval contains zero is reported as not detectable. The alarms written by the
@@ -380,13 +392,20 @@ Before any field data existed, the complete chain was run on 150 synthetic days 
 in the logger's file formats. This verifies the software only. The synthetic module
 follows the same first-order thermal model that one of the features uses, its spikes are
 large (median 6.6\,\degC) and most follow a deep, abrupt cloud, and the rate of events
-is set by the generator, not by any climate. On the 30 synthetic test days all three
-detectors found nearly every spike and their $F_1$ values (0.97 to 0.99) could not be
-told apart; the tree model alarmed a median of 1.8\,min after onset against 7.3\,min for
-the threshold rule, with no false alarm against 0.07 per day, and it missed four spikes,
-none of them irradiance-driven. These numbers are not results of this paper. They are
-the reason the field comparison is framed around lead time and false alarms, and they
-show where to look: at the spikes that no irradiance step announces.
+is set by the generator, not by any climate. On the 30 synthetic test days the three
+temperature-based detectors found nearly every spike and their $F_1$ values (0.97 to
+0.99) could not be told apart. At the settings with the best validation $F_1$ the tree
+model alarmed a median of 1.8\,min after onset, against 7.3\,min for the threshold rule
+and 5.7\,min for CUSUM. Two checks qualified this. At equal false-alarm budgets the lead
+over the threshold rule remained (4 to 5\,min), but a CUSUM set for speed alarmed after
+2.0\,min and its difference from the tree model was not detectable; it then found
+87\,\% of the spikes against 95 to 100\,\%. And a rule that alarms when the irradiance
+rises by half within 2\,min was as early as the tree model on irradiance-driven spikes
+(0.5 against 0.7\,min); it found 87\,\% of those and none of the others, with 0.39 false
+alarms per day against none. These numbers are not results of this paper. They set what
+the field comparison has to show: not that a learned model is earlier, but whether it
+adds recall and removes false alarms beyond what a fast CUSUM and an irradiance rule
+give.
 \todo{Decide with the supervisor whether this subsection stays; if space is short, keep
 its first two sentences only.}
 
@@ -464,16 +483,19 @@ State the reference logger's model and its own accuracy.}
 
 \subsection{Thermal spikes}
 \resultfig{fig1_example_day}{\columnwidth}{One day: module and air temperature,
-irradiance, labelled spikes by cause, and the alarms of the three detectors.
+irradiance, labelled spikes by cause, and the alarms of the four detectors.
 \todo{date}}{fig:day}
 \resultfig{fig2_spike_statistics}{\columnwidth}{Spike size by cause, and number of
 spikes per day.}{fig:stats}
 \resulttable{table1_spike_statistics}
 \resulttable{table6_cause_check}
+\resulttable{table9_cause_sensitivity}
 \todo{Observation period, valid days and hours. From Table~\ref{tab:table1_spike_statistics}:
 natural spikes per day with a 95\,\% interval, by cause; size, duration and rate. Minor
 rises. From Table~\ref{tab:table6_cause_check}: agreement of the cause rule with the
-controlled tests. Natural and controlled events are reported separately.}
+controlled tests. Natural and controlled events are reported separately. From
+Table~\ref{tab:table9_cause_sensitivity}: how many spikes change cause when the two
+limits (1/3 and 2/3) are moved, and whether any conclusion depends on them.}
 
 \subsection{Temperature coefficient and power cost}
 \resultfig{fig4_gamma}{\columnwidth}{Irradiance-corrected maximum power against cell
@@ -491,15 +513,25 @@ Table~\ref{tab:table1_spike_statistics}.}
 \resultfig{fig3_detection_delay}{\columnwidth}{Share of spikes detected against time
 from onset; the dotted line marks the median time at which the rise reaches
 3\,\degC.}{fig:delay}
+\resulttable{table8_matched_false_alarms}
+\resultfig{fig6_delay_vs_false_alarms}{\columnwidth}{Left: shortest median delay each
+detector reaches with at most the given number of false alarms per day, among its
+settings that find at least 90\,\% of the spikes; open markers are the $F_1$-tuned
+settings. Right: highest recall reached within the same number of false alarms. Test
+days.}{fig:tradeoff}
 \todo{Number of spikes in training, validation and test days; tuned settings. Lead
 with the two quantities the comparison rests on: (i) lead time and share of the rise
 remaining, from Table~\ref{tab:table2_detection} and Fig.~\ref{fig:delay}, with the
 paired difference between the tree model and each baseline and its interval; (ii) false
-alarms per day with intervals. Report the lead time at a matched false-alarm rate as well (each detector's setting moved
-until all have the same false alarms per day on the validation days), because a lead bought
-with more false alarms is not a lead. Then precision, recall and $F_1$, saying plainly whether
-their differences are detectable. Then recall per cause from
-Table~\ref{tab:table3_per_cause}, especially for spikes that are not irradiance-driven.
+alarms per day with intervals. Then the same comparison at equal false-alarm budgets
+(Table~\ref{tab:table8_matched_false_alarms}, Fig.~\ref{fig:tradeoff}), because a lead
+bought with more false alarms is not a lead: say whether the order of the detectors and
+the size of the lead survive. Then precision, recall and $F_1$, saying plainly whether
+their differences are detectable. Then recall and delay per cause from
+Table~\ref{tab:table3_per_cause}. State the result for the irradiance-step rule plainly:
+its recall and delay on irradiance-driven spikes against the tree model's, and that it
+cannot find spikes without an irradiance step; the tree model's case rests on what it
+adds for those.
 If fewer than 50 training and 20 test spikes were collected, the threshold and CUSUM are
 the main result and the tree model is exploratory.}
 
@@ -515,9 +547,11 @@ replay to be re-run with the final model.}
 \item \todo{What the lead time is worth: with a time constant of about 6\,min, an alarm
 $x$ minutes earlier leaves $y$\,\% of the rise still to come
 (Table~\ref{tab:table2_detection}). Say for which later use this matters.}
-\item \todo{Whether the learned detector earns its place: if its lead holds only for
-irradiance-driven spikes, a simple irradiance-step rule may do as well; test that claim
-on the per-cause table before making it.}
+\item \todo{Whether the learned detector earns its place. The irradiance-step rule is
+in Tables~\ref{tab:table2_detection}--\ref{tab:table8_matched_false_alarms}: where it is
+as early as the tree model (irradiance-driven spikes), say so; the tree model is then
+justified only by the spikes the rule cannot see and by its false alarms. If that gain is
+not detectable in the field data, recommend the simple rules.}
 \item \todo{False alarms: what one false alarm per day would cost a later action.}
 \item \todo{Natural against controlled events: do they differ in size and rate?}
 \item \todo{How rare natural spikes were, and what that means for the question.}

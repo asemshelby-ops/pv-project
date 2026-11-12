@@ -16,8 +16,11 @@ Upload `main.tex` and `refs.bib` to Overleaf (the `IEEEtran` class is available 
 pdflatex main && bibtex main && pdflatex main && pdflatex main
 ```
 
-Expect small fixes on the first build. Known one: Table 2 (`table2_detection.tex`) is
-wide; in the two-column layout it will need `table*` or fewer columns.
+Expect small fixes on the first build. Known ones: Tables 2, 3 and 8
+(`table2_detection.tex`, `table3_per_cause.tex`, `table8_matched_false_alarms.tex`) are
+wide; in the two-column layout they will need `table*` or fewer columns.
+`fig6_delay_vs_false_alarms` has two panels and is drawn for the full text width
+(`figure*`, `\textwidth`); at column width its labels are small.
 
 ## Filling in the results
 
@@ -37,3 +40,10 @@ The detector comparison is about **detection lead time and false alarms**, not a
 higher F1: with a spike defined by a threshold, every reasonable detector finds nearly
 all of them. This came from the synthetic run and is a hypothesis for the field data, not
 a finding.
+
+Check of that framing on the synthetic run (2026-11-12, `docs/paper/11` §3a–§3b): the
+tree model's lead over the threshold rule holds at equal false-alarm budgets, its lead
+over CUSUM does not, and an irradiance-step rule is as early on irradiance-driven
+spikes. The draft therefore no longer says the learned model is "earlier"; Section IV-F
+and the Results TODOs ask what it adds in recall and false alarms. Whether it stays the
+main detector is open until field data exist.
