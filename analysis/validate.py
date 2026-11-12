@@ -63,7 +63,8 @@ def _passes(row):
 
 def compare(esp, ref, mapping, ref_time="timestamp_utc", min_irradiance=200.0):
     """esp: analysis.ingest.read_logger frame (one day). ref: the reference export.
-    Returns (table, lag_s). `passes` applies the proposed criteria of docs/paper/04."""
+    Returns (table, lag_s, aligned) with aligned[column] = (esp values, reference values
+    at the same instants). `passes` applies the proposed criteria of docs/paper/04."""
     t_ref = pd.to_datetime(ref[ref_time], utc=True)
     g_col, g_scale = mapping["irradiance"]
     lag = clock_lag(esp["t_utc"], esp["irradiance"].to_numpy(dtype=float),
@@ -74,6 +75,7 @@ def compare(esp, ref, mapping, ref_time="timestamp_utc", min_irradiance=200.0):
     rows = [{"quantity": "clock lag (reference ahead), s", "kind": "lag", "n": 1, "bias": lag,
              "loa_low": np.nan, "loa_high": np.nan, "rmse": np.nan, "slope": np.nan,
              "intercept": np.nan, "ref_mean": np.nan}]
+    aligned = {}
     for col, (rcol, scale) in mapping.items():
         e = esp[col].to_numpy(dtype=float)[inside]
         r = np.interp(xe[inside], xr, ref[rcol].to_numpy(dtype=float) * scale)
@@ -82,9 +84,10 @@ def compare(esp, ref, mapping, ref_time="timestamp_utc", min_irradiance=200.0):
             keep = r >= min_irradiance
             e, r = e[keep], r[keep]
         rows.append(_stats(col, kind, e, r))
+        aligned[col] = (e, r)
         if kind == "temperature":
             rows.append(_stats(f"{col}: rise over {config.SPIKE_WINDOW_MIN} min", "rise",
                                _rise(e), _rise(r)))
     table = pd.DataFrame(rows)
     table["passes"] = table.apply(_passes, axis=1)
-    return table, lag
+    return table, lag, aligned

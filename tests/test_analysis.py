@@ -185,7 +185,8 @@ def test_validation_finds_the_clock_lag_and_offsets(rig, tmp_path):
     ref = pd.read_csv(tmp_path / "reference.csv")
     mapping = {"T1": ("TC1", 1.0), "T3": ("TC2", 1.0), "irradiance": ("PYR_mV", 1.0),
                "voltage": ("V_dc", 1.0), "current": ("I_dc", 1.0)}
-    table, lag = validate.compare(esp, ref, mapping)
+    table, lag, aligned = validate.compare(esp, ref, mapping)
+    assert len(aligned["T3"][0]) == len(aligned["T3"][1]) > 4000
     assert abs(lag - 3.0) <= 1.0
     row = table.set_index("quantity")
     assert row.at["T3", "bias"] == pytest.approx(-0.4, abs=0.05)
