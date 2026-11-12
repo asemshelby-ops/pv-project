@@ -232,12 +232,17 @@ def run(frame, events, excluded=None, seed=0, n_boot=2000, log=print):
             if picks[name] is not None:
                 s, al, v, t = picks[name]
                 row.update({"setting": str(s), "val_FA_per_day": v["FA_per_day"],
-                            "val_recall": v["recall"], **{f"test_{k}": t[k] for k in keep}})
+                            "val_recall": v["recall"], **{f"test_{k}": t[k] for k in keep},
+                            "test_spikes": t["spikes"],
+                            **{f"test_n_{c}": t[f"n_{c}"] for c in metrics.CAUSES}})
                 if ref is not None and name != "NASIM-GBT":
-                    d = metrics.bootstrap_difference(ref, test(al)[1:], ("delay_median_min",),
-                                                     n=n_boot, seed=seed)["delay_median_min"]
-                    row.update({"nasim_minus_delay": d[0], "nasim_minus_delay_lo": d[1],
-                                "nasim_minus_delay_hi": d[2]})
+                    diff = metrics.bootstrap_difference(ref, test(al)[1:],
+                                                        ("delay_median_min", "recall"),
+                                                        n=n_boot, seed=seed)
+                    for key, short in (("delay_median_min", "delay"), ("recall", "recall")):
+                        d = diff[key]
+                        row.update({f"nasim_minus_{short}": d[0], f"nasim_minus_{short}_lo": d[1],
+                                    f"nasim_minus_{short}_hi": d[2]})
             rows_m.append(row)
     counts = {k: int(((events["class"] == "spike") & events["valid"]
                       & events["date_local"].isin(v)).sum()) for k, v in parts.items()}

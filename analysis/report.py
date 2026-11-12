@@ -310,21 +310,23 @@ def table_matched(matched, out="."):
             rows.append({"budget /day": f"{x.budget_FA_per_day:g}", "detector": x.detector,
                          "setting": "none qualifies", "false alarms/day": "-", "recall": "-",
                          "delay min": "-", "lead min": "-", "rise left": "-",
-                         "NASIM minus this, delay min": "-"})
+                         "NASIM minus this, delay min": "-", "NASIM minus this, recall": "-"})
             continue
         diff = ("-" if pd.isna(x.get("nasim_minus_delay")) else
                 f"{x.nasim_minus_delay:+.1f} ({x.nasim_minus_delay_lo:+.1f} to {x.nasim_minus_delay_hi:+.1f})")
+        diff_r = ("-" if pd.isna(x.get("nasim_minus_recall")) else
+                  f"{x.nasim_minus_recall:+.2f} ({x.nasim_minus_recall_lo:+.2f} to {x.nasim_minus_recall_hi:+.2f})")
         rows.append({"budget /day": f"{x.budget_FA_per_day:g}", "detector": x.detector,
                      "setting": x.setting, "false alarms/day": num(x.test_FA_per_day, ".2f"),
                      "recall": num(x.test_recall, ".2f"),
                      "delay min": num(x.test_delay_median_min, ".1f"),
                      "lead min": num(x.test_lead_median_min, "+.1f"),
                      "rise left": num(x.test_remaining_median, ".0%"),
-                     "NASIM minus this, delay min": diff})
+                     "NASIM minus this, delay min": diff, "NASIM minus this, recall": diff_r})
     return _write(pd.DataFrame(rows), out, "table8_matched_false_alarms",
                   "Detectors at equal false-alarm budgets: setting chosen on the validation "
                   "days (shortest median delay within the budget, recall at least 0.9), "
-                  "scored on the test days. Last column: paired day-bootstrap, 95 %.")
+                  "scored on the test days. Last two columns: paired day-bootstrap, 95 %.")
 
 
 def table_cause_sensitivity(sens, out="."):
