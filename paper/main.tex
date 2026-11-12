@@ -46,7 +46,9 @@
 Detection on a Microcontroller\\
 {\large \todo{working title; the supervisor chooses the final one}}}
 
-\author{\IEEEauthorblockN{\todo{Author names, in the order the supervisor decides}}
+% Author order as given by Asim on 2026-11-12; to be confirmed with the supervisor.
+\author{\IEEEauthorblockN{Asim Alharbi, Abdullah Dahlan, Faisal Al-Fahmi, Ibrahim Al-Khudari,\\
+Faisal Al-Maliki, and Abdulilah Al-Haimani}
 \IEEEauthorblockA{Department of Mechanical Engineering (Mechatronics)\\
 Umm Al-Qura University, Makkah, Saudi Arabia\\
 \todo{e-mail addresses}}}
@@ -64,8 +66,8 @@ defined as a rise of the module temperature of at least 3\,\degC{} within 10\,mi
 microcontroller: five back-sheet temperature sensors, an in-plane irradiance sensor and a
 two-branch switched resistive load that both holds the module at its maximum-power point
 and sweeps its current--voltage curve. The temperature coefficient of power, absent from
-the module's documentation, is measured outdoors from these sweeps. Three detectors run
-on the microcontroller every 10\,s and are scored event by event: a temperature-rise
+the module's documentation, is measured outdoors from these sweeps. Three causal detectors that use only 10-s samples available on the microcontroller
+are scored event by event: a temperature-rise
 threshold, a CUSUM on the temperature increment, and a small gradient-boosted tree model.
 The comparison asks how early each detector raises its alarm and how many false alarms
 that costs. \todo{Two to three sentences of results from Section VI: observation period,
@@ -118,7 +120,9 @@ a comparison against a commercial data logger.
 size, duration, cause (irradiance-driven or not) and power cost, the last through a
 temperature coefficient measured on this module by an outdoor transient method
 \cite{king1997}.
-\item A comparison, on the microcontroller, of three detectors scored at event level.
+\item A comparison of three causal detectors, built for the microcontroller and scored at
+event level \todo{say ``running on the microcontroller'' only once all three do; see
+Section~\ref{sec:ondevice}}.
 The comparison is framed around \emph{detection lead time and false alarms}, not around
 a headline accuracy: with a rise defined by a threshold, a threshold rule will find
 nearly every event sooner or later, so the useful question is how much earlier another
@@ -127,13 +131,13 @@ detector fires and at what cost in false alarms.
 To the authors' knowledge, fast temperature rises of a PV module have not been reported
 as discrete events with their frequency, cause and power cost from field measurements in
 Makkah, and detectors of such events have not been compared in real time on a low-cost
-microcontroller. This statement rests on a limited search, described in Section~II.
+microcontroller. This statement rests on a limited search, described in Section~\ref{sec:related}.
 
 The paper does not claim a climate statistic (one module, one site, one period), a
 cooling benefit, a new thermal model or a new I--V tracer topology, and it reports the
 detector comparison whichever way it comes out.
 
-\section{Related Work}
+\section{Related Work}\label{sec:related}
 \subsection{Module temperature: steady state and dynamics}
 The Sandia model gives the back-surface temperature as
 $T_m = E\,\exp(a+b\,W\!S)+T_a$ and the cell temperature as $T_c = T_m + (E/E_0)\,\Delta T$,
@@ -259,9 +263,12 @@ the module's own curve. Using the second branch only during sweeps halves the ri
 current the capacitor carries all day. \todo{Final part values, the measured settling
 time and the bench results (docs/paper/06); a one-line schematic figure.}
 
-\subsection{On-device detection}
-The detectors of Section~IV-D run on the same microcontroller on every 10-s sample. The
-tree model is exported to plain C \cite{m2cgen}. \todo{Time per update, flash and RAM
+\subsection{On-device detection}\label{sec:ondevice}
+The detectors of Section~\ref{sec:detectors} use only the current and earlier 10-s samples.
+The tree model and its features run on the logger's microcontroller; the model is exported
+to plain C \cite{m2cgen}. \todo{The threshold and CUSUM detectors are computed offline from
+the same rows in the present firmware. Port both to the logger (a few lines of C each) and
+log their alarms, or state here that only the tree model ran on the device.} \todo{Time per update, flash and RAM
 measured on the board with the final model.}
 
 \section{Methodology}
@@ -286,7 +293,7 @@ three times the normal heating rate of about 0.1\,\degC/min reported in
 \cite{herteleer2023}. Rises between 2 and 3\,\degC{} are recorded as minor rises and are
 neutral in scoring. Events are kept only when the sun is more than about 11$^\circ$
 above the horizon and outside excluded periods: 30\,min after each logged cleaning, and
-the shade-and-uncover runs of Section~IV-C.
+the shade-and-uncover runs of Section~\ref{sec:gamma}.
 
 \subsection{Cause and origin}
 Wind is not measured, so the cause is labelled only as irradiance-driven or not. Let
@@ -304,7 +311,7 @@ records the origin: natural, or one of the controlled tests (a shade mesh of abo
 over module and sensor, removed after 20\,min; a windbreak for 20\,min). Controlled
 tests have a known cause, so they also serve to check the cause rule.
 
-\subsection{Temperature coefficient and power cost}
+\subsection{Temperature coefficient and power cost}\label{sec:gamma}
 The coefficient $\gamma$ of the maximum power is measured by the outdoor transient
 method of \cite{king1997}. Near solar noon on a clear day the module, but not the
 irradiance sensor, is shaded for 25\,min and then uncovered; the load sweeps the I--V
@@ -325,9 +332,9 @@ short-circuit current. The power cost of a spike is then
 \Delta P/P = \gamma\,\Delta T_c,\qquad
 \Delta T_c = A + \Delta T\,\Delta G/G_0 .
 \end{equation}
-It is computed, not read from the measured power, for the reason given in Section~V.
+It is computed, not read from the measured power, for the reason given in Section~\ref{sec:uncertainty}.
 
-\subsection{Detectors}
+\subsection{Detectors}\label{sec:detectors}
 All three use the causal 3-sample median of $T_m$ and are silent for 10\,min after an
 alarm.
 \begin{itemize}
@@ -383,7 +390,7 @@ show where to look: at the spikes that no irradiance step announces.
 \todo{Decide with the supervisor whether this subsection stays; if space is short, keep
 its first two sentences only.}
 
-\section{Measurement Uncertainty}
+\section{Measurement Uncertainty}\label{sec:uncertainty}
 Uncertainties follow the GUM \cite{gum2008}: datasheet limits are treated as rectangular
 distributions and combined in quadrature; Table~\ref{tab:uncertainty} gives the result.
 Entries marked with a dagger rest on an assumed value until the measurement named in the
@@ -488,7 +495,9 @@ from onset; the dotted line marks the median time at which the rise reaches
 with the two quantities the comparison rests on: (i) lead time and share of the rise
 remaining, from Table~\ref{tab:table2_detection} and Fig.~\ref{fig:delay}, with the
 paired difference between the tree model and each baseline and its interval; (ii) false
-alarms per day with intervals. Then precision, recall and $F_1$, saying plainly whether
+alarms per day with intervals. Report the lead time at a matched false-alarm rate as well (each detector's setting moved
+until all have the same false alarms per day on the validation days), because a lead bought
+with more false alarms is not a lead. Then precision, recall and $F_1$, saying plainly whether
 their differences are detectable. Then recall per cause from
 Table~\ref{tab:table3_per_cause}, especially for spikes that are not irradiance-driven.
 If fewer than 50 training and 20 test spikes were collected, the threshold and CUSUM are
