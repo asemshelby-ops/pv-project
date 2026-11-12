@@ -175,3 +175,19 @@ HARD_TA_STEP_HOLD_MIN = (30, 90)  # the step's rise + 15 min = ambient_rise, neu
 # --- Export (export/) ----------------------------------------------------------
 EXPORT_VARIANT = "hard"     # models exported to C: hard variant, first evaluation
 EXPORT_SEED = 5             # seed; parity test on that run's held-out test days
+
+# --- Paper analysis (analysis/): spike definition of docs/paper/03 ------------------------
+SPIKE_THETA_C = 3.0         # [SUPERVISOR] rise of about 3-4 degC; lower end
+SPIKE_WINDOW_MIN = 10       # [ASSUMPTION] ~1.6 thermal time constants (tau 6.3 min [LIT])
+SPIKE_MINOR_C = 2.0         # [ASSUMPTION] minor rise: 2 <= rise < 3 degC, neutral in scoring
+SPIKE_PEAK_HOLD_MIN = 5     # [ASSUMPTION] a peak must not be exceeded for the next 5 min
+SPIKE_MIN_COS_ZENITH = 0.2  # [ASSUMPTION] sun elevation above ~11.5 deg
+CAUSE_U_EFF = 35.0          # [EST] W/(m2 K), Faiman defaults at 1.5 m/s; refit on real data
+CAUSE_TAU_MIN = 6.3         # [LIT] Herteleer et al. 2023, fixed-mount systems
+CAUSE_F_IRRADIANCE = 2 / 3  # [ASSUMPTION] explained fraction >= 2/3 -> "irradiance"
+CAUSE_F_NON = 1 / 3         # [ASSUMPTION] explained fraction <= 1/3 -> "non_irradiance"
+MATCH_GRACE_MIN = 2         # [ASSUMPTION] an alarm up to 2 min after the peak still matches
+CLEANING_EXCLUDE_MIN = 30   # [ASSUMPTION] excluded after a logged cleaning
+GAP_S = 15.0                # a step above 15 s between rows starts a new detector segment
+PAPER_SPLIT = (0.6, 0.2, 0.2)   # chronological train / validation / test, whole local days
+CELL_BACK_DT_C = CELL_MINUS_BACK_C   # same Sandia offset, used by the gamma analysis

@@ -32,7 +32,9 @@ def samples(days):
     g = days["irradiance"].to_numpy(dtype=float)
     wind = (days["wind"].to_numpy(dtype=float) if "wind" in days
             else np.full(len(days), np.nan))
-    date = days["date"].to_numpy()
+    # A detector restarts at each new logged day -- or, for real logger data, at each
+    # new `segment` (analysis/ingest.py): a new day, a gap, or a row with a missing input.
+    date = days["segment" if "segment" in days else "date"].to_numpy()
     for i in range(len(days)):
         yield (i == 0 or date[i] != date[i - 1],
                Sample(tuple(tb[i]), ta[i], g[i], wind[i], int(doy[i]), float(minute[i])))
