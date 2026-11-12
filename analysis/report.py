@@ -68,7 +68,7 @@ def fig_example_day(frame, events, alarms, date, out, synthetic=False):
     ax[0].plot(t, d[BACK_SENSORS].mean(axis=1), color=INK, lw=0.9, label="module (mean of 5)")
     ax[0].plot(t, d["T_ambient"], color=MUTED, lw=0.8, ls=":", label="air")
     ax[0].set_ylabel("Temperature (°C)")
-    ax[0].legend(loc="upper left", ncols=3)
+    ax[0].legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncols=3)   # above the data
     ax[1].plot(t, d["irradiance"], color=INK, lw=0.8)
     ax[1].set_ylabel("Irradiance (W/m²)")
     for k, name in enumerate(DETECTORS):
@@ -126,7 +126,8 @@ def fig_detection_delay(detail, out):
     ax.set_ylabel("Share of spikes detected")
     ax.set_ylim(0, 1.02)
     ax.set_xlim(0, None)
-    ax.legend(loc="lower right")
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncols=3, columnspacing=1.0,
+              handlelength=2.4)
     return _save(fig, out, "fig3_detection_delay")
 
 
