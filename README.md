@@ -41,6 +41,21 @@ range, sensor noise is 3x larger with slow drift, and slow haze dips
 (irradiance_rise) and warm-air steps of Ta (ambient_rise, neutral) add
 non-wind temperature rises.
 
+## Paper pipeline (since 2026-11-12)
+
+The paper uses `analysis/`, not `eval/run.py`: it reads the logger's own files (UTC),
+labels spikes by the 10 Nov definition (a rise after the sun returns counts) and
+compares threshold, CUSUM and NASIM-GBT. `eval/run.py` below is the earlier evaluation
+with the earlier labels; it is kept and tested, but not used for the paper.
+
+```bash
+.venv/Scripts/python -m analysis.demo_synth        # synthetic rig files -> figures, tables
+.venv/Scripts/python -m analysis.export_model      # NASIM to C + parity check
+.venv/Scripts/python -m analysis.pipeline --data <SD copy> --out <folder>
+```
+
+Details and the synthetic results: `docs/paper/11-pipeline-and-synthetic-results.md`.
+
 ## Layout
 
 | Path | Content |
