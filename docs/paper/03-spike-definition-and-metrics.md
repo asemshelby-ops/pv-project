@@ -199,8 +199,10 @@ ISO 8601; `date_local` is the Asia/Riyadh date used for the day split.
 Written 2026-11-12, **before any field data exists**, and after the synthetic checks of
 `11` §3a–§3c (so the synthetic results were known; the field results were not). The same
 text is in the paper's Evaluation section. The numbers below are `[ASSUMPTION]`s proposed
-on that date; Asim and the supervisor confirm or change them **before the first field
-day**. From the first field day on they are frozen: any change is listed in the paper as
+on that date. **Approved provisionally by Asim on 2026-11-12** (budget 0.2 per day,
+recall ≥ 0.90, ≥ 50 % of the rise remaining); the supervisor confirms or changes them
+**before the first field day**. In the code they are the `PREREG_*` constants of
+`config.py`. From the first field day on they are frozen: any change is listed in the paper as
 a deviation, with its reason.
 
 **Place of this claim in the paper.** The primary contribution is the field
@@ -262,7 +264,25 @@ to +0.8) but its recall is 0.87, below C2 → no match, **by a margin of three s
 distinctive", narrowly. That narrowness is the reason no claim is made over CUSUM, and
 the synthetic set must not be used to adjust these numbers.
 
-`[OPEN]` `analysis/pipeline.py` does not print this verdict yet. Missing pieces: the
-recall difference with its interval at the matched setting, and a pass/fail line per
-condition in `summary.md`. To add before the field analysis, without changing the
-criteria.
+**The pipeline prints the verdict** (done 2026-11-12, `analysis/verdict.py`): in
+`summary.md`, section "Verdict on the detector claim", and in `verdict.json` — the
+precondition, PASS or FAIL for C1, C2, C3a, C3b and C3c with the number behind each,
+for every baseline whether it matches (with NASIM minus baseline in delay and in recall,
+both with 95 % intervals), the outcome, and the one sentence the paper may use. The code
+reads the matched-budget table and the limits in `config.py`; it has no setting of its
+own.
+
+**Planning the campaign length** (`analysis/campaign_days.py`). The precondition counts
+only test days, a fifth of the campaign. The script takes the spike rate of the pilot
+days (a pipeline result folder, or typed counts) and prints the campaign length at which
+the three counts (≥ 20 test spikes, ≥ 8 of them not irradiance-driven, ≥ 50 training
+spikes) are reached: as expected values, with 80 % chance, and with the lower 95 % ends
+of the pilot rates. It assumes a constant Poisson rate `[ASSUMPTION]`; weather runs and
+the season make the real scatter larger. Controlled-test spikes are left out of the rate:
+they can be scheduled to fill a shortfall but are reported separately. Run it after the
+first pilot week and again as days accumulate:
+
+```bash
+.venv/Scripts/python -m analysis.campaign_days --results <pilot result folder>
+.venv/Scripts/python -m analysis.campaign_days --days 7 --spikes 12 --non-irradiance 4
+```

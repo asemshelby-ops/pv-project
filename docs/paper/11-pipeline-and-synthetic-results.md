@@ -20,11 +20,13 @@ It says nothing about the real module, and none of it may appear in the paper as
 | `analysis/metrics.py` | event matching, valid observation time, per-cause recall, F1 and delay, lead, day-bootstrap intervals, paired differences |
 | `analysis/gamma.py` | P_mp, I_sc per sweep; γ, α, β per shade-and-uncover run; mean and uncertainty |
 | `analysis/validate.py` | clock lag, bias, limits of agreement against a reference-logger export |
+| `analysis/verdict.py` | the verdict on the detector claim against the criteria fixed in advance (`03` §10): pass/fail per condition and the sentence for the paper, written to `summary.md` and `verdict.json` |
+| `analysis/campaign_days.py` | campaign days needed to reach the claim's precondition, from the pilot spike rate |
 | `analysis/report.py` | figures (PDF + PNG) and tables (CSV + LaTeX) |
 | `analysis/fake_logger.py` | writes synthetic data as rig files, for tests and the demo only |
 
-Tests: `tests/test_analysis.py` (13 tests); whole suite 88 passed (2026-11-12, after the
-reviewer checks of §3a–§3c and the segment rule of §9).
+Tests: `tests/test_analysis.py` (13 tests); whole suite 104 passed (2026-11-12, after the
+reviewer checks of §3a–§3c, the segment rule of §9 and the verdict of §3d).
 
 ## 2. What was regenerated
 
@@ -111,11 +113,38 @@ What this changes:
   which picked a slow setting (h = 2.0 °C). Tuned for speed within the same false-alarm
   budget, CUSUM alarms after 2.0 min and its difference from NASIM is not detectable at
   any budget. It pays in recall: 0.87 on the test days against 0.95–1.00 for NASIM
-  (whether that recall difference is itself detectable was not tested). On the test-day
+  (at the primary budget of 0.2 per day that recall difference is detectable: +0.13, +0.07 to +0.19; see §3d). On the test-day
   curve restricted to recall ≥ 0.9, CUSUM's best delay is 3.0 min at 0.1 false alarms per
   day and 1.8 min at 0.9 per day; NASIM reaches 1.8 min at zero.
 - The validation budget is not met exactly on the test days (threshold at budget 0.5:
   0.64 per day), so the realised rate is reported, not the budget.
+
+### 3d. The printed verdict, and the campaign length (2026-11-12)
+
+`summary.md` of this run now ends its detection part with the verdict of `03` §10 at the
+primary budget of 0.2 false alarms per day:
+
+| Condition | Result on the synthetic test days |
+|---|---|
+| Precondition | met: 193 training spikes, 85 test spikes, 39 of them not irradiance-driven |
+| C1 false alarms | PASS: 0.07 per day (≤ 0.2) |
+| C2 recall | PASS: 1.00 (≥ 0.90) |
+| C3a lead | PASS: +3.8 min |
+| C3b rise remaining | PASS: 92 % (≥ 50 %) |
+| C3c earlier than the threshold rule | PASS: −4.1 min (−5.2 to −2.9) |
+| Threshold rule | does not match: detectably later |
+| CUSUM | does not match: as early (−0.1 min, −1.0 to +0.8) but recall 0.87 fails C2; NASIM minus CUSUM in recall +0.13 (+0.07 to +0.19) |
+| Irradiance step | does not match: no qualifying setting |
+
+Outcome: "holds and distinctive". On synthetic data this shows that the verdict is
+computed and that each line can pass or fail; it says nothing about the module.
+
+`analysis/campaign_days.py` on this run's rates (2.3 natural spikes per day, 1.0 not
+irradiance-driven — **the generator's rates, not a forecast**) gives 43 days for the
+expected counts, 53 days for an 80 % chance and 63 days with the lower 95 % rates. With
+a pilot of 5 days and 4 spikes, one of them not irradiance-driven, it gives 200 and 258
+days, and "not reachable" for the cautious case: at such a rate the precondition would
+have to come from controlled tests or the claim stays untested.
 
 ### 3b. The irradiance-step baseline (reviewer point R3)
 
@@ -223,8 +252,8 @@ run, with the earlier model, showed the board and the PC build agreeing exactly.
 ## 8. Known gaps in the pipeline
 
 - The matched-budget comparison picks one setting per detector and budget; CUSUM's
-  validation recall (0.94) did not carry over to the test days (0.87). A recall
-  difference between detectors at a matched budget is not tested for detectability.
+  validation recall (0.94) did not carry over to the test days (0.87). The recall
+  difference at each matched setting is now reported with its interval (table 8).
 - The irradiance step uses one fixed window (2 min); other windows were not tried.
 
 - Controlled tests are only simulated by renaming clouds; windbreak tests are untested.

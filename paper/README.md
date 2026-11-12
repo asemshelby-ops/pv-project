@@ -21,8 +21,12 @@ Expect small fixes on the first build. Wide items now span both columns: tables 
 with `\resulttablewide`), and figures 1, 2 and 6 are placed as `figure*` at `\textwidth`
 (`WIDE_FIGURES`, `\resultfigwide`). Table 3 was reshaped to one row per cause and
 detector so that it fits one column. All tables are set in `\footnotesize`. None of this
-has been compiled: check the widths on the first Overleaf build (table 8 has 9 columns
-and is the one most likely to need a shorter header).
+has been compiled: check the widths on the first Overleaf build (table 8 has 10 columns
+and is the one most likely to need shorter headers).
+
+The verdict on the detector claim is in `summary.md` of the result folder ("Verdict on
+the detector claim") and in `verdict.json`: copy its sentence into the Results section
+unchanged.
 
 ## Filling in the results
 
