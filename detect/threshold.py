@@ -10,6 +10,10 @@ Why max-min and not end points: a cloud that passes and clears inside the
 window leaves G at both ends equal, yet the module re-heats strongly after it
 -- exactly the irradiance-driven rise the gate exists to block.
 Parameters are the team's fixed values (config.py); they are not tuned here.
+
+gate=None switches the irradiance gate off. Since 2026-11-10 a rise after the sun returns
+counts as a spike, so the paper's threshold baseline runs without the gate
+(docs/paper/03 sec. 7); the gated form is kept for the earlier results.
 """
 import config
 from detect.features import FeatureExtractor
@@ -33,7 +37,8 @@ class ThresholdDetector:
             self.quiet -= 1
         if f is None or self.quiet > 0:
             return False
-        if f["rise_10m"] >= self.rise_c and f["g_range_10m"] < self.gate:
+        if f["rise_10m"] >= self.rise_c and (self.gate is None
+                                             or f["g_range_10m"] < self.gate):
             self.quiet = SILENCE_N
             return True
         return False

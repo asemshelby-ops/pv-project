@@ -29,7 +29,8 @@ from detect.features import FeatureExtractor, feature_names
 from detect.stream import samples
 
 SILENCE_N = int(config.SILENCE_MIN * 60 / config.DT_S)
-NEUTRAL = {"minor_lull", "mixed", "natural_spike", "natural_minor", "ambient_rise"}
+NEUTRAL = {"minor_lull", "mixed", "natural_spike", "natural_minor", "ambient_rise",
+           "minor", "excluded"}     # the last two: paper labels (analysis/events.py)
 
 
 def build_features(days, use_wind, hybrid=False, model_params=None):
