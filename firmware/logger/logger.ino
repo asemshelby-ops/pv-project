@@ -180,7 +180,6 @@ void printStatus() {
 
 // ---- one sample ---------------------------------------------------------------------------
 void sample(uint32_t n) {
-  const uint32_t uptime_ms = millis();  // logged: orders the rows even without the RTC
   uint32_t status = 0;
   if (n % RETRY_EVERY == 0) {
     bool retried = false;
@@ -192,11 +191,15 @@ void sample(uint32_t n) {
     if (retried || n == 0) printStatus();
   }
 
+  // Read order: the timestamp, then at once the irradiance (the fastest-changing input,
+  // one short Modbus exchange), then the slower devices; the DS18B20 conversion (750 ms)
+  // comes last. uptime_ms is taken with the timestamp, after any device retry above.
+  const uint32_t uptime_ms = millis();  // logged: orders the rows even without the RTC
   if (readable(rtc)) rtc.read();
+  if (readable(pyr)) pyr.read();
   if (readable(env)) env.read();
   if (readable(panel)) panel.read();
   if (probes.count) probes.read();
-  if (readable(pyr)) pyr.read();
 
   const bool have_time = rtc.ok() && rtc.timeValid;
   const DateTime t = rtc.time();                    // UTC: every logged timestamp
