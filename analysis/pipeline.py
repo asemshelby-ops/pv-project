@@ -64,6 +64,8 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
 
     det = detection.run(frame, ev, excluded, seed=seed, n_boot=n_boot, log=log)
     det["results"].to_csv(out / "detection_results.csv", index=False)
+    det["curves"].to_csv(out / "detection_curves.csv", index=False)
+    det["matched"].to_csv(out / "detection_matched.csv", index=False)
     (out / "tuned.json").write_text(json.dumps(
         {**{k: float(v) for k, v in det["tuned"].items()}, "split_days": {
             k: [v[0], v[-1], len(v)] for k, v in det["parts"].items()},
@@ -100,10 +102,13 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
     files.append(report.fig_example_day(frame, ev, det["alarms"], pick, out, synthetic))
     files.append(report.fig_spike_statistics(ev, n_days, out))
     files.append(report.fig_detection_delay(det["detail"], out))
+    files.append(report.fig_delay_vs_false_alarms(det["curves"], out))
     t1 = report.table_spikes(ev, n_days, g_sum["gamma"] if g_sum else None, out)
     t2 = report.table_detection(det["results"], out)
     t3 = report.table_per_cause(det["results"], out)
     t6 = report.table_cause_check(ev, out)
+    t8 = report.table_matched(det["matched"], out)
+    t9 = report.table_cause_sensitivity(events.cause_sensitivity(ev), out)
     if g_sum:
         files.append(report.fig_gamma(runs, g_sum, out))
         report.table_gamma(runs, g_sum, out)
@@ -128,9 +133,11 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
     for base, d in det["differences"].items():
         lines.append(f"- vs {base}: " + "; ".join(
             f"{k} {v[0]:+.2f} ({v[1]:+.2f} to {v[2]:+.2f})" for k, v in d.items()))
-    lines += ["", "## Table 3 - per cause", "", md(t3), ""]
+    lines += ["", "## Table 3 - per cause", "", md(t3), "",
+              "## Table 8 - detectors at equal false-alarm budgets", "", md(t8), ""]
     if t6 is not None:
         lines += ["## Table 6 - cause rule against known causes", "", md(t6), ""]
+    lines += ["## Table 9 - sensitivity of the cause labels to the two limits", "", md(t9), ""]
     if g_sum:
         lines += ["## Gamma", "", f"gamma = {100 * g_sum['gamma']:.3f} %/degC, U(k=2) = "
                   f"{100 * g_sum['U_k2']:.3f} %/degC, {g_sum['n_runs']} runs on {g_sum['n_days']} days; "

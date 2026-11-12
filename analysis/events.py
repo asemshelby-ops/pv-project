@@ -57,6 +57,41 @@ def find_rises(ts, theta):
     return out
 
 
+def cause_from_fraction(f_g, f_non=config.CAUSE_F_NON, f_irr=config.CAUSE_F_IRRADIANCE):
+    """Cause label from the fraction of the rise that the irradiance step explains."""
+    return "irradiance" if f_g >= f_irr else "non_irradiance" if f_g <= f_non else "mixed"
+
+
+def cause_sensitivity(events, pairs=config.CAUSE_SENSITIVITY):
+    """How the cause counts move with the two limits on f_G (reviewer check, docs/paper/12
+    R6). One row per (f_non, f_irr) pair, valid spikes only: counts per cause, how many
+    spikes change label against the configured pair, and - where a cause is known
+    (`cause_true` on synthetic data, else controlled tests: mesh = irradiance, windbreak =
+    not irradiance) - how many known irradiance / non-irradiance spikes get the right
+    label, 'mixed', or the opposite one."""
+    sp = events[(events["class"] == "spike") & events["valid"]]
+    base = sp["f_G"].map(cause_from_fraction)
+    if "cause_true" in sp:
+        known = sp["cause_true"]
+    else:
+        known = sp["origin"].map({"ctl_mesh": "irradiance", "ctl_windbreak": "non_irradiance"})
+    has = known.isin(["irradiance", "non_irradiance"])
+    rows = []
+    for f_non, f_irr in pairs:
+        lab = sp["f_G"].map(lambda f: cause_from_fraction(f, f_non, f_irr))
+        row = {"f_non": f_non, "f_irr": f_irr,
+               "configured": bool(abs(f_non - config.CAUSE_F_NON) < 1e-9
+                                  and abs(f_irr - config.CAUSE_F_IRRADIANCE) < 1e-9),
+               **{c: int((lab == c).sum()) for c in ("irradiance", "non_irradiance", "mixed")},
+               "relabelled": int((lab != base).sum()), "known": int(has.sum())}
+        if has.any():
+            row.update({"known_right": int((lab[has] == known[has]).sum()),
+                        "known_mixed": int((lab[has] == "mixed").sum()),
+                        "known_opposite": int(((lab[has] != known[has]) & (lab[has] != "mixed")).sum())})
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def _describe(g, ts, g1, i_on, i_th, i_pk):
     t = g["t_local"].to_numpy()
     size = float(ts[i_pk] - ts[i_on])
@@ -70,8 +105,7 @@ def _describe(g, ts, g1, i_on, i_th, i_pk):
     d_g = g_ev - g_pre
     explained = d_g / config.CAUSE_U_EFF * (1 - math.exp(-dur / (config.CAUSE_TAU_MIN * 60)))
     f_g = explained / size
-    cause = ("irradiance" if f_g >= config.CAUSE_F_IRRADIANCE
-             else "non_irradiance" if f_g <= config.CAUSE_F_NON else "mixed")
+    cause = cause_from_fraction(f_g)
     ta = g["T_ambient"].to_numpy(dtype=float)
     ts_on = pd.Timestamp(t[i_on])
     cos_z, _ = solar_angles(ts_on.day_of_year, ts_on.hour * 60 + ts_on.minute + ts_on.second / 60)

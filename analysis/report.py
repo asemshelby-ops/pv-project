@@ -3,7 +3,7 @@
 Figures: PDF (vector, for LaTeX) and PNG (300 dpi), IEEE column widths, 8 pt serif.
 Tables: CSV (the numbers) and a LaTeX `tabular` (booktabs) for the IEEE template.
 
-Colour: three categorical slots in a fixed order (blue, orange, aqua), the default
+Colour: four categorical slots in a fixed order (blue, orange, aqua, violet), the default
 palette of the charting guideline used for this project. Every series also differs by
 marker, line style or hatch, so the figures survive greyscale printing. One y-scale per
 panel: quantities with different units get their own panel, never a second axis.
@@ -21,13 +21,13 @@ from analysis.metrics import CAUSES  # noqa: E402
 from data.schema import BACK_SENSORS  # noqa: E402
 
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#d9d8d4"
-SLOT = ["#2a78d6", "#eb6834", "#1baf7a"]
+SLOT = ["#2a78d6", "#eb6834", "#1baf7a", "#8a5bd1"]
 CAUSE_STYLE = {"irradiance": (SLOT[0], "", "irradiance-driven"),
                "non_irradiance": (SLOT[1], "////", "not irradiance-driven"),
                "mixed": (SLOT[2], "....", "mixed")}
-DETECTORS = ["Threshold (tuned)", "CUSUM", "NASIM-GBT"]
+DETECTORS = ["Threshold (tuned)", "CUSUM", "Irradiance step", "NASIM-GBT"]
 DET_STYLE = {"Threshold (tuned)": (SLOT[0], "-", "s"), "CUSUM": (SLOT[1], "--", "^"),
-             "NASIM-GBT": (SLOT[2], "-.", "o")}
+             "Irradiance step": (SLOT[3], ":", "D"), "NASIM-GBT": (SLOT[2], "-.", "o")}
 ONE_COL, TWO_COL = 3.5, 7.16
 
 
@@ -126,9 +126,63 @@ def fig_detection_delay(detail, out):
     ax.set_ylabel("Share of spikes detected")
     ax.set_ylim(0, 1.02)
     ax.set_xlim(0, None)
-    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncols=3, columnspacing=1.0,
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), ncols=2, columnspacing=1.0,
               handlelength=2.4)
     return _save(fig, out, "fig3_detection_delay")
+
+
+def envelope(curves, name, column, lower_is_better, min_recall=None, part="test"):
+    """Best value of `column` one detector reaches with at most x false alarms per day:
+    the settings that improve on every setting with fewer false alarms, by rising rate.
+    min_recall keeps only settings that find at least that share of the spikes."""
+    c = curves[curves["detector"] == name]
+    if min_recall is not None:
+        c = c[c[f"{part}_recall"] >= min_recall]
+    c = c.dropna(subset=[f"{part}_{column}"])
+    c = c.sort_values([f"{part}_FA_per_day", f"{part}_{column}"],
+                      ascending=[True, lower_is_better])
+    keep, best = [], None
+    for i, v in zip(c.index, c[f"{part}_{column}"]):
+        if best is None or (v < best if lower_is_better else v > best):
+            keep.append(i)
+            best = v
+    return c.loc[keep]
+
+
+def fig_delay_vs_false_alarms(curves, out, x_max=2.0):
+    """Reviewer check R2. Left: the shortest median delay each detector reaches with at
+    most x false alarms per day, among its settings that still find MATCH_MIN_RECALL of
+    the spikes (test days). A detector with no such setting has no line. Right: the
+    highest recall each detector reaches with at most x false alarms per day, any
+    setting. Open markers on the left: the settings tuned for F1 (Table 2)."""
+    floor = ev_mod.config.MATCH_MIN_RECALL
+    fig, ax = plt.subplots(1, 2, figsize=(TWO_COL, 2.5), gridspec_kw={"wspace": 0.28})
+    for name in DETECTORS:
+        colour, ls, marker = DET_STYLE[name]
+        for a, column, lower, rec in ((ax[0], "delay_median_min", True, floor),
+                                      (ax[1], "recall", False, None)):
+            c = envelope(curves, name, column, lower, rec)
+            c = c[c["test_FA_per_day"] <= x_max]
+            if not len(c):
+                a.plot([], [], ls=ls, color=colour, marker=marker, ms=2.8, label=name)
+                continue
+            x, y = c["test_FA_per_day"].to_numpy(), c[f"test_{column}"].to_numpy()
+            a.plot(np.append(x, x_max), np.append(y, y[-1]), ls=ls, color=colour,
+                   drawstyle="steps-post", label=name)
+            a.plot(x, y, marker, color=colour, ms=2.8, ls="none")
+        t = curves[(curves["detector"] == name) & curves["tuned_F1"]]
+        ax[0].plot(t["test_FA_per_day"], t["test_delay_median_min"], marker, color=colour,
+                   ms=7, markerfacecolor="none", markeredgewidth=1.0, ls="none")
+    for a in ax:
+        a.set_xlabel("False alarms per day, at most")
+        a.set_xlim(-0.05, x_max)
+    ax[0].set_ylabel(f"Shortest median delay (min),\nrecall ≥ {floor:g}")
+    ax[0].set_ylim(0, None)
+    ax[1].set_ylabel("Highest recall")
+    ax[1].set_ylim(0, 1.03)
+    ax[0].legend(loc="lower center", bbox_to_anchor=(1.1, 1.0), ncols=4, columnspacing=1.2,
+                 handlelength=2.4)
+    return _save(fig, out, "fig6_delay_vs_false_alarms")
 
 
 def fig_gamma(runs, summary, out):
@@ -204,7 +258,8 @@ def table_detection(results, out="."):
     r = results[results["detector"].isin(["Threshold (fixed 3.0)"] + DETECTORS)]
     ci = lambda x, k, f: f"{x[k]:{f}} ({x[k + '_lo']:{f}}-{x[k + '_hi']:{f}})"  # noqa: E731
     t = pd.DataFrame({
-        "detector": r["detector"], "TP/FN/FP": [f"{a}/{b}/{c}" for a, b, c in zip(r.TP, r.FN, r.FP)],
+        "detector": r["detector"].to_numpy(),
+        "TP/FN/FP": [f"{a}/{b}/{c}" for a, b, c in zip(r.TP, r.FN, r.FP)],
         "precision": r["precision"].map("{:.2f}".format),
         "recall": [ci(x, "recall", ".2f") for _, x in r.iterrows()],
         "F1": [ci(x, "F1", ".2f") for _, x in r.iterrows()],
@@ -214,7 +269,8 @@ def table_detection(results, out="."):
         "lead min": r["lead_median_min"].map("{:+.1f}".format),
         "rise left": r["remaining_median"].map("{:.0%}".format)})
     return _write(t, out, "table2_detection",
-                  "Event-level detection on the test days (95 % day-bootstrap intervals).")
+                  "Event-level detection on the test days (95 % day-bootstrap intervals). "
+                  "False alarms per day of 12 valid daytime hours, excluded periods removed.")
 
 
 def table_per_cause(results, out="."):
@@ -224,8 +280,53 @@ def table_per_cause(results, out="."):
         t[f"{c}: n"] = r[f"n_{c}"].to_numpy()
         t[f"{c}: recall"] = r[f"recall_{c}"].map("{:.2f}".format).to_numpy()
         t[f"{c}: F1"] = r[f"F1_{c}"].map("{:.2f}".format).to_numpy()
+        t[f"{c}: delay min"] = r[f"delay_median_min_{c}"].map(
+            lambda v: "-" if pd.isna(v) else f"{v:.1f}").to_numpy()
     return _write(t, out, "table3_per_cause",
-                  "Recall and F1 per cause; precision uses all false alarms.")
+                  "Recall, F1 and median delay per cause; precision uses all false alarms.")
+
+
+def table_matched(matched, out="."):
+    """Reviewer check R2: detectors at the same false-alarm budget (settings chosen on
+    the validation days, numbers from the test days)."""
+    num = lambda v, f: "-" if pd.isna(v) else f"{v:{f}}"  # noqa: E731
+    rows = []
+    for _, x in matched.iterrows():
+        if pd.isna(x.get("setting")):
+            rows.append({"budget /day": f"{x.budget_FA_per_day:g}", "detector": x.detector,
+                         "setting": "none qualifies", "false alarms/day": "-", "recall": "-",
+                         "delay min": "-", "lead min": "-", "rise left": "-",
+                         "NASIM minus this, delay min": "-"})
+            continue
+        diff = ("-" if pd.isna(x.get("nasim_minus_delay")) else
+                f"{x.nasim_minus_delay:+.1f} ({x.nasim_minus_delay_lo:+.1f} to {x.nasim_minus_delay_hi:+.1f})")
+        rows.append({"budget /day": f"{x.budget_FA_per_day:g}", "detector": x.detector,
+                     "setting": x.setting, "false alarms/day": num(x.test_FA_per_day, ".2f"),
+                     "recall": num(x.test_recall, ".2f"),
+                     "delay min": num(x.test_delay_median_min, ".1f"),
+                     "lead min": num(x.test_lead_median_min, "+.1f"),
+                     "rise left": num(x.test_remaining_median, ".0%"),
+                     "NASIM minus this, delay min": diff})
+    return _write(pd.DataFrame(rows), out, "table8_matched_false_alarms",
+                  "Detectors at equal false-alarm budgets: setting chosen on the validation "
+                  "days (shortest median delay within the budget, recall at least 0.9), "
+                  "scored on the test days. Last column: paired day-bootstrap, 95 %.")
+
+
+def table_cause_sensitivity(sens, out="."):
+    """Reviewer check R6: cause counts under other limits on the explained fraction."""
+    t = pd.DataFrame({
+        "limits (non / irradiance)": [f"{a:.2f} / {b:.2f}" + (" (used)" if u else "")
+                                      for a, b, u in zip(sens.f_non, sens.f_irr, sens.configured)],
+        "irradiance": sens["irradiance"], "non_irradiance": sens["non_irradiance"],
+        "mixed": sens["mixed"], "relabelled": sens["relabelled"]})
+    if "known_right" in sens:
+        t["known cause: right / mixed / opposite"] = [
+            f"{a}/{b}/{c} of {n}" for a, b, c, n in
+            zip(sens.known_right, sens.known_mixed, sens.known_opposite, sens.known)]
+    return _write(t, out, "table9_cause_sensitivity",
+                  "Cause labels under other limits on the fraction of the rise explained by "
+                  "the irradiance step (valid spikes).")
 
 
 def table_gamma(runs, summary, out="."):

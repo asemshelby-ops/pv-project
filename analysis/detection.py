@@ -1,13 +1,23 @@
-"""Train, tune and test the three detectors of the paper on one ingested data set.
+"""Train, tune and test the detectors of the paper on one ingested data set.
 
-  (a) Threshold   rise over 10 min >= theta_a, no irradiance gate
-  (b) CUSUM       on the temperature increment (detect/cusum_inc.py)
-  (c) NASIM-GBT   hybrid, no wind (detect/gbt.py); positives = first 10 min of every spike
+  (a) Threshold        rise over 10 min >= theta_a, no irradiance gate
+  (b) CUSUM            on the temperature increment (detect/cusum_inc.py)
+  (d) Irradiance step  relative rise of irradiance over 2 min >= x: the one-line rule a
+                       reviewer would try first. It never looks at temperature.
+  (c) NASIM-GBT        hybrid, no wind (detect/gbt.py); positives = first 10 min of every spike
 
 Split: chronological, whole local days (config.PAPER_SPLIT). Every setting is chosen on
 the validation days only (best event F1, ties -> fewer false alarms per day); the test
 days are scored once. The array versions of the alarm rules below are the same logic as
 the streaming classes that the C code mirrors (tests/test_analysis.py checks equality).
+
+Two reviewer checks on top (docs/paper/12 sec. 3, R2 and R3):
+  * `curves`: every setting of every detector scored on validation and test days, i.e.
+    delay and recall against false alarms per day;
+  * `matched`: per false-alarm budget (config.MATCH_FA_PER_DAY) each detector gets the
+    setting with the shortest median delay among those that stay within the budget AND
+    still find config.MATCH_MIN_RECALL of the spikes ON THE VALIDATION DAYS; that
+    setting is then scored on the test days. So no detector buys its lead with alarms.
 """
 import itertools
 
@@ -27,6 +37,11 @@ KAPPA_GRID = [0.005, 0.01, 0.02, 0.03, 0.05, 0.08]
 H_GRID = [0.5, 0.75, 1.0, 1.5, 2.0, 2.5, 3.0]
 P_GRID = [round(x, 2) for x in np.arange(0.05, 0.96, 0.05)] + [0.97, 0.98, 0.99, 0.995]
 NAMES = feature_names(False, True)
+STEP = "Irradiance step"
+SWEPT = ["Threshold (tuned)", "CUSUM", STEP, "NASIM-GBT"]       # detectors with a setting
+DIFF_KEYS = ("F1", "delay_median_min", "FA_per_day", "recall",
+             "delay_median_min_irradiance", "delay_median_min_non_irradiance",
+             "delay_median_min_mixed")
 
 
 def split_days(dates, fractions=config.PAPER_SPLIT):
@@ -104,23 +119,39 @@ class Scorer:
         self.temp = ev_mod.smooth(frame.loc[self.mask, BACK_SENSORS].mean(axis=1).to_numpy())
         self.events = events[events["date_local"].isin(dates)].reset_index(drop=True)
         self.excluded, self.dates = excluded, sorted(dates)
+        self.obs_h = metrics.observation_hours(self.ts, excluded)   # valid hours per day
 
     def __call__(self, alarms):
         m, fa, neutral = metrics.score(self.ts, alarms[self.mask], self.events,
                                        self.excluded, self.temp)
-        table = metrics.per_day(m, fa, self.dates)
+        table = metrics.per_day(m, fa, self.dates, self.obs_h)
         return {**metrics.summarise(table, m), "alarms_neutral": neutral}, table, m
 
 
-def _best(candidates, scorer):
-    """candidates: iterable of (setting, alarms). Best validation F1, then fewest false alarms."""
+def _best(scored):
+    """scored: [(setting, alarms, validation summary, test summary)]. The entry with the
+    best validation F1, then the fewest validation false alarms (first one on a tie)."""
     best = None
-    for setting, alarms in candidates:
-        s = scorer(alarms)[0]
-        key = (s["F1"], -s["FA_per_day"])
+    for item in scored:
+        key = (item[2]["F1"], -item[2]["FA_per_day"])
         if best is None or key > best[0]:
-            best = (key, setting)
+            best = (key, item)
     return best[1]
+
+
+def _matched(scored, budget):
+    """The entry with the shortest validation median delay among those with validation
+    false alarms per day <= budget and validation recall >= MATCH_MIN_RECALL; None if no
+    setting qualifies. Ties -> higher recall, then fewer false alarms."""
+    best = None
+    for item in scored:
+        v = item[2]
+        if not (v["FA_per_day"] <= budget + 1e-12 and v["recall"] >= config.MATCH_MIN_RECALL):
+            continue
+        key = (-v["delay_median_min"], v["recall"], -v["FA_per_day"])
+        if best is None or key > best[0]:
+            best = (key, item)
+    return None if best is None else best[1]
 
 
 def run(frame, events, excluded=None, seed=0, n_boot=2000, log=print):
@@ -137,18 +168,27 @@ def run(frame, events, excluded=None, seed=0, n_boot=2000, log=print):
     t_f = filtered_temperature(frame)
     in_val = val.mask
 
-    alarms, tuned = {}, {}
-    alarms["Threshold (fixed 3.0)"] =alarm_rule(rise, config.SPIKE_THETA_C, seg)
-    thr = _best(((x, alarm_rule(np.where(in_val, rise, np.nan), x, seg)) for x in THR_GRID), val)
+    # Every setting is run once on the whole frame and scored on the validation and the
+    # test days. Detector state restarts with each segment and a segment never spans two
+    # days, so the alarms on one part do not depend on the other parts.
+    def sweep(candidates):
+        return [(s, al, val(al)[0], test(al)[0]) for s, al in candidates]
+
+    alarms, tuned, scored = {}, {}, {}
+    alarms["Threshold (fixed 3.0)"] = alarm_rule(rise, config.SPIKE_THETA_C, seg)
+    scored["Threshold (tuned)"] = sweep((x, alarm_rule(rise, x, seg)) for x in THR_GRID)
+    thr, alarms["Threshold (tuned)"] = _best(scored["Threshold (tuned)"])[:2]
     tuned["threshold_rise_C"] = thr
-    alarms["Threshold (tuned)"] = alarm_rule(rise, thr, seg)
 
     log("CUSUM grid ...")
-    t_val = np.where(in_val, t_f, np.nan)
-    kappa, h = _best((((k, hh), cusum_inc_alarms(t_val, seg, k, hh))
-                      for k, hh in itertools.product(KAPPA_GRID, H_GRID)), val)
+    scored["CUSUM"] = sweep(((k, hh), cusum_inc_alarms(t_f, seg, k, hh))
+                            for k, hh in itertools.product(KAPPA_GRID, H_GRID))
+    (kappa, h), alarms["CUSUM"] = _best(scored["CUSUM"])[:2]
     tuned["cusum_kappa_C_per_sample"], tuned["cusum_h_C"] = kappa, h
-    alarms["CUSUM"] = cusum_inc_alarms(t_f, seg, kappa, h)
+
+    g_step = X[:, NAMES.index("g_change_2m")]
+    scored[STEP] = sweep((x, alarm_rule(g_step, x, seg)) for x in config.G_STEP_GRID)
+    tuned["irradiance_step_rel"], alarms[STEP] = _best(scored[STEP])[:2]
 
     log("NASIM-GBT training ...")
     train_mask = frame["date"].isin(parts["train"]).to_numpy()
@@ -159,10 +199,9 @@ def run(frame, events, excluded=None, seed=0, n_boot=2000, log=print):
     ok = ~np.isnan(X).any(axis=1)
     p = np.full(len(frame), np.nan)
     p[ok] = model.booster_.predict(X[ok])
-    p_thr = _best(((x, alarm_rule(np.where(in_val, p, np.nan), x, seg, config.GBT_PERSIST))
-                   for x in P_GRID), val)
+    scored["NASIM-GBT"] = sweep((x, alarm_rule(p, x, seg, config.GBT_PERSIST)) for x in P_GRID)
+    p_thr, alarms["NASIM-GBT"] = _best(scored["NASIM-GBT"])[:2]
     tuned["nasim_p_threshold"] = p_thr
-    alarms["NASIM-GBT"] = alarm_rule(p, p_thr, seg, config.GBT_PERSIST)
 
     rows, detail = [], {}
     for name, al in alarms.items():
@@ -174,10 +213,35 @@ def run(frame, events, excluded=None, seed=0, n_boot=2000, log=print):
         detail[name] = (table, m)
         log(f"  {name:32s} F1={s['F1']:.2f}  FA/day={s['FA_per_day']:.2f}  "
             f"delay={s['delay_median_min']:.1f} min")
-    diffs = {b: metrics.bootstrap_difference(detail["NASIM-GBT"], detail[b], n=n_boot, seed=seed)
-             for b in ("Threshold (tuned)", "CUSUM")}
+    diffs = {b: metrics.bootstrap_difference(detail["NASIM-GBT"], detail[b], DIFF_KEYS,
+                                             n=n_boot, seed=seed)
+             for b in ("Threshold (tuned)", "CUSUM", STEP)}
+
+    keep = ["FA_per_day", "recall", "F1", "FP", "delay_median_min", "lead_median_min",
+            "remaining_median"] + [f"delay_median_min_{c}" for c in metrics.CAUSES]
+    curves = pd.DataFrame([{"detector": name, "setting": str(s), "tuned_F1": al is alarms[name],
+                            **{f"val_{k}": v[k] for k in keep}, **{f"test_{k}": t[k] for k in keep}}
+                           for name in SWEPT for s, al, v, t in scored[name]])
+    log("matched false-alarm rates ...")
+    rows_m = []
+    for budget in config.MATCH_FA_PER_DAY:
+        picks = {name: _matched(scored[name], budget) for name in SWEPT}
+        ref = None if picks["NASIM-GBT"] is None else test(picks["NASIM-GBT"][1])[1:]
+        for name in SWEPT:
+            row = {"budget_FA_per_day": budget, "detector": name}
+            if picks[name] is not None:
+                s, al, v, t = picks[name]
+                row.update({"setting": str(s), "val_FA_per_day": v["FA_per_day"],
+                            "val_recall": v["recall"], **{f"test_{k}": t[k] for k in keep}})
+                if ref is not None and name != "NASIM-GBT":
+                    d = metrics.bootstrap_difference(ref, test(al)[1:], ("delay_median_min",),
+                                                     n=n_boot, seed=seed)["delay_median_min"]
+                    row.update({"nasim_minus_delay": d[0], "nasim_minus_delay_lo": d[1],
+                                "nasim_minus_delay_hi": d[2]})
+            rows_m.append(row)
     counts = {k: int(((events["class"] == "spike") & events["valid"]
                       & events["date_local"].isin(v)).sum()) for k, v in parts.items()}
     return {"results": pd.DataFrame(rows), "tuned": tuned, "alarms": alarms, "detail": detail,
-            "differences": diffs, "model": model, "p": p, "X": X, "parts": parts,
+            "differences": diffs, "curves": curves, "matched": pd.DataFrame(rows_m),
+            "model": model, "p": p, "X": X, "parts": parts,
             "spikes_per_part": counts}

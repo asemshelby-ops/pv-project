@@ -7,13 +7,21 @@
   * a valid spike with no alarm -> missed.
 Per cause c: recall = TP_c / N_c; precision_c = TP_c / (TP_c + FP) with ALL false alarms,
 because a false alarm has no cause. Intervals: bootstrap over whole local days.
+
+Rates use the VALID observation time (docs/paper/03 sec. 4): per scored day, the hours in
+which the detector had data and no excluded window was open (`obs_h`). "False alarms per
+day" is per DAY_H valid hours (the 12 h day window), so a day that lost 40 min to the
+cleaning counts as 0.94 day.
 """
+import warnings
+
 import numpy as np
 import pandas as pd
 
 import config
 
 CAUSES = ["irradiance", "non_irradiance", "mixed"]
+DAY_H = (pd.Timedelta(config.DAY_END) - pd.Timedelta(config.DAY_START)).total_seconds() / 3600
 GRACE = np.timedelta64(config.MATCH_GRACE_MIN * 60, "s")
 
 
@@ -70,10 +78,27 @@ def score(ts, alarms, events, excluded=None, temp=None):
     return m, np.array(false_alarms, dtype="datetime64[ns]"), neutral
 
 
-def per_day(matches, false_alarms, days):
-    """One row per scored local day: spikes and detections per cause, false alarms."""
+def observation_hours(ts, excluded=None):
+    """Valid observation time per local day, in hours: scored rows that are not inside an
+    excluded window, times the sampling period. Rows the detector never saw (missing
+    sensor, gap) are not in `ts`, so they are left out as well. Series indexed by date."""
+    ts = pd.to_datetime(pd.Series(ts)).reset_index(drop=True)
+    keep = np.ones(len(ts), dtype=bool)
+    if excluded is not None and len(excluded):
+        t = ts.to_numpy()
+        for a, b in zip(pd.to_datetime(excluded["start"]).to_numpy(),
+                        pd.to_datetime(excluded["end"]).to_numpy()):
+            keep &= ~((t >= a) & (t <= b))
+    return (ts[keep].dt.strftime("%Y-%m-%d").value_counts() * config.DT_S / 3600.0).sort_index()
+
+
+def per_day(matches, false_alarms, days, obs_h=None):
+    """One row per scored local day: spikes and detections per cause, false alarms, and
+    the valid observation hours (`obs_h` from observation_hours; the whole day window if
+    not given)."""
     d = pd.DataFrame(0, index=pd.Index(days, name="date"),
                      columns=[f"{k}_{c}" for c in CAUSES for k in ("n", "tp")] + ["fp"])
+    d["obs_h"] = DAY_H if obs_h is None else obs_h.reindex(d.index, fill_value=0.0).to_numpy()
     for c in CAUSES:
         mc = matches[matches["cause"] == c]
         d[f"n_{c}"] = mc.groupby("date_local").size().reindex(d.index, fill_value=0)
@@ -83,25 +108,31 @@ def per_day(matches, false_alarms, days):
     return d
 
 
-def summarise(day_table, matches, hours_per_day=12.0):
+def summarise(day_table, matches):
     """All reported numbers from the per-day table and the per-spike matches."""
+    hours = float(day_table["obs_h"].sum())
     n = sum(day_table[f"n_{c}"].sum() for c in CAUSES)
     tp = sum(day_table[f"tp_{c}"].sum() for c in CAUSES)
     fp = int(day_table["fp"].sum())
     p, r, f = _f1(tp, n - tp, fp)
     det = matches[matches["detected"]]
     out = {"spikes": int(n), "TP": int(tp), "FN": int(n - tp), "FP": fp,
-           "precision": p, "recall": r, "F1": f, "FA_per_day": fp / max(len(day_table), 1)}
+           "precision": p, "recall": r, "F1": f, "obs_hours": hours,
+           "FA_per_day": fp / (hours / DAY_H) if hours else np.nan,
+           "FA_per_100h": 100.0 * fp / hours if hours else np.nan}
     for c in CAUSES:
         nc, tc = int(day_table[f"n_{c}"].sum()), int(day_table[f"tp_{c}"].sum())
         _, rc, fc = _f1(tc, nc - tc, fp)
-        out.update({f"n_{c}": nc, f"recall_{c}": rc, f"F1_{c}": fc})
+        dc = det[det["cause"] == c]
+        out.update({f"n_{c}": nc, f"recall_{c}": rc, f"F1_{c}": fc,
+                    f"delay_median_min_{c}": dc["delay_s"].median() / 60 if len(dc) else np.nan,
+                    f"lead_median_min_{c}": dc["lead_s"].median() / 60 if len(dc) else np.nan})
     q = det["delay_s"].quantile([0.25, 0.5, 0.75, 0.9]) / 60 if len(det) else [np.nan] * 4
     out.update(dict(zip(["delay_q25_min", "delay_median_min", "delay_q75_min", "delay_p90_min"], q)))
     out["lead_median_min"] = det["lead_s"].median() / 60 if len(det) else np.nan
     out["early_share"] = float((det["lead_s"] > 0).mean()) if len(det) else np.nan
     out["remaining_median"] = det["remaining"].median() if len(det) else np.nan
-    rate = (tp + fp) / (len(day_table) * hours_per_day * 3600.0)      # alarms per second
+    rate = (tp + fp) / (hours * 3600.0) if hours else np.nan          # alarms per second
     out["chance_recall"] = float(np.mean(1 - np.exp(-rate * matches["length_s"]))) if len(matches) else np.nan
     return out
 
@@ -136,4 +167,7 @@ def bootstrap_difference(a, b, keys=("F1", "delay_median_min", "FA_per_day"), n=
         sa, sb = _resample(*a, idx), _resample(*b, idx)
         for k in keys:
             diff[k].append(sa[k] - sb[k])
-    return {k: (float(np.nanmean(v)), *np.nanpercentile(v, [2.5, 97.5])) for k, v in diff.items()}
+    with warnings.catch_warnings():      # a key with no data in any resample gives NaN
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return {k: (float(np.nanmean(v)), *np.nanpercentile(v, [2.5, 97.5]))
+                for k, v in diff.items()}

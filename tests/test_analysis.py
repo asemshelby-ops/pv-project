@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 
 import config
-from analysis import detection, events, fake_logger, gamma, ingest, metrics, validate
+from analysis import detection, events, fake_logger, gamma, ingest, metrics, pipeline, validate
 from data import synth
 from detect import gbt, stream
 from detect.cusum_inc import CusumIncDetector
@@ -151,8 +151,66 @@ def test_scoring_rules():
     assert (s["TP"], s["FN"], s["FP"]) == (1, 1, 1)
     assert s["recall_irradiance"] == 1.0 and s["recall_non_irradiance"] == 0.0
     assert s["F1"] == pytest.approx(0.5) and s["FA_per_day"] == 1.0
+    assert s["delay_median_min_irradiance"] == 2.0 and np.isnan(s["delay_median_min_mixed"])
     ci = metrics.bootstrap(table, m, n=50)
     assert ci["F1"] == (0.5, 0.5)                               # one day: nothing to resample
+
+    # valid observation time: 08:00-10:00 logged, 30 min of it excluded -> 1.5 h
+    ex = pd.DataFrame({"start": [pd.Timestamp(f"{day} 08:30:00")],
+                       "end": [pd.Timestamp(f"{day} 08:59:50")], "reason": ["cleaning"]})
+    obs = metrics.observation_hours(ts, ex)
+    assert obs[day] == pytest.approx(1.5)
+    s2 = metrics.summarise(metrics.per_day(m, fa, [day], obs), m)
+    assert s2["obs_hours"] == pytest.approx(1.5)
+    assert s2["FA_per_day"] == pytest.approx(1 / (1.5 / 12))    # per 12 valid hours
+    assert s2["FA_per_100h"] == pytest.approx(100 / 1.5)
+    assert metrics.observation_hours(ts)[day] == pytest.approx(2.0)
+
+
+def test_matched_setting_respects_the_budget_and_the_recall_floor():
+    def item(name, fa, recall, delay):
+        return (name, None, {"FA_per_day": fa, "recall": recall, "delay_median_min": delay}, {})
+    scored = [item("slow", 0.0, 1.0, 8.0), item("fast", 0.3, 0.95, 2.0),
+              item("faster but blind", 0.1, 0.5, 1.0), item("middle", 0.1, 0.92, 5.0)]
+    assert detection._matched(scored, 0.05)[0] == "slow"
+    assert detection._matched(scored, 0.1)[0] == "middle"       # not the one below 90 % recall
+    assert detection._matched(scored, 0.5)[0] == "fast"
+    assert detection._matched([item("x", 0.4, 1.0, 1.0)], 0.1) is None
+
+
+def test_cause_sensitivity_counts_and_known_causes():
+    f = [0.10, 0.30, 0.45, 0.55, 0.70, 0.90]
+    ev = pd.DataFrame({"f_G": f, "class": "spike", "valid": True, "origin": "natural",
+                       "cause_true": ["non_irradiance"] * 3 + ["irradiance"] * 3})
+    ev["cause"] = ev["f_G"].map(events.cause_from_fraction)
+    assert ev["cause"].tolist() == ["non_irradiance"] * 2 + ["mixed"] * 2 + ["irradiance"] * 2
+    s = events.cause_sensitivity(ev).set_index("f_irr")
+    used = s[s["configured"]].iloc[0]
+    assert (used["irradiance"], used["non_irradiance"], used["mixed"], used["relabelled"]) == (2, 2, 2, 0)
+    assert (used["known_right"], used["known_mixed"], used["known_opposite"]) == (4, 2, 0)
+    half = s.loc[0.5]                                           # no "mixed" class at all
+    assert (half["irradiance"], half["non_irradiance"], half["mixed"]) == (3, 3, 0)
+    assert half["relabelled"] == 2 and half["known_right"] == 6
+    wide = s.loc[0.75]                                          # limits 0.25 / 0.75
+    assert (wide["mixed"], wide["relabelled"]) == (4, 2)
+    ctl = ev.drop(columns="cause_true").assign(origin=["ctl_windbreak"] + ["natural"] * 4 + ["ctl_mesh"])
+    assert events.cause_sensitivity(ctl)["known"].tolist() == [2] * 4
+
+
+def test_pipeline_runs_end_to_end_with_the_reviewer_outputs(rig, tmp_path):
+    out, _, drivers, _ = rig
+    res = pipeline.run(out, tmp_path, drivers=drivers, seed=5, n_boot=20, synthetic=True,
+                       log=lambda *a: None)
+    det = res["detection"]
+    assert "Irradiance step" in det["alarms"] and "irradiance_step_rel" in det["tuned"]
+    assert set(det["curves"]["detector"]) == set(detection.SWEPT)
+    assert det["curves"].groupby("detector")["tuned_F1"].sum().eq(1).all()
+    assert len(det["matched"]) == len(config.MATCH_FA_PER_DAY) * len(detection.SWEPT)
+    r = det["results"].set_index("detector")
+    assert (r["obs_hours"] < 12.0 * len(det["parts"]["test"])).all()   # the cleaning is taken out
+    for name in ("fig6_delay_vs_false_alarms.pdf", "table8_matched_false_alarms.tex",
+                 "table9_cause_sensitivity.csv", "detection_curves.csv"):
+        assert (tmp_path / name).exists(), name
 
 
 def test_gamma_recovers_the_generator_coefficient(tmp_path):
