@@ -20,7 +20,7 @@ void nasim_score_nowind(real *input, real *output);
 }
 
 // ---- configuration -------------------------------------------------------------------
-static const real NASIM_P_THRESHOLD = 0.995;  // out/results/hard/seed5/tuned.json
+static const real NASIM_P_THRESHOLD = 0.98;   // out/paper_demo/seed5/results/tuned.json
 static const int NASIM_PERSIST = 2;           // config.GBT_PERSIST
 static const int NASIM_START_MIN = 6 * 60;    // detector window = synthetic day window,
 static const int NASIM_END_MIN = 18 * 60;     // config.DAY_START / DAY_END (local time)
