@@ -26,8 +26,26 @@ void handleCommand(const String &cmd) {
     }
     rtc.set(DateTime(y, mo, d, h, mi, s));
     Serial.printf("SET ok: %04d-%02d-%02d %02d:%02d:%02d\n", y, mo, d, h, mi, s);
+  } else if (cmd == "NOW") {
+    // Answers at the moment the RTC second changes, so the PC can time the reply and
+    // measure the RTC's offset to well below one second (set_rtc.py logs the drift).
+    if (!rtc.ok() || !rtc.read() || !rtc.timeValid) {
+      Serial.println("NOW failed: no valid RTC time");
+      return;
+    }
+    const uint32_t s0 = rtc.time().unixtime(), start = millis();
+    while (millis() - start < 1100) {
+      if (!rtc.read()) break;
+      const DateTime t = rtc.time();
+      if (t.unixtime() != s0) {
+        Serial.printf("NOW %04u-%02u-%02u %02u:%02u:%02u\n", t.year(), t.month(), t.day(),
+                      t.hour(), t.minute(), t.second());
+        return;
+      }
+    }
+    Serial.println("NOW failed: the RTC second did not change");
   } else {
-    Serial.println("unknown command; use: SET YYYY-MM-DD HH:MM:SS");
+    Serial.println("unknown command; use: SET YYYY-MM-DD HH:MM:SS  or  NOW");
   }
 }
 
