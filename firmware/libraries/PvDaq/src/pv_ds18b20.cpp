@@ -29,6 +29,19 @@ bool PvDs18b20::begin() {
 bool PvDs18b20::read() {
   if (count == 0) return setStatus(PvStatus::NotFound, "no sensor");
   dt_.requestTemperatures();
+  return fetch();
+}
+
+bool PvDs18b20::startConversion() {
+  if (count == 0) return setStatus(PvStatus::NotFound, "no sensor");
+  dt_.setWaitForConversion(false);
+  dt_.requestTemperatures();
+  dt_.setWaitForConversion(true);
+  return true;
+}
+
+bool PvDs18b20::fetch() {
+  if (count == 0) return setStatus(PvStatus::NotFound, "no sensor");
   uint8_t bad = 0;
   for (uint8_t i = 0; i < count; i++) {
     float t = dt_.getTempC(rom[i]);

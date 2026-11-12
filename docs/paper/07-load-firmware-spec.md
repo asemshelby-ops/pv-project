@@ -1,8 +1,11 @@
 # I-V sweep and MPP-hold firmware — design spec
 
-Status: design, 2026-11-11. **No code is written yet**; it is written when the load parts
-arrive, and tested with `06-load-bench-test-protocol.md`. Today the logger holds the load
-off, so it records the module at open circuit (audit item 1).
+Status: design of 2026-11-11; **code written 2026-11-13, before any load part exists**.
+It compiles for the ESP32 and its logic passes the PC tests of §9 against a simulated
+module; it has **not run on hardware**. What was built, and where it differs from the
+design below, is in §12. Bench procedure: `firmware/tests/load_bench/BENCH.md` (criteria:
+`06-load-bench-test-protocol.md`). The logger flashed today has `HAS_LOAD 0`: it holds the
+load off, so it still records the module at open circuit (audit item 1).
 
 Values tagged `[EST]` or `[ASSUMPTION]` are starting points. The bench step that fixes
 each one is named.
@@ -306,5 +309,38 @@ Decided (Asim, 2026-11-11):
 - GPIO14 for the gate of branch B, with a 10 kΩ pull-down on the driver input so the
   gate stays low during boot (Asim, 2026-11-12); verified in bench step B1.
 
-Still needed before coding:
-1. Which spare DS18B20 goes on the heatsink, and its ROM.
+Still needed before the load is switched on (`HAS_LOAD 1`):
+1. Which spare DS18B20 goes on the heatsink, and its ROM (`HEATSINK_ROM` in
+   `logger/logger.ino`; while it is empty the load stays in `TRIP`, both branches off).
+2. Bench steps B0–B7.
+
+## 12. As built (2026-11-13)
+
+Files: `PvDaq/src/pv_load_logic.{h,c}` (plain C: modes, sweep, hold, faults),
+`PvDaq/src/pv_load.{h,cpp}` (LEDC, INA226 triggered readings), the load part of
+`logger/logger.ino` (inside `if (HAS_LOAD)`), `tests/load_bench/` (bench sketch and
+`BENCH.md`), `tests/test_load_logic.py` (60 tests). `build_all.py` compiles the logger
+twice: as flashed today, and with `-DHAS_LOAD=1` (`logger_load`).
+
+Where the code differs from, or adds to, the sections above:
+
+| Topic | Design | As built, and why |
+|---|---|---|
+| Settling (§4) | fixed `T_SETTLE_MS` = 20 ms per point | 20 ms is the **shortest** wait. A point is stored only when two readings in a row at that duty agree within `SWEEP_SETTLE_TOL` (0.2 % of V_oc); the first of the two is taken while the 20 ms run, so a settled point costs no extra time. Reason: the time constant is τ = C / (D/R + \|dI/dV\|), ≈ C·V/I below the knee, so it grows as the current falls. Simulation, 2000 µF `[EST]`: worst τ ≈ 3.9 ms at 1000 W/m² (5τ ≈ 20 ms), ≈ 10 ms at 400, ≈ 18 ms at 200. A fixed 20 ms is 5τ only near full sun. Bench B4 measures the real values |
+| New flag (§4) | five flags | sixth: `NOT_SETTLED` (value 32): the sweep ran out of its slot (`SWEEP_BUDGET_MS` = 2.2 s) and stored points that had not yet repeated. In the simulation this happens at ≈ 100 W/m², not at ≥ 200 |
+| Flag values | not numbered | `G_UNSTABLE` 1, `MAX_AT_EDGE` 2, `NON_MONOTONIC` 4, `LOW_LIGHT` 8, `INA_ERROR` 16, `NOT_SETTLED` 32. `G_UNSTABLE` is also set when G is not known before or after. `NON_MONOTONIC` ignores rises below 0.5 % of V_oc (`SWEEP_MONO_TOL`, `[ASSUMPTION]`) |
+| Sweep slot (§6) | "right after a row" | a sweep starts when it is due **and** the next row is ≥ `SWEEP_GUARD_MS` (3 s) away. Normal mode: ≈ 0.2 s after the row. γ mode: every 15 s where that fits, never across a row |
+| `sweep_id` (§7) | "id of the last finished sweep" | the UTC start time of the sweep in Unix seconds: unique across days and restarts with no counter on the card. Without RTC time: a count since boot, in `/SWnodate.csv` and `/SSnodate.csv` |
+| First sweep | — | starts in the same pass in which the load enters `HOLD` (if a slot is free); until it ends, `V_set` = 0.78·V_oc |
+| PWM resolution (§2, §10) | 11 bit `[REC]` | **still 10 bit** (`PWM_RES_BITS` unchanged, by instruction). The logic takes the resolution from `pv_config.h`; changing it to 11 needs no code change. Effect of 10 bit: hold-voltage steps ≈ 0.1 % `[EST]`; in weak sun several fine-pass duties round to the same value |
+| Hold loop timing (§6) | RTC edge polled once per loop pass | `syncRtcEdge()` still loops for up to 1.1 s but serves the load inside the loop. The DS18B20 conversion is started 800 ms before the row, as designed. Worst gap in hold service outside sweeps `[EST]`: an SD write or a Modbus time-out, ≈ 0.3 s |
+| INA226 failure (§8) | freeze after 3 failures | as designed in hold. In a sweep, the first failed reading ends the sweep (`INA_ERROR`, back to the old hold point) |
+| Trip log (§8) | "reason logged" | `/load_log.csv` (`date,time,uptime_ms,event`): mode changes, trip reason, INA226 freeze, commands. No new `status` bit was added |
+| Watchdog (§8) | task watchdog | loop watchdog, 15 s `[ASSUMPTION]`, enabled only with `HAS_LOAD 1`; to verify in bench B7 |
+| Controlled open-circuit test (`03` §9 proposal) | not in this spec | serial commands `LOAD OFF` / `LOAD ON`. Each writes one row to `/markers.csv`, in the existing format (`date,time,millis`, UTC with milliseconds), at the moment the duties went to 0 / the load was holding again; `load_mode` shows `off` in between. The event name is not in the file (it has no such column): it goes on the day's log sheet, one line per row, as for button presses. After `LOAD ON` the load holds at 0.78·V_oc and is back at the MPP after the first sweep, up to ≈ 10 s later. A reset during a trial ends it (the load comes back by itself) |
+| γ run | `GAMMA <minutes>` | as designed (0–120 min; `GAMMA 0` ends it) |
+
+Not done, and not claimed: nothing has run on an ESP32 with a load. The timing of one
+sweep point over I2C through the PaHub, the LEDC outputs, the triggered INA226 readings
+and the watchdog are compiled, not tested. The analysis side of the open-circuit test
+(`ctl_load` origin in `analysis/`) is not written.

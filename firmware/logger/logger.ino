@@ -2,7 +2,7 @@
 // is present, skip the missing ones, and write one CSV row to the microSD card and to
 // Serial. Columns: the schema of CLAUDE.md + wind (data/schema.py COLUMNS), then the
 // NASIM-GBT (no wind, double precision) outputs p and alarm, then five columns:
-// D, load_mode, sweep_id (no load hardware yet: NaN, none, 0), uptime_ms, status.
+// D, load_mode, sweep_id (NaN, none, 0 while HAS_LOAD is 0: no load fitted), uptime_ms, status.
 //
 //   date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,
 //   D,load_mode,sweep_id,uptime_ms,status
@@ -10,14 +10,22 @@
 // Timestamps are UTC (the DS3231 holds UTC). Missing value = empty field. Lines starting
 // with '#' on Serial are status messages, not data. Files: /YYYYMMDD.csv per day (UTC
 // date), /markers.csv for button presses, /rom_scan.txt for the DS18B20 ROMs found at boot.
+// With the measurement load (HAS_LOAD 1 in pv_config.h; docs/paper/07): /SWYYYYMMDD.csv and
+// /SSYYYYMMDD.csv for the I-V sweeps, /load_log.csv for mode changes and trips, and two more
+// kinds of rows in /markers.csv, written by the serial commands LOAD OFF and LOAD ON
+// (controlled open-circuit tests) at the millisecond the load really switched.
 // A row is never dropped: without a valid RTC time it is written with empty date and time,
 // its uptime_ms and the ST_RTC_INVALID status bit (bits: PvDaq/src/pv_status.h), into the
 // last day file used since boot, or /nodate.csv if there was none.
 // Build: python firmware/build_all.py logger   (adds the include paths to export/c).
 //
-// SAFETY: pump and load MOSFET outputs are held LOW. The alarm is only logged;
-// NASIM is trained on SYNTHETIC data and must be retrained before it drives anything.
+// SAFETY: the pump output is held LOW. Both load outputs are held LOW while HAS_LOAD is 0;
+// with HAS_LOAD 1 they start LOW and go LOW again on every fault (PvDaq/src/pv_load_logic.h).
+// The alarm is only logged; NASIM is trained on SYNTHETIC data and must be retrained before
+// it drives anything. The load never acts on the alarm.
 #include <PvDaq.h>
+#include <esp_task_wdt.h>
+#include <pv_load.h>
 #include <pv_status.h>
 
 extern "C" {  // export/c is C, compiled here through nasim_core.c / nasim_model.c
@@ -47,6 +55,16 @@ static const uint8_t DET_RESET_AFTER_FAILS = NASIM_DET_RESET_AFTER_FAILS;
 // position on the module) and every row carries the ST_TROM_UNMAPPED status bit.
 static const uint8_t T_ROM[5][8] = {{0}, {0}, {0}, {0}, {0}};
 
+// Measurement load (used only with HAS_LOAD 1). DS18B20 on the resistor heatsink, by ROM,
+// same notation as T_ROM. TODO(user): fill in when the sensor is mounted (bench B5 prints
+// it). While it is all zero the load stays in TRIP ("heatsink sensor missing"): both
+// branches off, by design.
+static const uint8_t HEATSINK_ROM[8] = {0};
+// Loop watchdog: if loop() does not come round for this long the chip resets, the pins are
+// released and the gate pull-downs switch the load off. [ASSUMPTION] well above the longest
+// normal pass (device retries + a row + the RTC edge, a few seconds); check in bench B7.
+static const uint32_t LOOP_WDT_MS = 15000;
+
 // ---- devices -----------------------------------------------------------------------------
 PvDs3231 rtc;
 PvBme280 env;
@@ -64,6 +82,14 @@ uint8_t det_fails = 0;            // rows skipped by the detector in a row
 uint8_t t_map[5][8] = {{0}};      // ROM behind each of T1..T5 in use (all zero = none yet)
 bool t_rom_unmapped = true;       // true while t_map comes from the scan order, not T_ROM
 char day_path[16] = "/nodate.csv";  // file of the last row that had a valid RTC time
+
+PvLoad load(panel);               // serviced only with HAS_LOAD 1
+float last_g = NAN;               // irradiance of the last row: input of the load's light rules
+double last_T[5] = {NAN, NAN, NAN, NAN, NAN};  // T1..T5 of the last row: stored with each sweep
+uint32_t row_sweep_id = 0;        // sweep_id column: id of the last finished sweep, 0 = none
+bool conv_running = false;        // a DS18B20 conversion was started ahead of the row ...
+uint32_t conv_ms = 0;             // ... at this millis()
+bool load_on_marker = false;      // LOAD ON was typed: write its marker when the load holds
 
 volatile uint32_t mark_ms = 0;    // last button press (ISR), 0 = none pending
 
@@ -111,6 +137,7 @@ void mapProbes() {
     return;
   }
   for (uint8_t i = 0; i < probes.count; i++) {
+    if (memcmp(probes.rom[i], HEATSINK_ROM, 8) == 0) continue;  // not a back-sheet sensor
     int free_k = -1;
     bool used = false;
     for (int k = 4; k >= 0; k--) {
@@ -198,8 +225,16 @@ void sample(uint32_t n) {
   if (readable(rtc)) rtc.read();
   if (readable(pyr)) pyr.read();
   if (readable(env)) env.read();
-  if (readable(panel)) panel.read();
-  if (probes.count) probes.read();
+  const float row_d = load.L.d_a;  // duty of branch A at the reading (HAS_LOAD only)
+  if (HAS_LOAD) load.rowReading();   // 64-average, triggered (also one hold step)
+  else if (readable(panel)) panel.read();
+  if (HAS_LOAD && conv_running) {    // conversion started ~800 ms ago in loadLoop()
+    while (millis() - conv_ms < PvDs18b20::CONVERSION_MS + 10) load.service(last_g, heatsinkTemp());
+    probes.fetch();
+    conv_running = false;
+  } else if (probes.count) {
+    probes.read();
+  }
 
   const bool have_time = rtc.ok() && rtc.timeValid;
   const DateTime t = rtc.time();                    // UTC: every logged timestamp
@@ -212,6 +247,8 @@ void sample(uint32_t n) {
   double v = panel.ok() ? panel.busV : NAN;
   double i = panel.ok() ? panel.currentA : NAN;
   double p_el = panel.ok() ? panel.powerW : NAN;
+  last_g = g;
+  for (int k = 0; k < 5; k++) last_T[k] = T[k];
 
   // NASIM: same input as the replay test; needs time, T1..T5, ambient and irradiance.
   double p = NAN;
@@ -285,7 +322,17 @@ void sample(uint32_t n) {
   addField(row, p, 6);
   row += ',';
   row += alarm;
-  row += ",NaN,none,0,";  // D, load_mode, sweep_id: no load hardware yet
+  if (HAS_LOAD) {  // D, load_mode, sweep_id
+    row += ',';
+    row += String(row_d, 4);
+    row += ',';
+    row += load_mode_text(load.L.mode);
+    row += ',';
+    row += row_sweep_id;
+    row += ',';
+  } else {
+    row += ",NaN,none,0,";  // no load fitted
+  }
   row += uptime_ms;
   row += ',';
 
@@ -320,6 +367,7 @@ void syncRtcEdge() {
   const uint32_t s0 = rtc.time().unixtime();
   const uint32_t start = millis();
   while (millis() - start < 1100) {
+    if (HAS_LOAD) load.service(last_g, heatsinkTemp());  // the hold loop goes on meanwhile
     if (!rtc.read()) return;
     const uint32_t s = rtc.time().unixtime();
     if (s != s0) {
@@ -330,22 +378,210 @@ void syncRtcEdge() {
   }
 }
 
-// One row per press: UTC date, UTC time with milliseconds, and millis() at the press.
-void logMarker() {
-  uint32_t ms = mark_ms;
-  mark_ms = 0;
+// UTC of a millis() value, from the last RTC second edge. False if there is none.
+// unix_s: whole UTC seconds (Unix time); milli: the milliseconds within that second.
+bool utcOf(uint32_t ms, uint32_t &unix_s, unsigned &milli) {
+  if (!anchor_s) return false;
+  const int64_t utc_ms = (int64_t)anchor_s * 1000 + (int32_t)(ms - anchor_ms);
+  unix_s = (uint32_t)(utc_ms / 1000);
+  milli = (unsigned)(utc_ms % 1000);
+  return true;
+}
+
+// One row in /markers.csv: UTC date, UTC time with milliseconds, and millis() of the event.
+// what: nullptr = a button press; "load off" / "load on" = the load was switched by command
+// (the name goes to Serial and to the day's log sheet; the file format is the same for all).
+void writeMarker(uint32_t ms, const char *what) {
   char line[64];
-  if (anchor_s) {
-    const int64_t utc_ms = (int64_t)anchor_s * 1000 + (int32_t)(ms - anchor_ms);
-    const DateTime t((uint32_t)(utc_ms / 1000));
+  uint32_t unix_s;
+  unsigned milli;
+  if (utcOf(ms, unix_s, milli)) {
+    const DateTime t(unix_s);
     snprintf(line, sizeof(line), "%04u-%02u-%02u,%02u:%02u:%02u.%03u,%lu", t.year(), t.month(),
-             t.day(), t.hour(), t.minute(), t.second(), (unsigned)(utc_ms % 1000),
-             (unsigned long)ms);
+             t.day(), t.hour(), t.minute(), t.second(), milli, (unsigned long)ms);
   } else {
     snprintf(line, sizeof(line), ",,%lu", (unsigned long)ms);
   }
-  Serial.printf("# marker: %s\n", line);
+  if (what) Serial.printf("# marker (%s): %s\n", what, line);
+  else Serial.printf("# marker: %s\n", line);
   if (sd.ok()) sd.appendLine("/markers.csv", line, "date,time,millis");
+}
+
+void logMarker() {
+  uint32_t ms = mark_ms;
+  mark_ms = 0;
+  writeMarker(ms, nullptr);
+}
+
+// ---- measurement load (called only with HAS_LOAD 1) -------------------------------------------
+float heatsinkTemp() {  // NaN = no valid reading -> the logic trips
+  if (!readable(probes)) return NAN;
+  const int idx = probes.indexOf(HEATSINK_ROM);  // an all-zero ROM matches no sensor
+  return idx < 0 ? NAN : probes.tempC[idx];
+}
+
+// Mode changes, trips, commands: to Serial and to /load_log.csv.
+void loadLog(const char *text) {
+  char line[176];
+  uint32_t unix_s;
+  unsigned milli;
+  const uint32_t ms = millis();
+  if (utcOf(ms, unix_s, milli)) {
+    const DateTime t(unix_s);
+    snprintf(line, sizeof(line), "%04u-%02u-%02u,%02u:%02u:%02u,%lu,%s", t.year(), t.month(),
+             t.day(), t.hour(), t.minute(), t.second(), (unsigned long)ms, text);
+  } else {
+    snprintf(line, sizeof(line), ",,%lu,%s", (unsigned long)ms, text);
+  }
+  Serial.printf("# load: %s\n", line);
+  if (sd.ok()) sd.appendLine("/load_log.csv", line, "date,time,uptime_ms,event");
+}
+
+// Closes the finished sweep and appends it to the card: every point to /SWYYYYMMDD.csv and
+// one summary line to /SSYYYYMMDD.csv (UTC date of the sweep). Raw values; no fit here.
+// sweep_id is the UTC time of the sweep start in Unix seconds: unique over days and over
+// restarts without any counter kept on the card. Without RTC time it is the count since
+// boot and the files are /SWnodate.csv and /SSnodate.csv.
+void storeSweep() {
+  if (readable(pyr)) pyr.read();
+  const uint32_t flags = load_sweep_close(&load.L, pyr.ok() ? pyr.irradiance : NAN);
+  const load_sweep_t &sw = load.L.sweep;
+  // buffers sized for the widest values the compiler can see, not for the 14 / 19 chars used
+  char points_path[40] = "/SWnodate.csv", summary_path[40] = "/SSnodate.csv", when[48] = ",";
+  uint32_t id = sw.id, unix_s;
+  unsigned milli;
+  if (utcOf(sw.t_start_ms, unix_s, milli)) {
+    const DateTime t(unix_s);
+    id = unix_s;
+    snprintf(points_path, sizeof(points_path), "/SW%04u%02u%02u.csv", t.year(), t.month(), t.day());
+    snprintf(summary_path, sizeof(summary_path), "/SS%04u%02u%02u.csv", t.year(), t.month(), t.day());
+    snprintf(when, sizeof(when), "%04u-%02u-%02u,%02u:%02u:%02u", t.year(), t.month(), t.day(),
+             t.hour(), t.minute(), t.second());
+  }
+  row_sweep_id = id;
+
+  String points;  // all points in one write: the file is opened once
+  points.reserve(sw.n * 40);
+  for (uint32_t k = 0; k < sw.n; k++) {
+    char line[48];
+    snprintf(line, sizeof(line), "%s%lu,%lu,%.5f,%.4f,%.4f", k ? "\n" : "", (unsigned long)id,
+             (unsigned long)k, sw.d[k], sw.v[k], sw.i[k]);
+    points += line;
+  }
+  String sum;
+  sum.reserve(160);
+  sum += id;
+  sum += ',';
+  sum += when;
+  sum += ',';
+  sum += sw.t_start_ms;
+  for (int k = 0; k < 5; k++) addField(sum, last_T[k], 4);
+  addField(sum, sw.g_before, 0);
+  addField(sum, sw.g_after, 0);
+  addField(sum, sw.v_oc, 4);
+  addField(sum, sw.n ? sw.v[sw.best] : NAN, 4);
+  addField(sum, sw.n ? sw.i[sw.best] : NAN, 4);
+  addField(sum, sw.n ? sw.d[sw.best] : NAN, 5);
+  sum += ',';
+  sum += flags;
+  const bool saved =
+      sd.ok() && (sw.n == 0 || sd.appendLine(points_path, points.c_str(), "sweep_id,k,D,V,I")) &&
+      sd.appendLine(summary_path, sum.c_str(),
+                    "sweep_id,date,time,uptime_ms,T1,T2,T3,T4,T5,G_before,G_after,V_oc,V_best,"
+                    "I_best,D_best,flags");
+  Serial.printf("# sweep%s: %s (%lu ms)\n", saved ? "" : " NOT SAVED", sum.c_str(),
+                (unsigned long)(sw.t_end_ms - sw.t_start_ms));
+}
+
+void loadCommand(const char *c) {
+  if (!strncmp(c, "GAMMA", 5)) {  // GAMMA <minutes>: a sweep every 15 s; GAMMA 0 ends it
+    const long minutes = constrain(atol(c + 5), 0L, 120L);
+    load_gamma(&load.L, millis(), (uint32_t)minutes);
+    char text[40];
+    snprintf(text, sizeof(text), "gamma run: %ld min", minutes);
+    loadLog(text);
+  } else if (!strcmp(c, "LOAD OFF")) {  // controlled test: open circuit until LOAD ON
+    const bool was_holding = load.L.mode == LOAD_HOLD;
+    load_manual_off(&load.L, millis(), 1);
+    load.service(last_g, heatsinkTemp());  // both duties to 0 on the pins now
+    const uint32_t ms = millis();
+    load_on_marker = false;
+    if (was_holding) writeMarker(ms, "load off");
+    loadLog(was_holding ? "command LOAD OFF" : "command LOAD OFF (load was not holding: no marker)");
+  } else if (!strcmp(c, "LOAD ON")) {
+    load_on_marker = load.L.manual_off;  // its marker is written when the load holds again
+    load_manual_off(&load.L, millis(), 0);
+    loadLog("command LOAD ON");
+  } else {
+    Serial.println("# commands: GAMMA <minutes> | LOAD OFF | LOAD ON");
+  }
+}
+
+void readCommands() {
+  static char buf[24];
+  static uint8_t n = 0;
+  while (Serial.available()) {
+    const char c = (char)Serial.read();
+    if (c == '\n' || c == '\r') {
+      buf[n] = 0;
+      if (n) loadCommand(buf);
+      n = 0;
+    } else if (n < sizeof(buf) - 1) {
+      buf[n++] = (char)toupper(c);
+    }
+  }
+}
+
+// Reports what changed in the load since the last call.
+void noteLoad() {
+  static uint32_t mode = LOAD_OFF, frozen = 0, gamma = 0;
+  const load_t &L = load.L;
+  char text[112];
+  if (L.mode != mode) {
+    if (L.mode == LOAD_TRIP) {
+      snprintf(text, sizeof(text), "TRIP: %s (heatsink %.1f C; last I %.2f A)",
+               load_trip_text(L.trip_reason), heatsinkTemp(), L.i_last);
+    } else {
+      snprintf(text, sizeof(text), "%s -> %s", load_mode_text(mode), load_mode_text(L.mode));
+    }
+    loadLog(text);
+  }
+  if (L.ina_frozen != frozen) {
+    loadLog(L.ina_frozen ? "INA226 readings failing: duty frozen, sweeps suspended"
+                         : "INA226 readings back");
+  }
+  if (gamma && !L.gamma_active) loadLog("gamma run ended");
+  if (load_on_marker && L.mode == LOAD_HOLD) {
+    writeMarker(millis(), "load on");
+    load_on_marker = false;
+  }
+  mode = L.mode;
+  frozen = L.ina_frozen;
+  gamma = L.gamma_active;
+}
+
+// One pass of the load: commands, the logic (hold step, faults), a sweep if one is due and
+// fits before the next row, and the DS18B20 conversion started 800 ms ahead of the row.
+void loadLoop(uint32_t next_row_ms) {
+  readCommands();
+  load.service(last_g, heatsinkTemp());
+  noteLoad();
+  int32_t to_row = (int32_t)(next_row_ms - millis());
+  if (to_row > 0 && load_sweep_due(&load.L, millis(), (uint32_t)to_row)) {
+    if (readable(pyr)) pyr.read();  // G just before the sweep
+    const float g_before = pyr.ok() ? pyr.irradiance : NAN;
+    to_row = (int32_t)(next_row_ms - millis());
+    if (to_row > 0 && load.sweepStart((uint32_t)to_row, g_before)) {
+      load.finishSweep();  // blocks ~1.7 s; the marker button is an interrupt
+      if (load.L.sweep_done) storeSweep();
+      noteLoad();
+    }
+  }
+  to_row = (int32_t)(next_row_ms - millis());
+  if (!conv_running && to_row <= 800 && probes.count) {
+    conv_running = probes.startConversion();
+    conv_ms = millis();
+  }
 }
 
 // ---- Arduino ---------------------------------------------------------------------------------
@@ -366,6 +602,14 @@ void setup() {
   if (hub.ok()) panel.begin();  // the INA226 needs the PaHub
   mapProbes();
   reportRomScan();
+  if (HAS_LOAD) {
+    if (probes.count) probes.read();  // a first heatsink temperature before the load may start
+    if (!load.begin()) Serial.println("# load: LEDC attach FAILED: both branches are held off");
+    esp_task_wdt_config_t wdt = {LOOP_WDT_MS, 0, true};  // time-out, no idle task, reset
+    if (esp_task_wdt_reconfigure(&wdt) != ESP_OK) esp_task_wdt_init(&wdt);
+    enableLoopWDT();
+    Serial.println("# load: active. Commands: GAMMA <minutes> | LOAD OFF | LOAD ON");
+  }
   Serial.println(HEADER);
 }
 
@@ -373,6 +617,7 @@ void loop() {
   static uint32_t next = millis();
   static uint32_t n = 0;
   if (mark_ms) logMarker();
+  if (HAS_LOAD) loadLoop(next);
   if ((int32_t)(millis() - next) < 0) return;
   next += SAMPLE_PERIOD_MS;                 // fixed grid: no drift from the sampling time
   if ((int32_t)(millis() - next) >= 0) {    // more than one period late: skip, don't burst

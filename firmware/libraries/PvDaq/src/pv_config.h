@@ -7,6 +7,10 @@
 #define ENABLE_PUMP 0      // cooling and pump deferred: pump code compiled out
                            // (pvOutputsOff still holds PUMP_PWM LOW: safety, not pump code)
 #define HAS_ANEMOMETER 0   // no anemometer in this phase: wind logged as NaN
+#ifndef HAS_LOAD
+#define HAS_LOAD 0         // 0 = no load hardware fitted: both load pins stay LOW, rows carry
+#endif                     // D = NaN, load_mode = none. Set to 1 only after bench B0-B7 pass
+                           // (firmware/tests/load_bench/BENCH.md).
 
 // ---- GPIO (firmware/PINMAP.md) ----------------------------------------------
 namespace pins {
@@ -64,6 +68,42 @@ constexpr uint8_t LOAD_BRANCHES = 2;
 constexpr float R_BRANCH = 1.5f;                       // ohm, each branch
 constexpr float R_HOLD = R_BRANCH;                     // 1.5 ohm: branch A alone (MPP hold)
 constexpr float R_SWEEP = R_BRANCH / LOAD_BRANCHES;    // 0.75 ohm: A and B together (sweep)
+
+// Load firmware parameters (spec section 10 and the sections named). All are starting
+// values; the bench step that fixes each one is named. tests/test_load_logic.py reads
+// this block, so the PC tests run with exactly these numbers.
+constexpr uint32_t SWEEP_PERIOD_S = 60;        // one I-V sweep per minute
+constexpr uint32_t GAMMA_SWEEP_PERIOD_S = 15;  // during a gamma run (02-gamma-from-iv.md)
+constexpr uint32_t SWEEP_N_COARSE = 24;        // bench B8 (repeatability)
+constexpr uint32_t SWEEP_N_FINE = 24;
+constexpr float SWEEP_D_MIN = 0.02f;           // first coarse duty; bench B3
+constexpr uint32_t T_SETTLE_MS = 20;           // [EST] shortest wait after a duty step, 5 tau
+                                               // in full sun; bench B4 (1.5 x worst case)
+constexpr uint32_t SWEEP_CONV_MS = 9;          // INA226 1.1 ms x 2 x 4 averages = 8.8 ms (TI)
+constexpr float SWEEP_SETTLE_TOL = 0.002f;     // [ASSUMPTION] a point is settled when two
+                                               // readings in a row agree within 0.2 % of
+                                               // V_oc (the figure of bench B4); B4, B6
+constexpr uint32_t SWEEP_BUDGET_MS = 2200;     // [ASSUMPTION] longest sweep: SWEEP_GUARD_MS
+                                               // less the 800 ms the next row needs
+constexpr uint32_t VOC_SETTLE_MS = 50;         // wait at duty 0 before V_oc is read (sec. 4)
+constexpr uint32_t SWEEP_GUARD_MS = 3000;      // [ASSUMPTION] a sweep (~1.7 s) starts only if
+                                               // the next 10 s row is at least this far away
+constexpr uint32_t HOLD_PERIOD_MS = 250;       // [ASSUMPTION] bench B3, B8
+constexpr float HOLD_GAIN = 1.0f;              // [ASSUMPTION] bench B3, B8
+constexpr float HOLD_MAX_STEP = 0.10f;         // duty change per hold step limited to +/-10 %
+constexpr float HOLD_D_MIN = 0.01f;            // hold duty kept inside [0.01, 1.0]
+constexpr float VSET_FRACTION_OF_VOC = 0.78f;  // [ASSUMPTION] before the first sweep
+constexpr float LOAD_G_ON_WM2 = 50.0f;         // [ASSUMPTION] OFF -> HOLD at or above
+constexpr float LOAD_G_OFF_WM2 = 30.0f;        // [ASSUMPTION] HOLD -> OFF below, for ...
+constexpr uint32_t LOAD_G_OFF_MS = 300000;     // ... 5 min
+constexpr float LOAD_VOC_ON_V = 10.0f;         // [ASSUMPTION] OFF -> HOLD also needs this V_oc
+constexpr float T_TRIP_C = 80.0f;              // [ASSUMPTION] heatsink trip; bench B0, B5
+constexpr float I_TRIP_A = 9.5f;               // unit range is +/-10 A (sec. 8)
+constexpr uint32_t TRIP_CLEAR_MS = 300000;     // TRIP -> OFF after 5 min without the cause
+constexpr uint32_t INA_FAIL_LIMIT = 3;         // failed readings in a row that freeze the duty
+constexpr float SWEEP_G_UNSTABLE = 0.02f;      // G_UNSTABLE flag above 2 % (sec. 4)
+constexpr float SWEEP_MONO_TOL = 0.005f;       // [ASSUMPTION] NON_MONOTONIC ignores voltage
+                                               // rises below 0.5 % of V_oc (reading noise)
 
 // ---- Logging -------------------------------------------------------------------------
 constexpr uint32_t SAMPLE_PERIOD_MS = 10000;   // one CSV row every 10 s (CLAUDE.md)

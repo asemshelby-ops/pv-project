@@ -5,7 +5,9 @@ PROJECT_STATE §4 in its **two-branch form** (decision by Asim, 2026-11-11): two
 1.5 Ω resistor branches, each with its own MOSFET. Branch A alone holds the MPP all day;
 branch B is switched in only during I-V sweeps, which makes 0.75 Ω in total. Order of
 work: this protocol on a lab DC supply, then the 100 W module. The firmware it tests is
-specified in `07-load-firmware-spec.md`.
+specified in `07-load-firmware-spec.md` (written 2026-11-13, not yet run on hardware).
+How to carry out each step — wiring, the serial command to type, what to write down — is
+in `firmware/tests/load_bench/BENCH.md`; the pass criteria stay here.
 
 All electrical numbers below come from the seller listing of the module (V_mp 18 V,
 I_mp 5.55 A, V_oc 21.5 V, I_sc 5.88 A) and ideal switching. They are `[EST]` and are

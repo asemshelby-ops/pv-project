@@ -15,6 +15,11 @@ class PvDs18b20 : public PvDevice {
   explicit PvDs18b20(int pin) : ow_(pin), dt_(&ow_) {}
   bool begin() override;   // scan the bus, store ROMs, 12-bit resolution
   bool read() override;    // one conversion of all sensors (blocks ~750 ms at 12 bit)
+  // The same in two steps, without blocking: start the conversion, then, at least
+  // CONVERSION_MS later, fetch the results.
+  static constexpr uint32_t CONVERSION_MS = 750;   // 12 bit (Maxim datasheet)
+  bool startConversion();
+  bool fetch();
   const char *name() const override { return "DS18B20"; }
 
   uint8_t count = 0;

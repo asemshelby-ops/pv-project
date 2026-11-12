@@ -29,7 +29,10 @@ the 10 kΩ gate pull-downs before connecting any MOSFET.
 
 Build switches in `pv_config.h` (decisions 2026-11-10): `ENABLE_PUMP 0` — cooling is deferred,
 so pump code is compiled out (not deleted); `HAS_ANEMOMETER 0` — no anemometer in this phase,
-so the logger writes `NaN` in the wind column.
+so the logger writes `NaN` in the wind column; `HAS_LOAD 0` — no measurement-load hardware
+yet: both load pins stay LOW and the rows carry `NaN,none,0`. The load code is in the
+logger all the same and is build-checked as `logger_load` (`-DHAS_LOAD=1`); it is switched
+on only after the bench steps in [tests/load_bench/BENCH.md](tests/load_bench/BENCH.md).
 
 ### Pinned build environment (every `sketch.yaml`)
 
