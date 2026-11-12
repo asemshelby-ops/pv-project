@@ -7,17 +7,30 @@ time, because the detector features (solar geometry) and the day split are local
   * `t_local`           naive local timestamp
   * `segment`           id of an unbroken run of complete in-window rows (>= 0), else -1.
                         A new segment starts at a new local day, after a gap above
-                        config.GAP_S, or after a row with a missing detector input --
-                        the same moments at which the firmware resets NASIM.
+                        config.GAP_S, or after a row with a missing detector input.
+                        (Stricter than the firmware since 2026-11-12: on the board NASIM
+                        skips such a row and resets only after 5 in a row.)
+  * `D`, `load_mode`, `sweep_id`, `uptime_ms`, `status`   the five columns the logger
+                        appends since 2026-11-12 (docs/paper/07 sec. 7). Files written
+                        before that load too; the columns are then empty (NaN / <NA>).
+                        Decode `status` with data.schema.decode_status / has_status.
+  * `time_source`       "rtc", or "uptime" for a row the logger wrote without RTC time:
+                        its time is rebuilt from `uptime_ms` and the nearest row of the
+                        same boot that has a time (good to about 1 s, the RTC's step).
+Rows whose time cannot be rebuilt (no uptime_ms, or no timed row in the same boot and
+file, as in /nodate.csv) cannot be placed on the time axis: they are left out and
+COUNTED in `df.attrs["rows_without_time"]`, with a warning. `df.attrs["rows_time_rebuilt"]`
+counts the rebuilt ones.
 Raw values are never changed, except for optional per-sensor calibration offsets.
 """
 import pathlib
+import warnings
 
 import numpy as np
 import pandas as pd
 
 import config
-from data.schema import BACK_SENSORS
+from data.schema import BACK_SENSORS, LOGGER_EXTRA_COLUMNS
 
 REQUIRED = BACK_SENSORS + ["T_ambient", "irradiance"]     # inputs of every detector
 DAY_FILE = "[0-9]" * 8 + ".csv"
@@ -30,19 +43,33 @@ def read_logger(src, calib=None):
     files = sorted(src.glob(DAY_FILE)) if src.is_dir() else [src]
     if not files:
         raise FileNotFoundError(f"no logger files in {src}")
+    if src.is_dir() and (src / "nodate.csv").exists():
+        files.append(src / "nodate.csv")           # rows of boots that never had RTC time
     raw = pd.concat([pd.read_csv(f, comment="#", dtype=str, skip_blank_lines=True)
-                     for f in files], ignore_index=True)
-    raw = raw[raw["date"].notna() & raw["time"].notna() & (raw["date"] != "date")]
-    t_utc = pd.to_datetime(raw["date"] + " " + raw["time"], utc=True, errors="coerce")
-    df = raw.assign(t_utc=t_utc)[t_utc.notna()]
+                    .assign(_file=k) for k, f in enumerate(files)], ignore_index=True)
+    raw = raw[raw["date"] != "date"].reset_index(drop=True)   # a repeated header line
+    for c in LOGGER_EXTRA_COLUMNS:                 # files written before 2026-11-12
+        if c not in raw:
+            raw[c] = np.nan
+    t_utc, source = _row_times(raw)
+    lost = int(t_utc.isna().sum())
+    if lost:
+        warnings.warn(f"{lost} logger rows have no usable time and are left out "
+                      f"(see df.attrs['rows_without_time'])", stacklevel=2)
+    df = raw.assign(t_utc=t_utc, time_source=source)[t_utc.notna()].drop(columns="_file")
     df = df.drop_duplicates("t_utc").sort_values("t_utc").reset_index(drop=True)
-    for c in df.columns.difference(["date", "time", "t_utc"]):
+    for c in df.columns.difference(["date", "time", "t_utc", "time_source", "load_mode"]):
         df[c] = pd.to_numeric(df[c], errors="coerce")
+    for c in ("sweep_id", "uptime_ms", "status"):
+        df[c] = df[c].astype("Int64")              # whole numbers, <NA> where not recorded
     for name, off in (calib or {}).items():
         df[name] = df[name] - off
+    df.attrs["rows_without_time"] = lost
+    df.attrs["rows_time_rebuilt"] = int((df["time_source"] == "uptime").sum())
 
     local = df["t_utc"].dt.tz_convert(config.TZ)
-    df["date_utc"], df["time_utc"] = df["date"], df["time"]
+    df["date_utc"] = df["t_utc"].dt.strftime("%Y-%m-%d")
+    df["time_utc"] = df["t_utc"].dt.strftime("%H:%M:%S")
     df["date"], df["time"] = local.dt.strftime("%Y-%m-%d"), local.dt.strftime("%H:%M:%S")
     df["t_local"] = local.dt.tz_localize(None)
 
@@ -53,6 +80,23 @@ def read_logger(src, calib=None):
                  | (df["date"] != df["date"].shift()))
     df["segment"] = np.where(use, new.cumsum() - 1, -1)
     return df
+
+
+def _row_times(raw):
+    """UTC time of every row and where it comes from ("rtc" / "uptime" / "none").
+    A row without RTC time takes it from uptime_ms: within one boot (uptime_ms rising, in
+    one file) `time - uptime` is constant, so it is copied from the nearest earlier row
+    that has both, else the nearest later one."""
+    rtc = pd.to_datetime(raw["date"].fillna("") + " " + raw["time"].fillna(""), utc=True,
+                         errors="coerce")
+    up = pd.to_numeric(raw["uptime_ms"], errors="coerce")
+    boot = (up.ffill().diff() < 0).groupby(raw["_file"]).cumsum()   # uptime fell = reboot
+    boot_start = rtc - pd.to_timedelta(up, unit="ms")               # NaT where either is missing
+    boot_start = boot_start.groupby([raw["_file"], boot]).transform(lambda s: s.ffill().bfill())
+    rebuilt = (boot_start + pd.to_timedelta(up, unit="ms")).dt.round("s")
+    t = rtc.fillna(rebuilt)
+    source = np.where(rtc.notna(), "rtc", np.where(t.notna(), "uptime", "none"))
+    return t, source
 
 
 def detector_frame(df):

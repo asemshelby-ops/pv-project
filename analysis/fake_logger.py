@@ -24,6 +24,7 @@ from data.schema import BACK_SENSORS
 
 HEADER = ["date", "time", *BACK_SENSORS, "T_ambient", "humidity", "irradiance",
           "voltage", "current", "power", "wind", "p", "alarm"]
+EXTRA = ["D", "load_mode", "sweep_id", "uptime_ms", "status"]   # logger rows since 2026-11-12
 SYN_ALPHA_ISC = 0.0005      # [ASSUMPTION, synthetic only] 1/degC
 R_SWEEP = 0.75              # ohm, both load branches (firmware pv_config.h)
 
@@ -32,15 +33,20 @@ def _utc(local_naive):
     return pd.DatetimeIndex(local_naive).tz_localize(config.TZ).tz_convert("UTC")
 
 
-def write_logger_files(days, out):
-    """days: schema table in LOCAL time (data/synth.py). Writes /YYYYMMDD.csv in UTC."""
+def write_logger_files(days, out, extra_columns=True):
+    """days: schema table in LOCAL time (data/synth.py). Writes /YYYYMMDD.csv in UTC.
+    extra_columns=False writes the format used before 2026-11-12 (no D ... status).
+    The five extra columns are what the logger writes with no load fitted and nothing
+    wrong: NaN, none, 0, uptime of one boot 5 s before the first row, status 0."""
     out = pathlib.Path(out)
     out.mkdir(parents=True, exist_ok=True)
     t = _utc(pd.to_datetime(days["date"] + " " + days["time"]))
     d = days.assign(date=t.strftime("%Y-%m-%d"), time=t.strftime("%H:%M:%S"),
-                    wind="NaN", p="", alarm=0)
+                    wind="NaN", p="", alarm=0, D="NaN", load_mode="none", sweep_id=0,
+                    uptime_ms=((t - t[0]).total_seconds() * 1000 + 5000).astype("int64"),
+                    status=0)
     for key, g in d.groupby(d["date"].str.replace("-", "")):
-        g[HEADER].to_csv(out / f"{key}.csv", index=False)
+        g[HEADER + EXTRA if extra_columns else HEADER].to_csv(out / f"{key}.csv", index=False)
 
 
 def write_markers(schedule, out):
