@@ -261,14 +261,20 @@ _add("controllers",
      spike_min_burst_s=(20.0, "s", SCN, "shortest burst after a detector alarm", ""),
      spike_max_burst_s=(180.0, "s", SCN, "longest burst after a detector alarm", ""),
      spike_duty=(1.0, "-", SCN, "pump duty of a spike-triggered burst", ""),
+     spike_blank_s=(900.0, "s", SCN,
+                    "after a burst the zone's detector is not fed for this long (about 2.4 "
+                    "thermal time constants: the module re-heats by what was cooled) and is "
+                    "then restarted, so it does not read its own re-heating as a spike "
+                    "(CLAUDE.md, Key physics)", ""),
      predictive_duties=((0.5, 0.75, 1.0), "-", SCN,
                         "pump duties the predictive controller chooses from", ""),
-     predictive_on_ratio=(1.0, "-", SCN,
-                          "predictive: open a zone when expected gain / pump power "
-                          "exceeds this", ""),
-     predictive_off_ratio=(0.8, "-", SCN,
-                           "predictive: close it when the ratio falls below this "
-                           "(hysteresis against chatter)", ""),
+     predictive_on_ratio=(1.2, "-", SCN,
+                          "predictive: open a zone when expected gain / (pump + valve "
+                          "power) reaches this", ""),
+     predictive_off_ratio=(1.0, "-", SCN,
+                           "predictive: close it as soon as the expected gain no longer "
+                           "exceeds the pump power. The gap to the on-ratio is the "
+                           "hysteresis against chatter", ""),
      )
 
 # --- constants --------------------------------------------------------------------------------
