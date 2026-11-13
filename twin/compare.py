@@ -200,8 +200,9 @@ def figure(tables, p, path, date):
     ax[2].set_yticks(np.arange(len(names)) + 0.45)
     ax[2].set_yticklabels([n.split(" (")[0] for n in names], fontsize=8)
     ax[2].set_ylabel("open zones (bar height)")
-    ax[0].legend(frameon=False, fontsize=8, ncol=2, loc="upper left")
-    ax[0].set_title(f"SIMULATION - rooftop twin with placeholder parameters - {date}", fontsize=10)
+    ax[0].legend(frameon=False, fontsize=8, ncol=3, loc="lower center",
+                 bbox_to_anchor=(0.5, 1.0))            # above the plot: never on the curves
+    fig.suptitle(f"SIMULATION - rooftop twin with placeholder parameters - {date}", fontsize=10)
     for a in ax:
         a.grid(alpha=0.3)
         a.spines[["top", "right"]].set_visible(False)
