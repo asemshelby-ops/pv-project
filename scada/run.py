@@ -4,8 +4,14 @@
     python -m scada.run --folder D:\\sd_copy --serial COM5   ... and the logger's serial port
     python -m scada.run --replay                          demo: replay out/scada/demo_source
     python -m scada.run --replay <folder> --speed 600     replay any folder of logger files
+    python -m scada.run --sim                             only the rooftop SIMULATION
+    python -m scada.run --replay --sim nasim              ... or next to a replay / live data
 
 Then open http://127.0.0.1:8050 . Stop with Ctrl+C.
+
+--sim runs the rooftop twin (twin/, 120 simulated modules) and shows it on the page
+/rooftop, marked SIMULATION. It has its own file (out/scada/simulation.sqlite) and never
+touches the historian: the real module stays the only real data source.
 
 Live and replay never share a historian: live data goes to out/scada/historian.sqlite, a
 replay to out/scada/replay.sqlite, which is emptied at every replay start. A historian
@@ -15,7 +21,7 @@ import argparse
 import pathlib
 import threading
 
-from scada import historian, ingest, replay, server
+from scada import historian, ingest, replay, server, sim_source
 
 LIVE_DB = "out/scada/historian.sqlite"
 REPLAY_DB = "out/scada/replay.sqlite"
@@ -58,11 +64,19 @@ def main():
     ap.add_argument("--speed", type=float, default=120.0, help="replay speed, times real time")
     ap.add_argument("--db", help=f"historian file (default {LIVE_DB}; replay: {REPLAY_DB})")
     ap.add_argument("--port", type=int, default=8050)
+    ap.add_argument("--sim", nargs="?", const="predictive", metavar="CONTROLLER",
+                    choices=sim_source.CONTROLLERS,
+                    help="run the rooftop SIMULATION (page /rooftop) with this controller: "
+                         + ", ".join(sim_source.CONTROLLERS) + " (default predictive)")
+    ap.add_argument("--sim-speed", type=float, default=120.0,
+                    help="simulation speed, times real time")
+    ap.add_argument("--sim-days", type=int, default=2, help="simulated days")
     a = ap.parse_args()
     if a.replay and (a.folder or a.serial):
         ap.error("--replay cannot be combined with --folder or --serial")
-    if not (a.replay or a.folder or a.serial):
-        ap.error("give --folder and/or --serial for live data, or --replay for a demo")
+    if not (a.replay or a.folder or a.serial or a.sim):
+        ap.error("give --folder and/or --serial for live data, --replay for a demo, "
+                 "or --sim for the rooftop simulation")
 
     stop, threads = threading.Event(), []
     if a.replay:
@@ -81,12 +95,21 @@ def main():
         threads.append(threading.Thread(target=ingest.run_folder, args=(db, folder, stop)))
     if a.serial:
         threads.append(threading.Thread(target=ingest.run_serial, args=(db, a.serial, a.baud, stop)))
+    sim_db, sim_info = None, None
+    if a.sim:
+        feeder = sim_source.Feeder(sim_source.SIM_DB, a.sim, a.sim_days)   # fails now if e.g.
+        sim_db = sim_source.SIM_DB                                         # NASIM's model is missing
+        sim_info = {"speed": a.sim_speed}
+        threads.append(threading.Thread(target=feeder.run, args=(stop, a.sim_speed)))
     for t in threads:
         t.daemon = True
         t.start()
-    httpd = server.make_server(db, info, a.port)
+    httpd = server.make_server(db, info, a.port, sim_db, sim_info)
     print(f"SCADA ({info['mode']}) on http://127.0.0.1:{httpd.server_address[1]}   "
           f"historian: {db}   Ctrl+C stops", flush=True)
+    if a.sim:
+        print(f"Rooftop SIMULATION ({feeder.controller.name}) on "
+              f"http://127.0.0.1:{httpd.server_address[1]}/rooftop   file: {sim_db}", flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

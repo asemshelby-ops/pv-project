@@ -10,6 +10,14 @@ can change is the acknowledgement of an alarm; it cannot reach the logger.
   GET  /api/alarms     ?which=open|all
   GET  /api/journal
   POST /api/ack        {"id": n | "all", "by": "name", "note": "..."}
+
+The rooftop twin (page /rooftop) is a SIMULATION with its own file and its own API; it
+never reads or writes the historian of the real module (scada/sim_source.py):
+
+  GET  /api/sim/state    newest simulated step, strings, module temperatures
+  GET  /api/sim/series   ?span=<s>&end=<unix s>&points=<n>
+  GET  /api/sim/alarms   ?which=open|all          GET /api/sim/journal
+  POST /api/sim/ack      as /api/ack, for the simulation's alarms
 """
 import json
 import math
@@ -19,11 +27,16 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from data.schema import BACK_SENSORS
-from scada import alarms, historian, model
+from scada import alarms, historian, model, sim_source
 
 WEB = pathlib.Path(__file__).resolve().parent / "web"
 STATIC = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
-          "/style.css": ("style.css", "text/css")}
+          "/style.css": ("style.css", "text/css"),
+          "/rooftop": ("rooftop.html", "text/html"),
+          "/rooftop.js": ("rooftop.js", "text/javascript")}
+SIM_OFF = {"available": False, "simulation": True,
+           "hint": "The rooftop simulation is not running. Start it with: "
+                   "python -m scada.run --sim"}
 ROW_S = 10                      # the logger's sample period
 MAX_SPAN_S = 31 * 86400
 SERIES = ["T_module", "T_ambient", "irradiance", "power", "voltage", "current", "p", "D"]
@@ -118,6 +131,8 @@ class Handler(BaseHTTPRequestHandler):
         if url.path in STATIC:
             name, ctype = STATIC[url.path]
             return self._send(200, (WEB / name).read_bytes(), ctype)
+        if url.path.startswith("/api/sim/"):
+            return self._sim_get(url.path, q)
         conn = historian.connect(self.server.db_path)
         try:
             if url.path == "/api/model":
@@ -140,9 +155,35 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
+    def _sim_get(self, path, q):
+        """The simulation's API: its own file, never the historian of the real module."""
+        db = self.server.sim_db_path
+        if db is None:
+            return self._send(200 if path == "/api/sim/state" else 404, SIM_OFF)
+        conn = historian.connect(db)
+        try:
+            if path == "/api/sim/state":
+                body = sim_source.state(conn, self.server.sim_info)
+            elif path == "/api/sim/series":
+                body = sim_source.series(conn, float(q.get("span", 3 * 3600)),
+                                         float(q["end"]) if q.get("end") else None,
+                                         int(q.get("points", 600)))
+            elif path == "/api/sim/alarms":
+                body = alarms.list_alarms(conn, "all" if q.get("which") == "all" else "open")
+            elif path == "/api/sim/journal":
+                body = alarms.journal(conn)
+            else:
+                return self._send(404, {"error": "not found"})
+            self._send(200, body)
+        except ValueError as e:
+            self._send(400, {"error": str(e)})
+        finally:
+            conn.close()
+
     def do_POST(self):
         # A JSON content type cannot be sent by a plain form on another site.
-        if self.path != "/api/ack" or \
+        sim = self.path == "/api/sim/ack" and self.server.sim_db_path is not None
+        if not (self.path == "/api/ack" or sim) or \
                 not self.headers.get("Content-Type", "").startswith("application/json"):
             return self._send(404, {"error": "not found"})
         try:
@@ -151,7 +192,7 @@ class Handler(BaseHTTPRequestHandler):
             note = str(body.get("note", "")).strip()[:200]
             if not by:
                 raise ValueError("the operator's name is required to acknowledge")
-            conn = historian.connect(self.server.db_path)
+            conn = historian.connect(self.server.sim_db_path if sim else self.server.db_path)
             try:
                 if body.get("id") == "all":
                     n = alarms.acknowledge_all(conn, by, note)
@@ -165,10 +206,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": str(e)})
 
 
-def make_server(db_path, info, port=8050):
-    """info: {"mode": "live" | "replay", ...} shown by the HMI. port 0 = any free port."""
+def make_server(db_path, info, port=8050, sim_db_path=None, sim_info=None):
+    """info: {"mode": "live" | "replay", ...} shown by the HMI. port 0 = any free port.
+    sim_db_path: the simulation file of scada/sim_source.py, or None (no simulation)."""
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     server.db_path, server.info = str(db_path), info
+    server.sim_db_path = None if sim_db_path is None else str(sim_db_path)
+    server.sim_info = sim_info or {}
     return server
 
