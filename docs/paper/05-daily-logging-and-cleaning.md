@@ -11,6 +11,11 @@ larger than the 1–2 % effect of a spike (literature doc §3.1). A module clean
 known time every day keeps soiling out of the comparison between days. Cleaning also
 cools the glass, so the minutes after it are excluded from the spike statistics.
 
+Schedule `[ASSUMPTION]`: the module glass **and** the PYR20 dome, **once every day**,
+before 07:30 local, plus nothing extra after a dust storm (the next morning's cleaning is
+the answer to it). Daily is a choice for a dusty site, not a measured need; §9 gives the
+check that can show later whether it is more than needed. Soiling itself is not studied.
+
 ## 2. Every morning (before 07:30 local, sun still low)
 
 1. Look at the rig: stand, tilt, cables, sensor covers, PYR20 dome, load heatsink. Note
@@ -29,8 +34,13 @@ cools the glass, so the minutes after it are excluded from the spike statistics.
 Data from the cleaning start until 30 min after the cleaning end is excluded from spike
 statistics and detector scoring (`03-spike-definition-and-metrics.md` §4).
 
-If a day is skipped, write "not cleaned" on that day's sheet. Never leave it blank. After
-a dust event, clean as usual the next morning and mark the dusty period on the sheet.
+If a day is skipped, write "not cleaned" on that day's sheet. Never leave it blank.
+
+**Dust storm.** When a dust storm or a visible dust film is noticed (during the day, or
+in the morning for the night before): press the marker and write a line with the event
+`dust storm` (notes: when it started, how it looks). Do **not** clean at once in the
+middle of the day; clean as usual the next morning. The analysis flags that day and every
+day after it up to the next logged cleaning (§9).
 
 ## 3. During the day
 
@@ -107,11 +117,13 @@ Wind as felt    calm / light / breezy
  7  |   __:__    |                                              |
  8  |   __:__    |                                              |
 
-Event types: cleaning start / cleaning end / mesh on / mesh off / windbreak on /
-windbreak off / negative control / gamma shade on / gamma uncover / gamma end /
-sync event / maintenance / accidental / other (describe)
+Event types: cleaning start / cleaning end / dust storm / mesh on / mesh off /
+windbreak on / windbreak off / negative control / gamma shade on / gamma uncover /
+gamma end / sync event / maintenance / accidental / other (describe)
 
 Sky during the day (clouds? dust? when?): ____________________________________________
+Dust storm today or last night?  N / Y -> marker #__ , line "dust storm" above
+PYR20 dome cleaned with the module?  Y / N
 Evening check   time: __:__    logger running?  Y / N     SD copied?  Y / N
 Anything unusual: _____________________________________________________________________
 ```
@@ -121,3 +133,30 @@ reads `/markers.csv`, numbers the presses of each local day in order, and joins 
 the typed copy of this sheet (`data/logsheets/YYYY-MM-DD.csv`, columns
 `marker,local_time,event,notes`). A mismatch between the number of presses and the number
 of lines is reported, not guessed.
+
+## 9. Soiling: what the analysis does with these lines (a check, not a result)
+
+Added 2026-11-13. Code: `analysis/soiling.py`; constants `SOIL_*` in `config.py`, all
+`[ASSUMPTION]`.
+
+| What | Rule | Output |
+|---|---|---|
+| Cleaning | every `cleaning start` … `cleaning end` pair, as before: excluded until 30 min after the end | `events.csv`, detector scoring |
+| Days after a dust storm | the local day of each `dust storm` line and every following day up to and including the day of the next `cleaning end` (its morning was still dusty). No cleaning since: flagged to the end of the data | column `after_dust` in `day_quality.csv`; a note in `summary.md`. **Flagged, not excluded** |
+| Power before and after a cleaning | for each cleaning: median of `power / irradiance` between 11:30 and 12:30 local, on the last day before the cleaning and on the first day after it; rows with G ≥ 600 W/m², power > 1 W, load not off / tripped / sweeping; at least 60 rows each. `change` = after / before − 1; above 3 % it is marked `check` | `soiling_check.csv`; the count in `summary.md` |
+
+How to read the check, and what it cannot show:
+- It needs the load. Today (no load, module at open circuit) every line reads "no power".
+- The dome and the module are cleaned together, so `power / irradiance` shows dust on the
+  module **minus** dust on the dome. Equal dust on both cancels and the check sees nothing.
+- With a cleaning every morning the "before" midday is normally a clean day too, so the
+  change is one day of dust: expect ≈ 0. A storm that comes in the afternoon and is
+  cleaned off the next morning never shows either. The check mainly catches a **skipped**
+  cleaning and a slow problem (a dome that is not being wiped, a film that does not
+  come off).
+- Not corrected for temperature (γ of this module is unknown): `dT_module_C` is given
+  next to each line; 5 °C between the two middays is ≈ 2 % by itself `[EST, illustrative
+  γ]`.
+- A day marked `after_dust` or a cleaning marked `check` is a reason to look at that day,
+  nothing more. Whether flagged days leave the statistics is a decision for Asim, not made
+  here.

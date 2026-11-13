@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 import config
-from analysis import detection, events, gamma, ingest, report, validate, verdict
+from analysis import detection, events, gamma, ingest, report, soiling, validate, verdict
 
 DEFAULT_MAPPING = {   # ESP32 column -> (reference column, scale); an ASSUMPTION until the
     "T1": ("TC1", 1.0), "T3": ("TC2", 1.0), "T5": ("TC3", 1.0),   # data-logger model is known
@@ -53,6 +53,19 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
         notes += [f"marker problem: {p}" for p in problems]
         if no_time:
             notes.append(f"{no_time} marker presses had no RTC time and were left out")
+        # soiling housekeeping (docs/paper/05 sec. 9): flags and a check, nothing is excluded
+        dusty = soiling.dust_days(joined)
+        quality["after_dust"] = quality["date"].isin(dusty["date"])
+        quality.to_csv(out / "day_quality.csv", index=False)
+        if len(dusty):
+            notes.append(f"{len(dusty)} days flagged after a dust storm line (until the next "
+                         "cleaning): " + ", ".join(dusty["date"]) + ". They are NOT excluded")
+        soil = soiling.cleaning_check(df, joined)
+        soil.to_csv(out / "soiling_check.csv", index=False)
+        n_chk, n_ok = int((soil["note"] == "check").sum()), int(soil["change"].notna().sum())
+        notes.append(f"cleaning check (P/G at midday, day before vs day after): {n_ok} of "
+                     f"{len(soil)} cleanings computable, {n_chk} with a change above "
+                     f"{config.SOIL_CHECK_REL:.0%} (soiling_check.csv)")
     else:
         notes.append("no markers.csv: no excluded windows, no controlled-test labels")
 

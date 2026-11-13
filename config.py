@@ -188,6 +188,13 @@ CAUSE_F_IRRADIANCE = 2 / 3  # [ASSUMPTION] explained fraction >= 2/3 -> "irradia
 CAUSE_F_NON = 1 / 3         # [ASSUMPTION] explained fraction <= 1/3 -> "non_irradiance"
 MATCH_GRACE_MIN = 2         # [ASSUMPTION] an alarm up to 2 min after the peak still matches
 CLEANING_EXCLUDE_MIN = 30   # [ASSUMPTION] excluded after a logged cleaning
+# Soiling housekeeping check (analysis/soiling.py, docs/paper/05 sec. 9). Not a result.
+SOIL_NOON_WINDOW = ("11:30", "12:30")   # [ASSUMPTION] local time, around solar noon in Makkah
+SOIL_MIN_G_WM2 = 600.0      # [ASSUMPTION] midday rows below this are not used (cloud, haze)
+SOIL_MIN_POWER_W = 1.0      # rows without real power (load off) are not used
+SOIL_MIN_ROWS = 60          # [ASSUMPTION] at least 10 min of such rows in the window
+SOIL_CHECK_REL = 0.03       # [ASSUMPTION] a change of P/G above 3 % across a cleaning is
+                            # reported as "check" (temperature alone can give ~2 % [EST])
 # A detector skips a row it cannot use (input or time missing, or the row is absent) and
 # keeps its state; this many such rows in a row reset it. ONE value for the board
 # (NASIM_DET_RESET_AFTER_FAILS in nasim_config.h, used by firmware/logger) and for the

@@ -16,6 +16,21 @@ only — they are not measurements.
    the chip every time it starts it. Run step 4a below once with the logger that will go
    outdoors, before it goes.
 
+## Soiling: cleaning schedule and markers (short form)
+
+Full protocol and log sheet: `docs/paper/05-daily-logging-and-cleaning.md`.
+
+- **Schedule `[ASSUMPTION]`:** module glass and PYR20 dome, once every day before 07:30
+  local. Distilled or RO water, microfibre cloth, no detergent; dome wiped damp, then dry.
+- **Markers:** press the button before and after every cleaning: two rows in
+  `/markers.csv`, two lines on the day's sheet (`cleaning start`, `cleaning end`).
+  A skipped day: write "not cleaned".
+- **Dust storm:** press the marker when it is noticed and write `dust storm`. Do not
+  clean in the middle of the day; clean the next morning as usual.
+- **In the analysis:** days after a `dust storm` line are flagged until the next cleaning,
+  and the power per irradiance at midday is compared before and after each cleaning
+  (`soiling_check.csv`). A check only: soiling is not a topic of the study.
+
 ## Build and flash
 
 ```bash
