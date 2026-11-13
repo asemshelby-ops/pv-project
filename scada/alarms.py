@@ -96,6 +96,30 @@ def raise_untimed(conn, code, wall, detail):
     return _raise(conn, model.ALARM_BY_CODE[code], None, wall, detail, 0)
 
 
+def check_no_data(conn, wall=None, limit_s=model.NO_DATA_LIMIT_S):
+    """The "no data arriving" alarm. Raised when the last new row was received more than
+    `limit_s` ago on the PC clock (or, with an empty historian, when none came within
+    `limit_s` of the first check); cleared as soon as a new row has been received.
+    The PC clock is used, not the rows' own time, so it works the same in a replay.
+    Called by every ingest loop about once a second. The caller commits."""
+    wall = time.time() if wall is None else wall
+    ref = historian.get_meta(conn, "last_row_wall")
+    if ref is None:
+        ref = historian.get_meta(conn, "watch_start_wall")
+        if ref is None:
+            historian.set_meta(conn, "watch_start_wall", wall)
+            ref = wall
+    late = wall - float(ref) > limit_s
+    open_ = conn.execute("SELECT id FROM alarms WHERE code = 'NO_DATA' AND cleared = 0").fetchone()
+    if late and not open_:
+        _raise(conn, model.ALARM_BY_CODE["NO_DATA"], None, wall,
+               f"no new row received for more than {limit_s:g} s", 0)
+    elif open_ and not late:
+        t = conn.execute("SELECT MAX(t_utc) FROM samples").fetchone()[0]
+        conn.execute("UPDATE alarms SET cleared = 1, t_cleared = ? WHERE id = ?", (t, open_["id"]))
+        _journal(conn, open_["id"], "NO_DATA", "CLEARED", t, wall, "rows resumed")
+
+
 def acknowledge(conn, alarm_id, by, note="", wall=None):
     """Acknowledge one occurrence. Returns False if it does not exist or was acknowledged
     before (the first acknowledgement is kept)."""

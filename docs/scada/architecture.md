@@ -179,6 +179,7 @@ Definitions: `ALARM_DEFS` in `scada/model.py`, listed in [tag-list.md](tag-list.
 | sensor | `TEMP_FAIL`, `AMBIENT_FAIL`, `IRRAD_FAIL`, `PANEL_FAIL` | `status` bits |
 | system | `RTC_INVALID`, `SD_ERROR`, `DET_RESET`, `TROM_UNMAPPED` | `status` bits |
 | system | `LOAD_TRIP` | `load_mode` = `trip` |
+| system | `NO_DATA` | PC clock: no new row received for 60 s |
 
 `LOAD_TRIP` was added beyond the request because the column already carries it and a trip
 is the load's fault state. `DET_SKIPPED` is not an alarm (it follows from a fault that
@@ -213,8 +214,14 @@ Limits to know:
   that arrive **later with an older time** (a card copied after live data was received)
   are stored and plotted but raise no alarms. Until that is built: ingest old cards
   before going live, or into a separate historian (`--db`).
-- No alarm for "no data arriving": the top bar shows the age of the last row, but it is
-  not in the alarm list.
+- `NO_DATA` is the only alarm that does not come from a row. It is raised when no new
+  row has been **received** for longer than `NO_DATA_LIMIT_S` (60 s `[ASSUMPTION]`,
+  `scada/model.py`: six missed rows) and cleared by the next new row. It uses the PC
+  clock on purpose: the rows' own time says nothing about a silent logger, and in a
+  replay it runs faster than real time. Consequences: its "raised" time is a PC time
+  (the page says so); with a copy of the SD card that is not growing it is raised 60 s
+  after the last file was read, which is correct but expected; and a row that arrives a
+  second time (already stored) does not count as new.
 - The detector alarms are what the board logged. The detectors are trained and tuned on
   **synthetic** data; their alarms are information, not a trigger for anything.
 
@@ -239,13 +246,14 @@ and only a historian whose `meta.mode` is `replay`.
 
 ## 9. What is tested, what is not
 
-Tested (61 tests, `tests/test_scada_*.py`, all on synthetic or typed rows):
+Tested (65 tests, `tests/test_scada_*.py`, all on synthetic or typed rows):
 
 - ingest: the three formats, mixed files, growing files, restart, duplicates, replaced
   file, rows without RTC time (same times as the offline loader), unplaceable rows,
   markers, serial lines;
 - alarms: each bit, the life cycle, the 3-row clear delay, restart in the middle of an
-  alarm, old-format rows, rows without time, evaluation order;
+  alarm, old-format rows, rows without time, evaluation order, the no-data alarm
+  (also in a replay that stops and resumes);
 - tag model against the firmware header and the schema; replay; the fault scenario; the
   API including acknowledge; the separation of live and replay historians.
 

@@ -82,7 +82,9 @@ live historian and the other way round (`--db` selects another file).
 ### The page
 
 - **Top bar:** LIVE or REPLAY, time of the newest row (Makkah and UTC), how long ago the
-  last row was received, number of unacknowledged and active alarms.
+  last row was received, number of unacknowledged and active alarms. After 60 s without
+  a new row the `NO_DATA` alarm is raised; in a replay this happens 60 s after the last
+  replayed row, which shows the alarm working.
 - **Range row:** 1 h to 7 d; "follow newest row", or an end time typed in local time.
 - **Tiles:** module temperature (mean of T1..T5), ambient, their difference, irradiance,
   power, load mode, NASIM's probability, the row's status.

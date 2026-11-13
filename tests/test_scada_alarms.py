@@ -85,7 +85,8 @@ def test_det_skipped_alone_is_not_an_alarm(conn):
 
 def test_every_alarm_definition_names_a_real_bit_or_load_mode():
     for d in model.ALARM_DEFS:
-        table = {"alarm": ALARM_BITS, "status": STATUS_BITS, "load_mode": model.LOAD_MODES}
+        table = {"alarm": ALARM_BITS, "status": STATUS_BITS, "load_mode": model.LOAD_MODES,
+                 "pc_clock": {"NO_DATA_LIMIT_S": model.NO_DATA_LIMIT_S}}
         assert d.key in table[d.field], d.code
     assert len(model.ALARM_BY_CODE) == len(model.ALARM_DEFS)
 
@@ -227,3 +228,41 @@ def test_rtc_alarm_from_rows_timed_by_uptime_spans_exactly_those_rows(tmp_path, 
     assert (a["t_raised"], a["t_last"], a["n_rows"], a["t_cleared"]) == \
         (t0 + 30, t0 + 50, 3, t0 + 80)
     assert a["detail"] == "time of the row taken from: uptime"
+
+
+# --- no data arriving (PC clock) ----------------------------------------------------------------
+
+def test_no_data_alarm_rises_after_the_limit_and_clears_when_rows_resume(conn):
+    assert model.NO_DATA_LIMIT_S == 60.0
+    feed(conn, [{}], wall=1000.0)
+    historian.set_meta(conn, "last_row_wall", 1000.0)
+    alarms.check_no_data(conn, 1060.0)                           # exactly the limit: not yet
+    assert codes(conn, "all") == []
+    alarms.check_no_data(conn, 1061.0)
+    alarms.check_no_data(conn, 1500.0)                           # still silent: same occurrence
+    a = one(conn, "NO_DATA")
+    assert (a["state"], a["priority"], a["t_raised"], a["raised_wall"]) == \
+        ("ACTIVE_UNACKED", 1, None, 1061.0)
+    t = feed(conn, [{}], wall=1600.0)                            # a row arrives
+    historian.set_meta(conn, "last_row_wall", 1600.0)
+    alarms.check_no_data(conn, 1600.5)
+    a = one(conn, "NO_DATA")
+    assert (a["state"], a["t_cleared"]) == ("CLEARED_UNACKED", t)
+    assert [j["event"] for j in alarms.journal(conn)] == ["CLEARED", "RAISED"]
+    alarms.check_no_data(conn, 1700.0)                           # silent again: a new occurrence
+    assert codes(conn, "all") == ["NO_DATA", "NO_DATA"]
+
+
+def test_no_data_alarm_with_an_empty_historian_counts_from_the_first_check(conn):
+    alarms.check_no_data(conn, 100.0)
+    alarms.check_no_data(conn, 159.0)
+    assert codes(conn) == []
+    alarms.check_no_data(conn, 161.0)
+    assert codes(conn) == ["NO_DATA"]
+
+
+def test_rows_never_clear_or_raise_no_data_by_themselves(conn):
+    alarms.check_no_data(conn, 0.0)
+    alarms.check_no_data(conn, 100.0)
+    feed(conn, [{}, {}, {}])                 # evaluate() alone leaves it: the PC-clock check decides
+    assert one(conn, "NO_DATA")["state"] == "ACTIVE_UNACKED"

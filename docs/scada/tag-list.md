@@ -109,6 +109,7 @@ without the condition before the alarm counts as cleared.
 | `DET_RESET` | 2 | system | `status` bit `DET_RESET` | 1 | Detectors reset after 5 unusable rows: no detection for 10 min |
 | `SD_ERROR` | 1 | system | `status` bit `SD_RETRY` | 3 | SD card write error: a retry was needed or rows were lost |
 | `LOAD_TRIP` | 1 | system | `load_mode` = `trip` | 1 | Measurement load tripped: both branches off |
+| `NO_DATA` | 1 | system | no new row received for 60 s (PC clock) | 1 | No data arriving from the logger |
 
 `DET_SKIPPED` is not an alarm: it follows from a sensor or RTC fault that
 already alarms. The HMI shows it in the health panel.

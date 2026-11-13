@@ -161,7 +161,13 @@ ALARM_DEFS = [
              "system", "status", "SD_RETRY", 3),
     AlarmDef("LOAD_TRIP", "Measurement load tripped: both branches off", 1, "system",
              "load_mode", "trip", 1),
+    AlarmDef("NO_DATA", "No data arriving from the logger", 1, "system", "pc_clock",
+             "NO_DATA_LIMIT_S", 1),
 ]
+# NO_DATA is the one alarm that does not come from a row: it is raised when no new row
+# has been RECEIVED for longer than this (PC clock), and cleared by the next new row
+# (scada/alarms.py check_no_data). 60 s = six missed 10 s rows.
+NO_DATA_LIMIT_S = 60.0   # [ASSUMPTION] to be reviewed with the real logger and link
 ALARM_BY_CODE = {d.code: d for d in ALARM_DEFS}
 # DET_SKIPPED is deliberately not an alarm: it is the consequence of a sensor or RTC fault
 # that already alarms. The HMI shows it in the health panel.
@@ -306,7 +312,8 @@ def tag_list_markdown():
               "|---|---|---|---|---|---|"]
     for d in ALARM_DEFS:
         cond = (f"`load_mode` = `{d.key}`" if d.field == "load_mode"
-                else f"`{d.field}` bit `{d.key}`")
+                else f"no new row received for {NO_DATA_LIMIT_S:g} s (PC clock)"
+                if d.field == "pc_clock" else f"`{d.field}` bit `{d.key}`")
         lines.append(f"| `{d.code}` | {d.priority} | {d.group} | {cond} | {d.clear_rows} | "
                      f"{d.text} |")
     lines += ["", "`DET_SKIPPED` is not an alarm: it follows from a sensor or RTC fault that",

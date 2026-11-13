@@ -258,6 +258,7 @@ class FolderIngest:
         alarms.evaluate(self.conn, wall)
         if rows:
             historian.set_meta(self.conn, "last_row_wall", wall)
+        alarms.check_no_data(self.conn, wall)
         self.conn.commit()
         return {"rows": rows, "markers": markers}
 
@@ -285,6 +286,11 @@ class SerialIngest:
         return kind
 
 
+    def check_no_data(self):
+        alarms.check_no_data(self.conn)
+        self.conn.commit()
+
+
 def run_folder(db_path, folder, stop, poll_s=POLL_S):
     """Thread body: poll the folder until `stop` is set."""
     ingest = FolderIngest(historian.connect(db_path), folder)
@@ -309,11 +315,13 @@ def run_serial(db_path, port, baud, stop):
             with ser:
                 buf = b""
                 while not stop.is_set():
+                    ingest.check_no_data()
                     buf += ser.read(ser.in_waiting or 1)   # waits up to the 1 s timeout
                     *lines, buf = buf.split(b"\n")         # the unfinished line stays in buf
                     for line in lines:
                         ingest.handle_line(line.decode("utf-8", errors="replace"))
         except serial.SerialException as e:   # unplugged, port busy: try again
             print(f"serial {port}: {e}; retrying in 5 s", flush=True)
+            ingest.check_no_data()
             stop.wait(5.0)
     ingest.conn.close()

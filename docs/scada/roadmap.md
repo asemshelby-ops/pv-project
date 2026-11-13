@@ -14,15 +14,14 @@ These read more of what the logger already writes. None is built yet.
 | Sweep summaries | P_mp, V_oc of the last I-V sweep as tags and a chart; sweep flags (e.g. NOT_SETTLED) as alarms | `/SSYYYYMMDD.csv` |
 | Load log | mode changes and the reason of a TRIP in the journal | `/load_log.csv` |
 | Logger messages | the `#` lines of the serial stream (device status, period overrun) in a message list | serial |
-| No-data alarm | "no row for N minutes" in the alarm list, not only in the top bar | PC clock |
 | Alarms for backfilled rows | evaluate old rows that arrive after newer ones, without touching acknowledgements | historian |
 | Reference logger | the commercial data logger's export next to the ESP32 values | its export file |
 | Start with Windows | a scheduled task that starts `scada.run` at logon | — |
 | Backup | copy `historian.sqlite` daily | — |
 
 First with real data: check the serial input on the board (README, section 3), replace
-the display ranges by ranges from measurements, and review the alarm priorities and the
-3-row clear delay against real fault patterns.
+the display ranges by ranges from measurements, and review the alarm priorities, the
+3-row clear delay and the 60 s no-data limit against real fault patterns.
 
 ## 2. FUTURE: MQTT from the ESP32
 
@@ -43,7 +42,8 @@ paper and needs its own bench tests.
   next to the folder and serial.
 - The SD card stays the record of truth. Wi-Fi drops; a row that was not published is
   still on the card, and the historian already ignores a row it has (same UTC second).
-- A retained "last will" message from the logger gives the no-data alarm for free.
+- A "last will" message from the logger would tell a dead logger from a dead link,
+  which today's `NO_DATA` alarm (PC clock, 60 s) cannot.
 
 **Open questions:** Wi-Fi reach at the rooftop stand; whether Wi-Fi activity disturbs the
 10 s schedule, the 20 kHz load PWM or the INA226 readings (to measure, not assume);

@@ -287,3 +287,39 @@ def test_a_replay_empties_only_a_replay_historian(tmp_path):
     conn.close()
     with pytest.raises(SystemExit, match="not touched"):
         run.open_historian(rep, "live")
+
+
+# --- no data arriving, in a replay ----------------------------------------------------------------
+
+def test_no_data_alarm_in_a_replay_that_stops_and_resumes(source, tmp_path):
+    """The folder ingest polls once per fake second while the replay writes. The replay
+    ends after the first day; 61 s of silence raise the alarm; the second day clears it."""
+    from scada import alarms
+    dest = replay.prepare_dest(tmp_path / "live")
+    conn = historian.connect(":memory:")
+    ingest, wall = FolderIngest(conn, dest), [0.0]
+
+    def poll_for(seconds):
+        for _ in range(seconds):
+            wall[0] += 1.0
+            ingest.poll(wall=wall[0])
+
+    def state():
+        return [a["state"] for a in alarms.list_alarms(conn, "all") if a["code"] == "NO_DATA"]
+
+    first, second = sorted(source.glob("2*.csv"))
+    part = tmp_path / "part"
+    part.mkdir()
+    (part / first.name).write_text(first.read_text())
+    clock = FakeClock(600.0)                                      # 10 min of data per step
+    replay.feed(part, dest, speed=1.0, tick_s=0, clock=lambda: (poll_for(1), clock())[1])
+    poll_for(1)
+    assert state() == []                                          # rows kept arriving: no alarm
+    poll_for(59)
+    assert state() == []
+    poll_for(2)                                                   # more than 60 s of silence
+    assert state() == ["ACTIVE_UNACKED"]
+    (dest / second.name).write_text(second.read_text())           # the replay goes on
+    poll_for(1)
+    assert state() == ["CLEARED_UNACKED"]
+    conn.close()
