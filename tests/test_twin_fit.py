@@ -138,3 +138,20 @@ def test_a_synthetic_fit_is_never_written_to_the_measured_slot(tmp_path, monkeyp
     out = tmp_path / "out/twin/fit_synthetic.json"
     assert json.loads(out.read_text())["params"]["eg_ref"]["tag"] == params.FIT_SYNTH
     assert not params.MEASURED_PATH.exists()
+
+
+def test_a_value_measured_some_other_way_is_entered_without_code(tmp_path, monkeypatch):
+    import sys
+    out = tmp_path / "o.json"
+    monkeypatch.setattr(sys, "argv", ["twin.fit", "--out", str(out), "--set",
+                                      "spray_u_module_water=48", "--set", "cells_in_series=36",
+                                      "--source", "spray test (pytest)"])
+    fit.main()
+    p = params.load(out, None)
+    assert p.spray_u_module_water == 48.0 and p.meta["spray_u_module_water"].source == "spray test (pytest)"
+    assert p.cells_in_series == 36 and isinstance(p.cells_in_series, int)
+    for bad in (["--set", "pump_curve=1", "--source", "x"], ["--set", "nope=1", "--source", "x"],
+                ["--set", "u0=30"]):
+        monkeypatch.setattr(sys, "argv", ["twin.fit", "--out", str(out), *bad])
+        with pytest.raises(SystemExit):
+            fit.main()

@@ -23,10 +23,18 @@ def test_nothing_is_tagged_measured_in_the_file():
     assert len(p.placeholders()) >= 25
 
 
-def test_no_measured_overlay_is_committed():
-    """Until real rig files exist, the twin must run on placeholders only."""
-    assert not params.MEASURED_PATH.exists()
-    assert not params.PUMP_CURVE_PATH.exists()
+def test_the_measured_slot_holds_only_measured_values():
+    """Today the slot is empty and the twin runs on placeholders. Once twin/fit.py --real
+    has written it, every entry must be tagged [MEASURED] (never a synthetic fit) and the
+    file must load; the measured pump table must parse. No code or test changes then."""
+    recs = params.read_measured(params.MEASURED_PATH)
+    assert all(r.get("tag") == params.MEASURED for r in recs.values())
+    p = params.load()                                  # fails on an unknown name or a bad table
+    measured = [n for n, m in p.meta.items() if m.tag == params.MEASURED]
+    expected = set(recs) | ({"pump_curve", "pump_min_duty"} if params.PUMP_CURVE_PATH.exists()
+                            else set())
+    assert set(measured) == expected
+    assert not [n for n, m in p.meta.items() if m.tag == params.FIT_SYNTH]
 
 
 def test_values_shared_with_config_are_equal():

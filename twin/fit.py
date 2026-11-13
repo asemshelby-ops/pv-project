@@ -8,6 +8,8 @@
            it is NOT picked up automatically).
     python -m twin.fit --listing
         prints the single-diode values that reproduce the seller listing (the placeholders)
+    python -m twin.fit --real --set spray_u_module_water=48 --source "spray test 2027-01-12"
+        enters a value measured some other way (any scalar parameter of twin/params.py)
 
 What is fitted, and from which files
   electrical   the I-V sweep files SW*/SS* (docs/paper/07): i_l_ref, i_o_ref, r_s,
@@ -293,16 +295,33 @@ def main():
     ap.add_argument("--no-thermal", action="store_true")
     ap.add_argument("--listing", action="store_true",
                     help="print the single-diode values of the seller listing and stop")
+    ap.add_argument("--set", action="append", default=[], metavar="NAME=VALUE",
+                    help="enter a measured scalar parameter by hand (repeatable)")
+    ap.add_argument("--source", help="where the --set values come from (required with --set)")
     a = ap.parse_args()
     if a.listing:
         for k, v in electrical_from_listing().items():
             print(f"{k} = {v:.6e}")
         return
-    if not a.data and a.gamma is None:
-        ap.error("give --data, or --gamma alone, or --listing")
+    if not a.data and a.gamma is None and not a.set:
+        ap.error("give --data, or --gamma alone, or --set, or --listing")
     tag = params.MEASURED if a.real else params.FIT_SYNTH
     out = pathlib.Path(a.out) if a.out else (
         params.MEASURED_PATH if a.real else pathlib.Path("out/twin/fit_synthetic.json"))
+    if a.set:
+        if not a.source:
+            ap.error("--set needs --source: say which measurement the value comes from")
+        manual = {}
+        for item in a.set:
+            name, _, value = item.partition("=")
+            old = params.PARAMS.get(name)
+            if old is None or isinstance(old.value, (tuple, dict)):
+                ap.error(f"--set: '{name}' is not a scalar parameter of twin/params.py")
+            manual[name] = type(old.value)(float(value))
+        write_overlay(out, manual, tag, a.source, {})
+        print(f"{len(manual)} parameter(s) {tag} -> {out}")
+        if not a.data and a.gamma is None:
+            return
     if a.data:
         values, diag, _ = fit_folder(a.data, gamma=a.gamma,
                                      electrical_fit=not a.no_electrical,
