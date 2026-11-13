@@ -154,7 +154,9 @@ _add("spray cooling",
                "Transfer)",
                "calibrate the evaporation term from the decay after a spray burst and from "
                "the measured water loss"),
-     evap_hc1=(3.8, "W s/(m3 K)", LIT, "see evap_hc0", "see evap_hc0"),
+     evap_hc1=(3.8, "W s/(m3 K)", LIT,
+               "wind term of the same correlation, h = 5.7 + 3.8 v (McAdams 1954, quoted in "
+               "Duffie & Beckman)", "calibrated together with evap_hc0"),
      spray_loss_fraction=(0.05, "-", LIT,
                           NO_SOURCE + ": share of the sprayed water that does not return "
                           "to the tank (drift, splash)",
