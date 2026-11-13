@@ -1,0 +1,17 @@
+# Bucket test of the R385 pump with the REAL nozzles (Abdullah). One line per run.
+# Copy this file to pump_curve_R385_measured.csv in the same folder and fill it in:
+# the twin then uses the measured curve instead of the placeholder, with no code change
+# (twin/params.py load(), twin/spray.py read_pump_curve_csv).
+#
+#   duty_pct    PWM duty of the pump, percent (test 30 ... 100; also the lowest duty that still sprays)
+#   volume_l    water collected in the bucket, litres
+#   time_s      collection time, seconds
+#   voltage_v   voltage at the pump terminals, volts (pump INA226)
+#   current_a   pump current, amperes (pump INA226)
+#
+# Several runs at the same duty are averaged. A duty at which no water came out is entered
+# with volume_l = 0: the twin then treats the pump as not spraying below the next duty.
+# THE TWO LINES BELOW ARE AN EXAMPLE OF THE FORMAT, NOT MEASUREMENTS. Delete them.
+duty_pct,volume_l,time_s,voltage_v,current_a
+100,0.00,60,0.00,0.00
+50,0.00,60,0.00,0.00
