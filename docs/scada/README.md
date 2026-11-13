@@ -67,6 +67,39 @@ serial monitor first: only one program can hold the port.
 DTR and RTS low for this reason), and that the logger's commands (`GAMMA`, `LOAD OFF`,
 `LOAD ON`) still work from another tool; the SCADA itself never writes to the port.
 
+### 4. The rooftop twin: a SIMULATION, on its own page
+
+```
+.venv\Scripts\python -m scada.run --sim                  only the simulation
+.venv\Scripts\python -m scada.run --replay --sim nasim   next to a replay (or to live data)
+```
+
+Open <http://127.0.0.1:8050/rooftop>. The page shows the digital twin of `twin/`: 120
+simulated modules in 6 strings, one spray zone and valve per string, a shared pump and
+tank, run by one controller (`predictive`, `nasim`, `threshold`, `continuous` or `none`).
+`--sim-speed` sets the speed (default 120: one simulated day in 6 minutes) and
+`--sim-days` the number of days (default 2). `nasim` needs the model of the paper
+pipeline's synthetic run (`python -m analysis.demo_synth`).
+
+**Nothing on that page is measured.** The real module stays the only real data source:
+
+- the simulation has its own file, `out/scada/simulation.sqlite`, emptied at every start.
+  It never opens the live or the replay historian and never writes a row to `samples`;
+- its API is separate (`/api/sim/...`) and every answer carries the label;
+- its alarm codes all start with `SIM_` and every alarm text with `SIMULATION:`; they are
+  listed and acknowledged on the rooftop page only;
+- the page has an orange `SIMULATION` badge and banner at all times, and the time shown
+  is the simulated time of the weather day, not the clock.
+
+On the page: tiles (irradiance, string power against the same rooftop without cooling,
+pump and valve power, net energy and water of the simulated day, tank temperature); one
+row per string with its valve, its 20 modules coloured by temperature (a dot marks the
+five modules that carry the string's sensors), sensor temperature, power, voltage and
+current; charts of string temperature, power, and valves and detector alarms per zone;
+the simulation's alarm list, history and journal. The spike alarms come from the
+controller's detector, or, for controllers without one, from a detector that only watches.
+Model, assumptions and placeholders: `docs/twin/`.
+
 ### Where the data goes
 
 | File | Content |
@@ -75,6 +108,7 @@ DTR and RTS low for this reason), and that the logger's commands (`GAMMA`, `LOAD
 | `out/scada/replay.sqlite` | the replay historian, emptied at every replay start |
 | `out/scada/replay_live/` | the folder the replay writes into |
 | `out/scada/demo_source/` | the demo data set |
+| `out/scada/simulation.sqlite` | the rooftop SIMULATION, emptied at every start; never real data |
 
 `out/` is not in git. Live and replay never share a file: a replay refuses to start on a
 live historian and the other way round (`--db` selects another file).
@@ -102,7 +136,7 @@ live historian and the other way round (`--db` selects another file).
 ### Tests
 
 ```
-.venv\Scripts\python -m pytest tests/test_scada_ingest.py tests/test_scada_alarms.py tests/test_scada_stack.py
+.venv\Scripts\python -m pytest tests/test_scada_ingest.py tests/test_scada_alarms.py tests/test_scada_stack.py tests/test_scada_sim.py
 ```
 
 ### Problems
@@ -114,3 +148,5 @@ live historian and the other way round (`--db` selects another file).
 | `... is not empty and was not made by scada: not touched` | the replay only empties folders it created itself |
 | page says "SCADA server not reachable" | the `scada.run` window was closed |
 | port 8050 busy | `--port 8051` |
+| `... is a 'live' historian, not a simulation file: not touched` | by design: the simulation only empties its own file |
+| rooftop page says the simulation is not running | start `scada.run` with `--sim` |

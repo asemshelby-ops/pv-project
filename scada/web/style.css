@@ -107,3 +107,32 @@ tr.unacked td { font-weight: 600; }
 .tip .r b { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; }
 .tip .r i { width: 12px; height: 2px; display: inline-block; }
 .tip .flags { margin-top: 4px; color: var(--ink2); max-width: 260px; }
+
+/* ---- rooftop twin (SIMULATION page) ---------------------------------------------------- */
+body.sim .top { border-bottom: 3px solid var(--warning); }
+.grid.one { grid-template-columns: minmax(0, 1fr); }
+.filters .note { margin: 0; }
+.scalebar { display: inline-block; width: 120px; height: 10px; border-radius: 2px;
+  border: 1px solid var(--border); vertical-align: middle; }
+.dot { width: 5px; height: 5px; border-radius: 50%; background: var(--ink); display: inline-block; }
+.key.dash { height: 0; border-top: 2px dashed var(--ink2); }
+table.roof td, table.roof th { padding: 6px 12px 6px 0; vertical-align: middle; }
+table.roof td.num, table.roof th.num { text-align: right; }
+.cells { display: grid; grid-template-columns: repeat(var(--n, 20), minmax(12px, 1fr)); gap: 2px;
+  min-width: 300px; padding: 2px; border-radius: 4px; border: 2px solid transparent; }
+.cells.spray { border-color: var(--series-1); }
+.cell { height: 22px; border-radius: 2px; position: relative; }
+.cell.sensor::after { content: ""; position: absolute; left: 50%; top: 50%; width: 5px; height: 5px;
+  margin: -2.5px 0 0 -2.5px; border-radius: 50%; background: var(--ink);
+  box-shadow: 0 0 0 1.5px var(--surface); }
+.cell:hover { outline: 2px solid var(--ink); z-index: 1; }
+.chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--border); white-space: nowrap; }
+.chip.open { border-color: var(--series-1); font-weight: 600; }
+.chip.open::before { content: "◆ "; color: var(--series-1); }
+.chip.closed { color: var(--ink2); }
+.chip.closed::before { content: "◇ "; }
+.chip.alarm { border-color: var(--detector); margin-left: 4px; }
+.chip.alarm::before { content: "▲ "; color: var(--detector); }
+.chip.fault { border-color: var(--critical); margin-left: 4px; }
+.chip.fault::before { content: "▲ "; color: var(--critical); }

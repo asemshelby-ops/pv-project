@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SIMULATION · Rooftop twin</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="sim">
+<header class="top">
+  <h1>Rooftop twin</h1>
+  <span class="badge replay">SIMULATION</span>
+  <span id="ctrl" class="pill">…</span>
+  <span class="grow"></span>
+  <span class="clock"><span id="tSim">no data</span> <small>simulated time (Makkah)</small></span>
+  <span id="age" class="pill">–</span>
+  <a href="#alarms" id="alarmBadge" class="pill">alarms –</a>
+  <a href="/" class="pill" title="The real module: the only real data source of this SCADA">← Real module</a>
+</header>
+<div id="simBanner" class="banner">SIMULATION – digital twin with placeholder parameters. Not a measurement; no claim about a real plant. The only real data source of this SCADA is the module page.</div>
+
+<section id="off" class="card" hidden>
+  <h2>The rooftop simulation is not running</h2>
+  <p class="note" id="offHint"></p>
+</section>
+
+<div id="content">
+<nav class="filters" aria-label="Time range">
+  <span class="label">Range (simulated time)</span>
+  <span id="ranges" class="seg"></span>
+  <span id="setup" class="note"></span>
+</nav>
+
+<section class="tiles" id="tiles" aria-label="Newest simulated step"></section>
+
+<section class="card" id="overview">
+  <h2>Strings, spray zones and valves <small>simulated; each cell is one module, coloured by its back-sheet temperature</small></h2>
+  <div class="legend">
+    <span><span id="scaleLo">20</span>&nbsp;degC <i id="scaleBar" class="scalebar"></i> <span id="scaleHi">70</span>&nbsp;degC</span>
+    <span><i class="dot"></i>module with one of the string's five sensors</span>
+    <span><i class="box" style="background:var(--series-1)"></i>valve open: zone is sprayed</span>
+    <span><i class="box" style="background:var(--detector)"></i>detector alarm</span>
+  </div>
+  <div class="scroll"><table id="roof" class="roof"><thead></thead><tbody></tbody></table></div>
+</section>
+
+<main class="grid one">
+  <section class="charts">
+    <article class="card">
+      <h2>String temperature <small>degC, simulated</small></h2>
+      <div class="legend">
+        <span><i class="key" style="background:var(--series-1)"></i>mean of the six strings</span>
+        <span><i class="box" style="background:var(--series-1);opacity:.25"></i>coolest to hottest string</span>
+        <span><i class="key" style="background:var(--series-2)"></i>spray water (tank)</span>
+      </div>
+      <canvas id="cTemp" height="210"></canvas>
+    </article>
+    <article class="card">
+      <h2>Power <small>kW, simulated</small></h2>
+      <div class="legend">
+        <span><i class="key" style="background:var(--series-3)"></i>net: strings minus pump and valves</span>
+        <span><i class="key dash"></i>same rooftop without cooling</span>
+        <span><i class="key" style="background:var(--series-4)"></i>pump and valves</span>
+      </div>
+      <canvas id="cPow" height="190"></canvas>
+    </article>
+    <article class="card">
+      <h2>Valves and detector alarms per zone <small>simulated</small></h2>
+      <canvas id="cZones" height="170"></canvas>
+    </article>
+  </section>
+</main>
+
+<section class="card" id="alarms">
+  <div class="alarmhead">
+    <h2>Simulation alarms</h2>
+    <span id="tabs" class="seg">
+      <button type="button" data-tab="open" class="on">Alarm list</button>
+      <button type="button" data-tab="all">History</button>
+      <button type="button" data-tab="journal">Journal</button>
+    </span>
+    <span class="grow"></span>
+    <label class="check">operator <input type="text" id="operator" maxlength="40" size="12"></label>
+    <button id="ackAll" type="button">Acknowledge all</button>
+  </div>
+  <p id="alarmMsg" class="note">Alarms of the simulated rooftop only. Alarms of the real module are on the module page.</p>
+  <div class="scroll"><table id="alarmTable"><thead></thead><tbody></tbody></table></div>
+</section>
+</div>
+
+<div id="tip" class="tip" hidden></div>
+<script src="rooftop.js"></script>
+</body>
+</html>
