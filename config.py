@@ -210,3 +210,10 @@ PREREG_MIN_TEST_NON_IRR = 8        # precondition: test spikes labelled non_irra
 CAUSE_SENSITIVITY = ((0.25, 0.75), (1 / 3, 2 / 3), (0.4, 0.6), (0.5, 0.5))  # (non, irradiance) limits
 PAPER_SPLIT = (0.6, 0.2, 0.2)   # chronological train / validation / test, whole local days
 CELL_BACK_DT_C = CELL_MINUS_BACK_C   # same Sandia offset, used by the gamma analysis
+# I-V sweeps taken below this in-plane irradiance (mean of G_before and G_after) are not
+# used for anything computed from sweeps: the gamma fit, and through gamma the power cost.
+# Reason (docs/paper/07 sec. 12): in the simulation of the load firmware [EST, 2000 uF] a
+# sweep is settled to within 0.3 % of V_oc at >= 200 W/m2; below that the points can be
+# further off (0.55 % at 100 W/m2) without the NOT_SETTLED flag being set, and at <= 90
+# W/m2 the sweep is flagged. [ASSUMPTION] until bench B4 gives the real time constant.
+SWEEP_MIN_G_WM2 = 200.0

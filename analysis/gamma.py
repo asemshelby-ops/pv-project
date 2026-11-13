@@ -6,7 +6,8 @@ Inputs: the sweep files the load firmware will write (docs/paper/07 sec. 7):
 and the gamma runs marked on the log sheet ("gamma uncover" ... "gamma end").
 
 Per sweep: P_mp from a parabola through the top of P(V); I_sc by extrapolating the flat
-part of I(V) to V = 0. Per run: least squares of irradiance-corrected P_mp on cell
+part of I(V) to V = 0. Only usable sweeps are fitted (usable_sweeps(): no firmware flag,
+steady irradiance, and irradiance at or above config.SWEEP_MIN_G_WM2). Per run: least squares of irradiance-corrected P_mp on cell
 temperature; gamma = slope / value at 25 degC. Cross-check without the pyranometer:
 P_mp / I_sc on temperature gives gamma - alpha.
 """
@@ -70,9 +71,18 @@ def sweep_parameters(points, summary, r_cable=0.0):
     out["FF"] = out["P_mp"] / (out["V_oc"] * out["I_sc"])
     out["G"] = (out["G_before"] + out["G_after"]) / 2
     out["G_stable"] = (out["G_after"] - out["G_before"]).abs() / out["G_before"] <= G_STABLE
+    out["low_G"] = ~(out["G"] >= config.SWEEP_MIN_G_WM2)        # also True if G is missing
     out["T_module"] = out[BACK_SENSORS].mean(axis=1)
     out["T_cell"] = out["T_module"] + config.CELL_BACK_DT_C * out["G"] / 1000.0
     return out.drop(columns=["_v", "_i"])
+
+
+def usable_sweeps(sweeps):
+    """The sweeps any result may be computed from: no firmware flag, irradiance steady
+    over the sweep, and irradiance not below config.SWEEP_MIN_G_WM2 (weak-sun sweeps may
+    not have settled; docs/paper/07 sec. 12). Everything that uses sweep values (the gamma
+    fit today; the power cost uses gamma) must take them through this function."""
+    return sweeps[(sweeps["flags"] == 0) & sweeps["G_stable"] & ~sweeps["low_G"]]
 
 
 def _fit(x, y):
@@ -85,9 +95,11 @@ def _fit(x, y):
 
 def gamma_run(sweeps, t_uncover, t_end):
     """One heating run. Returns a dict of results, or a dict with `valid` False and why."""
-    w = sweeps[(sweeps["t_local"] >= t_uncover + pd.Timedelta(seconds=DROP_AFTER_UNCOVER_S))
-               & (sweeps["t_local"] <= t_end) & (sweeps["flags"] == 0) & sweeps["G_stable"]]
-    out = {"t_uncover": t_uncover, "n_sweeps": len(w), "valid": False}
+    in_run = sweeps[(sweeps["t_local"] >= t_uncover + pd.Timedelta(seconds=DROP_AFTER_UNCOVER_S))
+                    & (sweeps["t_local"] <= t_end)]
+    w = usable_sweeps(in_run)
+    out = {"t_uncover": t_uncover, "n_sweeps": len(w), "valid": False,
+           "n_low_G": int(in_run["low_G"].sum())}
     if len(w) < 10:
         return {**out, "note": "fewer than 10 usable sweeps"}
     g_ref = w["G"].mean()

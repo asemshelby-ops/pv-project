@@ -21,6 +21,7 @@ import pathlib
 import numpy as np
 import pandas as pd
 
+import config
 from analysis import detection, events, gamma, ingest, report, validate, verdict
 
 DEFAULT_MAPPING = {   # ESP32 column -> (reference column, scale); an ASSUMPTION until the
@@ -78,7 +79,12 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
     g_sum, runs = None, []
     points, summary = gamma.read_sweeps(data)
     if len(points) and joined is not None:
-        runs = gamma.gamma_runs(gamma.sweep_parameters(points, summary), joined)
+        sweeps = gamma.sweep_parameters(points, summary)
+        if sweeps["low_G"].any():
+            notes.append(f"{int(sweeps['low_G'].sum())} of {len(sweeps)} sweeps below "
+                         f"{config.SWEEP_MIN_G_WM2:.0f} W/m2 (or without G) left out of gamma "
+                         "and of the power cost")
+        runs = gamma.gamma_runs(sweeps, joined)
         g_sum = gamma.gamma_summary(runs)
         if not g_sum["n_runs"]:
             g_sum = None

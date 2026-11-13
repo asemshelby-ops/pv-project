@@ -268,3 +268,43 @@ def test_validation_finds_the_clock_lag_and_offsets(rig, tmp_path):
     assert row.at["T3", "bias"] == pytest.approx(-0.4, abs=0.05)
     assert bool(row.at["T3", "passes"])
     assert row.at["current", "slope"] == pytest.approx(1 / 1.004, abs=0.003)
+
+
+def test_sweeps_below_the_irradiance_limit_are_left_out_of_gamma(tmp_path):
+    """config.SWEEP_MIN_G_WM2: one named limit for every use of sweep values."""
+    assert config.SWEEP_MIN_G_WM2 == 200.0
+    runs = [("2026-12-01", "11:30:00"), ("2026-12-01", "13:00:00")]
+    true_gamma = fake_logger.write_gamma_runs(runs, tmp_path, seed=1)
+    fake_logger.write_markers({"2026-12-01": [
+        ("11:30:00", "gamma uncover", ""), ("11:50:00", "gamma end", ""),
+        ("13:00:00", "gamma uncover", ""), ("13:20:00", "gamma end", "")]}, tmp_path)
+    m, _ = ingest.read_markers(tmp_path / "markers.csv")
+    joined, _ = ingest.join_logsheets(m, tmp_path / "logsheets")
+
+    # second run: weak sun. Its sweeps keep flags = 0 and a steady G, so only the limit
+    # can remove them; P_mp is scaled with G so that a fit, if made, would look normal.
+    f = tmp_path / "SS20261201.csv"
+    ss = pd.read_csv(f, dtype={"date": str, "time": str})
+    second = ss["time"] >= "10:00:00"                             # 13:00 local = 10:00 UTC
+    assert 0 < second.sum() < len(ss)
+    ss.loc[second, ["G_before", "G_after"]] = 199
+    ss.loc[ss.index[second][0], ["G_before", "G_after"]] = 200    # exactly at the limit: kept
+    ss.to_csv(f, index=False)
+
+    points, summary = gamma.read_sweeps(tmp_path)
+    sweeps = gamma.sweep_parameters(points, summary)
+    assert int(sweeps["low_G"].sum()) == int(second.sum()) - 1
+    usable = gamma.usable_sweeps(sweeps)
+    assert usable["G"].min() >= config.SWEEP_MIN_G_WM2 and len(usable) == len(sweeps) - sweeps["low_G"].sum()
+    res = gamma.gamma_runs(sweeps, joined)
+    assert [r["valid"] for r in res] == [True, False]             # the weak-sun run is not fitted
+    assert res[1]["note"] == "fewer than 10 usable sweeps" and res[1]["n_low_G"] > 50
+    assert res[0]["n_low_G"] == 0
+    total = gamma.gamma_summary(res)
+    assert total["n_runs"] == 1 and total["gamma"] == pytest.approx(true_gamma, rel=0.05)
+
+    ss.loc[second, ["G_before", "G_after"]] = float("nan")        # G not recorded: left out too
+    ss.to_csv(f, index=False)
+    sweeps = gamma.sweep_parameters(*gamma.read_sweeps(tmp_path))
+    assert int(sweeps["low_G"].sum()) == int(second.sum())
+    assert len(gamma.usable_sweeps(sweeps)) == len(sweeps) - second.sum()

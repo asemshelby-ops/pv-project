@@ -261,7 +261,9 @@ def table_spikes(events, n_days, gamma=None, out="."):
                "size °C, median (IQR)": f"{q[0.5]:.1f} ({q[0.25]:.1f}-{q[0.75]:.1f})",
                "duration min, median": f"{part['duration_s'].median() / 60:.1f}",
                "max rate °C/min, median": f"{part['max_rate_C_per_min'].median():.2f}"}
-        if gamma is not None:
+        if gamma is not None:  # power cost = -gamma x cell-temperature rise. gamma is the only
+            # sweep-derived number in it, and it is fitted on gamma.usable_sweeps() only
+            # (no sweep below config.SWEEP_MIN_G_WM2).
             d_cell = part["size_C"] + ev_mod.config.CELL_BACK_DT_C * part["dG"].clip(lower=0) / 1000
             row["power cost %, median"] = f"{-100 * gamma * d_cell.median():.1f}"
         rows.append(row)

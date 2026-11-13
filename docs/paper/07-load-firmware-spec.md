@@ -340,6 +340,23 @@ Where the code differs from, or adds to, the sections above:
 | Controlled open-circuit test (`03` §9 proposal) | not in this spec | serial commands `LOAD OFF` / `LOAD ON`. Each writes one row to `/markers.csv`, in the existing format (`date,time,millis`, UTC with milliseconds), at the moment the duties went to 0 / the load was holding again; `load_mode` shows `off` in between. The event name is not in the file (it has no such column): it goes on the day's log sheet, one line per row, as for button presses. After `LOAD ON` the load holds at 0.78·V_oc and is back at the MPP after the first sweep, up to ≈ 10 s later. A reset during a trial ends it (the load comes back by itself) |
 | γ run | `GAMMA <minutes>` | as designed (0–120 min; `GAMMA 0` ends it) |
 
+**Sweeps in weak sun are not used by the analysis (Asim, 2026-11-13).** The settle check
+is left as it is until bench B4 gives the real time constant. Until then the analysis
+leaves out every sweep whose irradiance (mean of `G_before` and `G_after`) is below
+**200 W/m²**, or has no irradiance at all. One constant, `SWEEP_MIN_G_WM2` in `config.py`
+(`[ASSUMPTION]`, from the simulation above: settled to within 0.3 % of V_oc at ≥ 200 W/m²,
+not below). One place applies it, `usable_sweeps()` in `analysis/gamma.py`, together with
+`flags == 0` and steady irradiance. What that covers:
+
+- the γ fit: only usable sweeps enter it; a γ run with fewer than 10 of them is not fitted;
+- the power cost of a spike: it is `−γ × (cell-temperature rise)`, so γ is the only
+  sweep-derived number in it. No sweep `P_mp` is used directly in the power cost today;
+  if that is added later it must take its sweeps through `usable_sweeps()`.
+
+The sweeps stay in the files (nothing is deleted on the board or in the raw data). The
+pipeline's summary states how many were left out. To revisit after B4: the value of the
+limit, and whether the firmware check should be tightened instead.
+
 Not done, and not claimed: nothing has run on an ESP32 with a load. The timing of one
 sweep point over I2C through the PaHub, the LEDC outputs, the triggered INA226 readings
 and the watchdog are compiled, not tested. The analysis side of the open-circuit test
