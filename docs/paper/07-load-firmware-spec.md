@@ -184,7 +184,8 @@ date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,win
 | `uptime_ms` | `millis()` at the start of the row's readings: orders the rows and gives their spacing when the RTC time is missing; a fall = the board restarted. Wraps after 49.7 days | number |
 | `status` | bit field, decimal; `0` = nothing to report | number |
 
-`alarm` (an older column, not one of the five; changed 2026-11-13). Since the threshold
+`alarm` (an older column, not one of the five; changed 2026-11-13, approved by Asim the
+same day). Since the threshold
 rule and the CUSUM run on the board next to NASIM-GBT, `alarm` holds one bit per detector
 and the values add up: `1` = NASIM-GBT, `2` = threshold rule, `4` = CUSUM; `0` = no alarm,
 e.g. `6` = threshold and CUSUM at the same row. A file written before this change holds
@@ -222,17 +223,44 @@ Example: `status = 33` = 32 + 1 = `TROM_UNMAPPED` + `RTC_INVALID`. Until `T_ROM`
 filled in, a clean row reads `32`, not `0`. Rows outside the 06:00–18:00 window are not
 "skipped" rows: the detector rests there by design and no bit is set.
 
-`[OPEN]` Time base of a skipped row. The detector features count samples and assume
-10 s between them. A skipped row is simply not counted, so after k skipped rows (k ≤ 4)
-a "10-minute" window really spans 10 min + k·10 s, and a rate over that window is
-understated by up to ≈ 7 %. Accepted for now (Asim, 2026-11-12). To settle when the
-threshold and CUSUM detectors are ported to the board: compute rises and rates from the
-real time between samples (`uptime_ms`), not from a fixed 10 s. The offline analysis
-follows the same rule on purpose, so it carries the same small error.
-Ported 2026-11-13 and **still open**: the two detectors on the board count samples, exactly
-as the offline analysis does, because that is what makes the board and the pipeline give
-the same alarms. Moving to real time gaps changes the detectors' definition; it has to be
-made in `detect/` and in `export/c/nasim.c` together, and it is Asim's decision.
+Precision and cost of the detectors on the ESP32 (checked on the build of 2026-11-13).
+The logger runs all three detectors in **double** precision. Evidence from the build
+itself: `NASIM_FLOAT` is defined nowhere in the logger's compile flags; `nasim_core.c.o`
+calls the software double routines (`__adddf3`, `__subdf3`, `__muldf3`, `__divdf3`, the
+`__*df2` comparisons) and the double `exp`, `sin`, `cos`, `acos`, `pow`; NASIM's state is
+2 288 B, the size the double build reported on the board earlier (float: 1 176 B).
+What the zero-difference result of `11` §6 covers: the same C file, in double, compiled
+for the PC (x86-64, gcc `-O2`). It is the logger's source and precision, **not the
+logger's binary**: the ESP32 binary has not been run with these detectors.
+- Threshold rule and CUSUM: they use only double add, subtract, divide and compare (no
+  multiply, no `math.h` call, verified in the object code). IEEE 754 fixes the result of
+  each of these bit for bit, so no difference between the PC and the ESP32 is expected.
+  This is an argument, not a run.
+- NASIM-GBT also calls `math.h`, whose last digit may differ between the PC's library and
+  the ESP32's. The earlier on-board replay (earlier model) gave 0 alarm differences in
+  130 000 rows and a largest |Δp| of 2.2 × 10⁻¹⁶ against Python; it has to be repeated with
+  the current model (`12` H5).
+Cost of double, which the ESP32 computes in software. Measured on the board earlier
+(`out/replay/replay.md`, the earlier model, same tree settings): NASIM update 0.89 ms mean,
+1.06 ms worst; 33 µs while its buffers fill. Not measured: the two baselines. `[EST]` each
+does about 15 double operations per row, fewer than NASIM's 33 µs warm-up path (which also
+calls `exp`), so both together stay under 0.1 ms. Total `[EST]` about 1 ms of detector
+work per 10 s row, 0.01 % of the period; the row itself is dominated by the 750 ms
+DS18B20 conversion. Memory, from the build: logger 462 038 B flash (35 % of the 1 310 720 B
+app partition) and 30 792 B global RAM (9 % of 327 680 B); the two baselines account for
+1 084 B flash and 1 584 B RAM. Float would cut the NASIM time to about a third but moves
+alarms (`11` §6), so it is not used. To measure: time per row for the three detectors,
+with the board (`12` H5).
+
+`[DECIDED 2026-11-13, Asim]` Time base of a skipped row: the detectors count samples
+and assume 10 s between them. A skipped row is simply not counted, so after k skipped
+rows (k ≤ 4) a "10-minute" window really spans 10 min + k·10 s, and a rate over that
+window is understated by up to ≈ 7 %. The alternative, left open on 2026-11-12, was to
+compute rises and rates from the real time between samples (`uptime_ms`). The offline
+analysis follows the same rule on purpose, so it carries the same small error.
+Ported 2026-11-13 and settled the same day (Asim): the two detectors on the board count
+samples, exactly as the offline analysis does, which is what makes the board and the
+pipeline give the same alarms. The small error above is accepted and stays stated.
 
 Read order inside one row (since 2026-11-12): RTC time and `uptime_ms`, then at once the
 PYR20 irradiance (one Modbus exchange, ≈ 20–30 ms `[EST]`), then BME280, INA226, and last
