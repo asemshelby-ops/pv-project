@@ -34,18 +34,14 @@ How to read the table:
 | A10 | Heatsink for bank B | 200 × 69 × 36 mm, 27 fins | 1 | Bank B carries ≈ 1.3 W mean (≈ 5 W in γ mode) but 308 W pulses | **NO — FLAG** (no K/W); B5 reads bank B temperature after the γ-mode run | Amazon.sa: [Awxlumv 200 × 69 × 36 mm](https://www.amazon.sa/-/en/Awxlumv-Diffusion-Amplifier-Transistor-Semiconductor/dp/B07TJZ2MYZ), ≈ SAR 111 |
 | A11 | Heatsink temperature sensor (trip, `T_TRIP_C` = 80 °C) | one of the 10 DS18B20 already ordered | 0 to buy | 07 §8: no heatsink sensor → load stays in TRIP | — | Already ordered |
 | A12 | Power connectors, module → load | **CHECK FIRST, don't buy yet:** MC4 male/female pair, only if the module leads end in MC4 (look at the module; the seller listing doesn't say). Plus polarised power connectors on the load board | 2 pairs, if needed | Reverse-polarity protection by polarised connectors + polarity check (PROJECT_STATE §4) | n/a | Amazon.sa: no listing checked, [search page](https://www.amazon.sa/-/en/s?k=MC4+connector). The A14 cable listing may already include MC4 plugs: check |
-| A13 | INA226 shunt, 10 mΩ, 4-terminal, ≥ 1 W, low TCR | **Vishay WSK2512R0100FEA** (10 mΩ, ±1 %, 1 W, ±35 ppm/°C, 2512, WSK = 4-terminal family) | 3 (1 + 2), **only if needed — see note** | PROJECT_STATE §2 table and §4: 10 mΩ → 81.92 mV full scale ≈ 8.2 A, covering 1.25 × I_sc | **Partly — FLAG:** 10 mΩ, 1 %, 1 W and 35 ppm/°C come from distributor listings; the [Vishay WSK2512 page](https://www.vishay.com/en/product/30108) says the family is 4-terminal, but I didn't open the datasheet to confirm it for this exact ordering code | **No Saudi source found.** Mouser/DigiKey/RS (e.g. [RS 683-6350](https://uk.rs-online.com/web/p/surface-mount-resistors/6836350P)). 2512 SMD: it needs a small Kelvin breakout PCB or careful hand wiring |
-| A14 | Power cable, module → shunt → load | 4 mm² (12 AWG) PV cable, H1Z2Z2-K / PV1-F, red + black | 10 m red + 10 m black (planned run 2–5 m, rest spare) | PROJECT_STATE §4: 2–5 m of 4 mm² gives ≈ 0.5–1.3 % drop at V_mp | **FLAG:** cable type and rating from the seller only | Amazon.sa: [KBE Berlin pair 10 m black + 10 m red, 4 mm²](https://www.amazon.sa/-/en/KBE-Berlin-Copper-Connectors-Extension/dp/B08ZKXJ8QG) |
+| A13 | ~~INA226 shunt, 10 mΩ~~ | **Do not buy** — Vishay WSK2512R0100FEA was the candidate | 0 | Decision 2026-11-13 (Asim): keep the M5Stack Unit INA226-10A with its on-board 5 mΩ shunt, ±10 A | — | — |
+| A14 | Power cable, module → INA226 unit → load | 4 mm² (12 AWG) PV cable, H1Z2Z2-K / PV1-F, red + black | 10 m red + 10 m black (planned run 2–5 m, rest spare) | PROJECT_STATE §4: 2–5 m of 4 mm² gives ≈ 0.5–1.3 % drop at V_mp | **FLAG:** cable type and rating from the seller only | Amazon.sa: [KBE Berlin pair 10 m black + 10 m red, 4 mm²](https://www.amazon.sa/-/en/KBE-Berlin-Copper-Connectors-Extension/dp/B08ZKXJ8QG) |
 
-**Note on A13 (the shunt) — check before buying.** The 10 mΩ figure comes from the
-§2 table and §4 of PROJECT_STATE, written when the plan was a bare INA226 breakout
-(those usually ship with a 0.1 Ω shunt that saturates at ≈ 0.82 A). The units actually
-bought are the **M5Stack Unit INA226-10A**, which already carry a **5 mΩ** shunt rated
-±10 A (PROJECT_STATE §2 "M5Stack facts"; the uncertainty budget `01` §5 uses 5 mΩ). With
-the M5 unit at I_sc 5.88 A the external 10 mΩ shunt is **not needed**, and fitting one
-would mean replacing the M5 unit with a bare INA226 board. Buy A13 only if the team
-decides to switch to a bare INA226. In either case, the stale 10 mΩ rows in
-PROJECT_STATE should be corrected to match.
+**Note on A13 (the shunt).** Decided 2026-11-13 (Asim): no external shunt. The M5Stack
+Unit INA226-10A already carries a 5 mΩ shunt rated ±10 A, which covers I_sc 5.88 A. The
+firmware is calibrated for it (`INA226_10A_SHUNT_OHM` = 0.005, current LSB 0.5 mA). The
+older 10 mΩ lines in PROJECT_STATE were written for a bare INA226 breakout and have been
+corrected.
 
 **Gate resistors:** `06` §1 does not specify any gate resistor for the load MOSFETs (the
 ~100 Ω gate resistor in CLAUDE.md is for the deferred pump driver), so none is listed.
@@ -95,7 +91,6 @@ A local copy of a Panasonic capacitor or a TC4427 is still a copy: the same B0 c
 2. Read the Panasonic FR datasheet's frequency factor and confirm 4 × EEU-FR1V102 ≥ 6 A
    RMS at 20 kHz (A6); decide 3 or 4 parts after B4.
 3. Check whether the module leads are MC4 (A12) before buying connectors.
-5. Decide the shunt question (A13): keep the M5 5 mΩ units (no purchase) or switch to a
-   bare INA226 with the 10 mΩ Vishay shunt; then correct PROJECT_STATE §2/§4.
+5. ~~Shunt question (A13)~~ — decided 2026-11-13: keep the M5 5 mΩ units, buy nothing.
 4. Ask د. عبدالمجيد to review the list for quality and price before ordering (his offer,
    PROJECT_STATE §1).
