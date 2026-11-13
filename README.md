@@ -56,6 +56,20 @@ with the earlier labels; it is kept and tested, but not used for the paper.
 
 Details and the synthetic results: `docs/paper/11-pipeline-and-synthetic-results.md`.
 
+## Post-paper work: digital twin and simulated rooftop (branch `twin-sim`)
+
+`twin/` is a digital twin of the module (single-diode + lumped thermal model) scaled to a
+simulated rooftop of 120 modules with spray zones, for developing and comparing cooling
+controllers before hardware exists; `scada/` shows it on the page `/rooftop`. **Everything
+it computes is a simulation with placeholder parameters**, labelled as such; nothing in the
+paper, the firmware or `analysis/` depends on it. Start at `docs/twin/README.md`.
+
+```bash
+.venv/Scripts/python -m twin.validate --demo     # validation hook on synthetic rig files
+.venv/Scripts/python -m twin.compare             # five control strategies, simulated
+.venv/Scripts/python -m scada.run --sim          # rooftop page, marked SIMULATION
+```
+
 ## Layout
 
 | Path | Content |
@@ -68,6 +82,8 @@ Details and the synthetic results: `docs/paper/11-pipeline-and-synthetic-results
 | `export/c/nasim.[ch]` | C port of the features, thermal step, CUSUM core and NASIM-GBT alarm logic |
 | `export/c/generated/` | generated: `nasim_config.h` (from config.py) and the two m2cgen models |
 | `export/run.py` | export + Python-vs-C parity test, report in `out/export/parity.md` |
+| `twin/` | post-paper: digital twin, simulated rooftop, controllers (`docs/twin/`) |
+| `scada/` | post-paper: SCADA layer reading the logger's files; rooftop simulation page (`docs/scada/`) |
 | `tests/` | pytest for each module |
 
 ## Detectors compared
