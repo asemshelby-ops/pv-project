@@ -344,8 +344,11 @@ async function tick() {
     const newest = S.state.latest ? S.state.latest.t_utc : 0;
     const key = `${S.follow ? newest : S.end}|${S.span}`;
     if (key !== S.key) {
-      S.data = await getJson(`/api/series?span=${S.span}` + (S.follow || S.end === null ? "" : `&end=${S.end}`));
-      S.key = key; S.hover = -1; $("tip").hidden = true;
+      const data = await getJson(`/api/series?span=${S.span}` + (S.follow || S.end === null ? "" : `&end=${S.end}`));
+      const at = S.hover >= 0 && S.data ? S.data.t[S.hover] : null;   // keep the crosshair on its row
+      S.data = data; S.key = key;
+      S.hover = at === null ? -1 : S.data.t.indexOf(at);
+      if (S.hover < 0) $("tip").hidden = true;
       drawAll(); renderRows();
     }
     await renderAlarms();

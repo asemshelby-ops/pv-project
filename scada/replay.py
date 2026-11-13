@@ -42,6 +42,7 @@ def load(source):
                 t = None if t is None else t + 10
             if t is not None:
                 events.append((float(t), name, line))
+    first, last = events[0][0], events[-1][0]     # markers outside the replayed rows are left out
     if (source / "markers.csv").exists():
         lines = (source / "markers.csv").read_text(encoding="utf-8").splitlines()
         headers["markers.csv"] = lines[0]
@@ -51,7 +52,7 @@ def load(source):
                 t_ms = _marker_time_ms(f[0], f[1])
             except (ValueError, IndexError):
                 continue
-            if t_ms is not None and events[0][0] <= t_ms / 1000 <= events[-1][0]:
+            if t_ms is not None and first <= t_ms / 1000 <= last:
                 events.append((t_ms / 1000, "markers.csv", line))
     events.sort(key=lambda e: e[0])               # stable: file order kept within a second
     return events, headers
@@ -78,14 +79,19 @@ def source_note(source):
     return f.read_text(encoding="utf-8").strip() if f.exists() else f"files of {source}"
 
 
-def feed(source, dest, speed, stop=None, tick_s=0.2, clock=time.monotonic):
+def feed(source, dest, speed, stop=None, tick_s=0.2, clock=time.monotonic, max_gap_s=600.0):
     """Append the source lines to `dest` at `speed` x real time. Returns the lines written.
-    Stops early when the `stop` event is set."""
+    A hole in the data longer than `max_gap_s` (the night between two logged days) is
+    shortened to that length, so a demo does not sit idle; the timestamps in the files are
+    never changed. Stops early when the `stop` event is set."""
     events, headers = load(source)
     dest, stop = pathlib.Path(dest), stop or threading.Event()
     t_data0, t_wall0, k = events[0][0], clock(), 0
     while k < len(events) and not stop.is_set():
         now = t_data0 + (clock() - t_wall0) * speed
+        if events[k][0] - now > max_gap_s:          # jump the replay clock over the hole
+            t_data0 += events[k][0] - now - max_gap_s
+            now = events[k][0] - max_gap_s
         batch = {}
         while k < len(events) and events[k][0] <= now:
             batch.setdefault(events[k][1], []).append(events[k][2])

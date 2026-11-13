@@ -35,8 +35,13 @@ def open_historian(path, mode):
             raise SystemExit(f"{path} is a '{found}' historian, not '{mode}': not touched. "
                              f"Give another file with --db.")
         if mode == "replay":
-            for p in (path, path.with_name(path.name + "-wal"), path.with_name(path.name + "-shm")):
-                p.unlink(missing_ok=True)
+            try:
+                for p in (path, path.with_name(path.name + "-wal"),
+                          path.with_name(path.name + "-shm")):
+                    p.unlink(missing_ok=True)
+            except PermissionError:
+                raise SystemExit(f"{path} is in use: another scada.run is still running. "
+                                 f"Stop it first.") from None
     conn = historian.connect(path)
     historian.set_meta(conn, "mode", mode)
     conn.commit()
