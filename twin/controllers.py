@@ -139,14 +139,18 @@ class ModuleKnowledge:
 class Predictive(Controller):
     name = "Predictive (gain > pump power)"
 
-    def __init__(self, model_params=None, name=None):
-        self.model_params = model_params
+    def __init__(self, model_params=None, name=None, on_ratio=None, off_ratio=None):
+        """model_params: the controller's own picture of the plant (default: the plant's
+        parameters). on_ratio / off_ratio default to params.py."""
+        self.model_params, self.on_ratio, self.off_ratio = model_params, on_ratio, off_ratio
         if name:
             self.name = name
 
     def reset(self, roof):
         super().reset(roof)
         self.know = ModuleKnowledge(self.model_params or roof.p)
+        self.r_on = self.p.predictive_on_ratio if self.on_ratio is None else self.on_ratio
+        self.r_off = self.p.predictive_off_ratio if self.off_ratio is None else self.off_ratio
         self.state = self.none()
         self.ratio = np.zeros(self.n)
 
@@ -164,8 +168,7 @@ class Predictive(Controller):
             if cost <= 0:
                 continue
             ratio = scale * q / cost
-            on = np.where(self.state, ratio >= p.predictive_off_ratio,
-                          ratio >= p.predictive_on_ratio)
+            on = np.where(self.state, ratio >= self.r_off, ratio >= self.r_on)
             net = float(((scale * q - cost) * on).sum())
             if on.any() and net > best[0]:
                 best = (net, on, duty, ratio)

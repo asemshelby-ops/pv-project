@@ -10,7 +10,8 @@ and valve energy, net energy, water used (evaporated + lost) and circulated, pum
 
 Three sensitivity blocks follow, because the result depends on placeholders:
   * evaporation switched off in the plant (the no-evaporation case of CLAUDE.md);
-  * the predictive controller with a wrong model of the plant;
+  * the predictive controller with a wrong model of the plant, and with a higher
+    switching ratio (spray only when the expected gain is well above the pump power);
   * the fixed threshold and continuous spraying at other settings. The best of these is
     picked ON THE SAME DAYS it is scored on, so it is optimistic for that strategy.
 
@@ -100,7 +101,11 @@ def wrong_models(p):
     return [controllers.NoCooling(),
             controllers.Predictive(),
             controllers.Predictive(low, "Predictive, model expects 30 % less cooling"),
-            controllers.Predictive(high, "Predictive, model expects 30 % more cooling")]
+            controllers.Predictive(high, "Predictive, model expects 30 % more cooling"),
+            controllers.Predictive(None, "Predictive, right model, on/off ratio 1.6/1.3",
+                                   on_ratio=1.6, off_ratio=1.3),
+            controllers.Predictive(None, "Predictive, right model, on/off ratio 2.0/1.6",
+                                   on_ratio=2.0, off_ratio=1.6)]
 
 
 # --- report -----------------------------------------------------------------------------------
@@ -242,9 +247,13 @@ def main():
                        "away. The model-based controllers know it.", res))
         print("sensitivity: predictive controller with a wrong model")
         res, _, _ = run_set(p, weathers, wrong_models(p), a.roof_seed)
-        blocks.append(("Sensitivity 2: predictive controller with a wrong model",
-                       "The plant is unchanged; the controller's own copy of the spray and "
-                       "loss parameters is off by 30 % and 20 %.", res))
+        blocks.append(("Sensitivity 2: predictive controller with a wrong model or another "
+                       "switching ratio",
+                       "The plant is unchanged. Rows 3-4: the controller's own copy of the "
+                       "spray and loss parameters is off by 30 % and 20 %. Rows 5-6: the "
+                       "right model, but a zone is opened only when expected gain / pump "
+                       "power reaches a higher ratio than the default "
+                       f"{p.predictive_on_ratio:g}/{p.predictive_off_ratio:g}.", res))
         print("sensitivity: other settings of the classical strategies")
         res, _, _ = run_set(p, weathers, settings_grid(p), a.roof_seed)
         blocks.append(("Sensitivity 3: other settings of continuous and fixed-threshold",

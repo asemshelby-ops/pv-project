@@ -105,6 +105,13 @@ def test_predictive_switches_off_as_soon_as_gain_no_longer_exceeds_pump_power():
     assert gain >= (pump + P.valve_hold_w / 20) * 0.99       # one step earlier it still paid
 
 
+def test_predictive_switching_ratio_can_be_set():
+    hot = obs([45.0] * 6, t_water=30.0, rh=100.0, ta=45.0)     # no evaporation in saturated air
+    assert ready(controllers.Predictive()).step(hot).valves.all()
+    strict = ready(controllers.Predictive(on_ratio=50.0, off_ratio=40.0))
+    assert not strict.step(hot).valves.any() and strict.r_on == 50.0
+
+
 def test_predictive_expected_gain_formula():
     """gain = k * q_cool / (A U): the pump break-even of CLAUDE.md, per module."""
     know = controllers.ModuleKnowledge(P)
@@ -269,4 +276,6 @@ def test_comparison_strategy_lists():
     assert [c.name for c in compare.strategies(P, nasim=False)][:2] == ["No cooling", "Continuous"]
     wrong = compare.wrong_models(P)
     assert wrong[2].model_params.spray_u_module_water == pytest.approx(0.7 * P.spray_u_module_water)
+    assert (wrong[5].on_ratio, wrong[5].off_ratio) == (2.0, 1.6) and wrong[5].model_params is None
+    assert len({c.name for c in wrong}) == 6
     assert compare.WEATHER_SEED != config.EXPORT_SEED           # not NASIM's training run
