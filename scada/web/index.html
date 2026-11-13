@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PV rig SCADA</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <h1>PV thermal-spike rig</h1>
+  <span id="mode" class="badge">…</span>
+  <span class="grow"></span>
+  <span class="clock"><span id="tLocal">no data</span> <small>Makkah (UTC+3)</small>
+    <small id="tUtc"></small></span>
+  <span id="age" class="pill">–</span>
+  <a href="#alarms" id="alarmBadge" class="pill">alarms –</a>
+</header>
+<div id="replayBanner" class="banner" hidden></div>
+
+<nav class="filters" aria-label="Time range">
+  <span class="label">Range</span>
+  <span id="ranges" class="seg"></span>
+  <label class="check"><input type="checkbox" id="follow" checked> follow newest row</label>
+  <label class="check">end at (local) <input type="datetime-local" id="endAt" step="60"></label>
+  <span class="grow"></span>
+  <button id="tableBtn" type="button">Table view</button>
+</nav>
+
+<section class="tiles" id="tiles" aria-label="Newest row"></section>
+
+<main class="grid">
+  <section class="charts" id="charts">
+    <article class="card">
+      <h2>Module temperature against ambient <small>degC</small></h2>
+      <div class="legend">
+        <span><i class="key" style="background:var(--series-1)"></i>Module (mean of T1..T5)</span>
+        <span><i class="key" style="background:var(--series-2)"></i>Ambient</span>
+        <span><i class="tick" style="background:var(--detector)"></i>detector alarm (any of the three)</span>
+      </div>
+      <canvas id="cTemp" height="230"></canvas>
+    </article>
+    <article class="card"><h2>In-plane irradiance <small>W/m²</small></h2>
+      <canvas id="cIrr" height="150"></canvas></article>
+    <article class="card"><h2>Module power <small>W, at the load's operating point</small></h2>
+      <canvas id="cPow" height="150"></canvas></article>
+    <article class="card">
+      <h2>Load mode, detector alarms and sensor health <small>from the alarm and status bits</small></h2>
+      <canvas id="cState" height="330"></canvas>
+      <div class="legend">
+        <span><i class="box" style="background:var(--series-1)"></i>hold</span>
+        <span><i class="box" style="background:var(--series-3)"></i>sweep</span>
+        <span><i class="box" style="background:var(--muted)"></i>off</span>
+        <span><i class="box" style="background:var(--critical)"></i>trip / fault</span>
+        <span><i class="box" style="background:var(--warning)"></i>warning</span>
+        <span><i class="box" style="background:var(--detector)"></i>detector alarm</span>
+        <span><i class="box" style="background:var(--unknown)"></i>not recorded (old file format)</span>
+      </div>
+    </article>
+  </section>
+
+  <aside class="side">
+    <article class="card">
+      <h2>Sensor health <small>newest row</small></h2>
+      <ul id="health" class="health"></ul>
+      <p id="counts" class="note"></p>
+    </article>
+  </aside>
+</main>
+
+<section class="card" id="alarms">
+  <div class="alarmhead">
+    <h2>Alarms</h2>
+    <span id="tabs" class="seg">
+      <button type="button" data-tab="open" class="on">Alarm list</button>
+      <button type="button" data-tab="all">History</button>
+      <button type="button" data-tab="journal">Journal</button>
+    </span>
+    <span class="grow"></span>
+    <label class="check">operator <input type="text" id="operator" maxlength="40" size="12"></label>
+    <button id="ackAll" type="button">Acknowledge all</button>
+  </div>
+  <p id="alarmMsg" class="note"></p>
+  <div class="scroll"><table id="alarmTable"><thead></thead><tbody></tbody></table></div>
+</section>
+
+<section class="card" id="tableView" hidden>
+  <h2>Rows in the selected range <small>newest first, at most 300</small></h2>
+  <div class="scroll"><table id="rowTable"><thead></thead><tbody></tbody></table></div>
+</section>
+
+<div id="tip" class="tip" hidden></div>
+<script src="app.js"></script>
+</body>
+</html>
