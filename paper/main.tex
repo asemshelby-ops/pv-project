@@ -287,9 +287,12 @@ time and the bench results (docs/paper/06); a one-line schematic figure.}
 \subsection{On-device detection}\label{sec:ondevice}
 The detectors of Section~\ref{sec:detectors} use only the current and earlier 10-s samples.
 The tree model and its features run on the logger's microcontroller; the model is exported
-to plain C \cite{m2cgen}. \todo{The threshold and CUSUM detectors are computed offline from
-the same rows in the present firmware. Port both to the logger (a few lines of C each) and
-log their alarms, or state here that only the tree model ran on the device.} \todo{Time per update, flash and RAM
+to plain C \cite{m2cgen}. The threshold rule and the CUSUM run on the same microcontroller
+from the same rows, and the logger records one alarm bit per detector.
+\todo{As of 2026-11-13 the two baselines are ported, compiled into the logger firmware and
+reproduce the analysis code alarm for alarm on a PC build of the same C file (synthetic
+days). They have not yet run on the board: confirm there before these two sentences stay.}
+\todo{Time per update, flash and RAM
 measured on the board with the final model.}
 
 \section{Methodology}

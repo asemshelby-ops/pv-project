@@ -25,6 +25,21 @@ STATUS_BITS = {
     "SD_RETRY": 8,        # second SD write attempt, or the row(s) before were lost
 }
 
+# Bits of the `alarm` column: one bit per on-board detector, name -> bit number. A row
+# reads 0 (no alarm) or the sum of the detectors that alarmed at it: 1 = NASIM-GBT only,
+# as in every file written while NASIM was the only detector on the board; 6 = threshold
+# and CUSUM together. The firmware takes the numbers from here (nasim_config.h).
+ALARM_BITS = {
+    "NASIM": 0,           # NASIM-GBT
+    "THRESHOLD": 1,       # temperature-rise threshold (detect/threshold.py, no gate)
+    "CUSUM": 2,           # CUSUM on the temperature increment (detect/cusum_inc.py)
+}
+
+
+def has_alarm(series, name):
+    """Boolean Series: did detector `name` alarm at the row? Missing value gives False."""
+    return (series.fillna(0).astype("int64") & (1 << ALARM_BITS[name])) != 0
+
 
 def decode_status(value):
     """Names of the bits set in one `status` value, lowest bit first. A missing value

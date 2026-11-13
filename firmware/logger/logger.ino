@@ -1,8 +1,10 @@
 // Phase 0 data logger. Every 10 s (millis schedule, no drift): read every sensor that
 // is present, skip the missing ones, and write one CSV row to the microSD card and to
-// Serial. Columns: the schema of CLAUDE.md + wind (data/schema.py COLUMNS), then the
-// NASIM-GBT (no wind, double precision) outputs p and alarm, then five columns:
+// Serial. Columns: the schema of CLAUDE.md + wind (data/schema.py COLUMNS), then p (the
+// NASIM-GBT probability; no wind, double precision) and alarm, then five columns:
 // D, load_mode, sweep_id (NaN, none, 0 while HAS_LOAD is 0: no load fitted), uptime_ms, status.
+// alarm holds one bit per on-board detector (data/schema.py ALARM_BITS): 1 = NASIM-GBT,
+// 2 = threshold rule, 4 = CUSUM; values add up, 0 = no alarm. All three see the same rows.
 //
 //   date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,
 //   D,load_mode,sweep_id,uptime_ms,status
@@ -21,8 +23,9 @@
 //
 // SAFETY: the pump output is held LOW. Both load outputs are held LOW while HAS_LOAD is 0;
 // with HAS_LOAD 1 they start LOW and go LOW again on every fault (PvDaq/src/pv_load_logic.h).
-// The alarm is only logged; NASIM is trained on SYNTHETIC data and must be retrained before
-// it drives anything. The load never acts on the alarm.
+// The alarms are only logged; NASIM is trained and the baselines are tuned on SYNTHETIC
+// data: all must be redone on real data before they drive anything. The load never acts
+// on an alarm.
 #include <PvDaq.h>
 #include <esp_task_wdt.h>
 #include <pv_load.h>
@@ -30,12 +33,18 @@
 
 extern "C" {  // export/c is C, compiled here through nasim_core.c / nasim_model.c
 #include "nasim.h"
+#include "nasim_tuned.h"
 void nasim_score_nowind(real *input, real *output);
 }
 
 // ---- configuration -------------------------------------------------------------------
-static const real NASIM_P_THRESHOLD = 0.98;   // out/paper_demo/seed5/results/tuned.json
-static const int NASIM_PERSIST = 2;           // config.GBT_PERSIST
+// Detector settings: generated, never typed here. nasim_tuned.h = the run's tuned.json
+// (analysis/export_model.py); nasim_config.h = config.py.
+static const real NASIM_P_THRESHOLD = NASIM_TUNED_P_THRESHOLD;
+static const int NASIM_PERSIST = NASIM_GBT_PERSIST;
+static const real THR_RISE_C = NASIM_TUNED_THR_RISE_C;        // threshold rule, degC in 10 min
+static const real CUSUM_KAPPA_C = NASIM_TUNED_CUSUM_KAPPA_C;  // CUSUM allowance, degC per row
+static const real CUSUM_H_C = NASIM_TUNED_CUSUM_H_C;          // CUSUM alarm level, degC
 static const int NASIM_START_MIN = 6 * 60;    // detector window = synthetic day window,
 static const int NASIM_END_MIN = 18 * 60;     // config.DAY_START / DAY_END (local time)
 static const int32_t UTC_OFFSET_S = 3 * 3600; // Makkah = UTC+3: NASIM's time inputs are local
@@ -75,8 +84,10 @@ PvPyr20Modbus pyr(Serial2, pins::RS485_RX, pins::RS485_TX);
 PvSdCard sd;
 PvDevice *const DEVICES[] = {&rtc, &env, &hub, &panel, &probes, &pyr, &sd};
 
-gbt_detector_t det;
-int det_doy = -1;                 // day the detector state belongs to
+gbt_detector_t det;               // NASIM-GBT
+thr_detector_t det_thr;           // baseline: temperature-rise threshold
+cusum_inc_t det_cusum;            // baseline: CUSUM on the temperature increment
+int det_doy = -1;                 // day the state of the three detectors belongs to
 uint8_t det_fails = 0;            // rows skipped by the detector in a row
 
 uint8_t t_map[5][8] = {{0}};      // ROM behind each of T1..T5 in use (all zero = none yet)
@@ -205,6 +216,13 @@ void printStatus() {
   Serial.println();
 }
 
+// The three detectors always start, skip and reset together.
+void resetDetectors() {
+  gbt_reset(&det);
+  thr_reset(&det_thr);
+  cusum_inc_reset(&det_cusum);
+}
+
 // ---- one sample ---------------------------------------------------------------------------
 void sample(uint32_t n) {
   uint32_t status = 0;
@@ -250,7 +268,7 @@ void sample(uint32_t n) {
   last_g = g;
   for (int k = 0; k < 5; k++) last_T[k] = T[k];
 
-  // NASIM: same input as the replay test; needs time, T1..T5, ambient and irradiance.
+  // Detectors: same input as the replay test; they need time, T1..T5, ambient, irradiance.
   double p = NAN;
   int alarm = 0;
   int minute = have_time ? lt.hour() * 60 + lt.minute() : -1;
@@ -268,7 +286,7 @@ void sample(uint32_t n) {
     det_fails = 0;
     int doy = dayOfYear(lt);
     if (doy != det_doy) {  // a new day starts with empty buffers, as in training
-      gbt_reset(&det);
+      resetDetectors();
       det_doy = doy;
     }
     sample_t s;
@@ -278,17 +296,19 @@ void sample(uint32_t n) {
     s.wind = NAN;
     s.doy = doy;
     s.minute = minute + lt.second() / 60.0;
-    alarm = gbt_update(&det, &s);
+    if (gbt_update(&det, &s)) alarm |= NASIM_ALARM_NASIM;
+    if (thr_update(&det_thr, &s)) alarm |= NASIM_ALARM_THRESHOLD;
+    if (cusum_inc_update(&det_cusum, &s)) alarm |= NASIM_ALARM_CUSUM;
     p = det.p;  // NAN while the 10-min buffers fill
   } else if (have_time && !in_window) {  // planned: the detector rests outside the window
-    if (det_doy != -1) gbt_reset(&det);
+    if (det_doy != -1) resetDetectors();
     det_doy = -1;
     det_fails = 0;
   } else {  // invalid row (input or time missing): skip it, keep the detector state
     status |= ST_DET_SKIPPED;
     if (det_fails < 255) det_fails++;
     if (det_fails == DET_RESET_AFTER_FAILS && det_doy != -1) {
-      gbt_reset(&det);  // too long a hole in the 10 s sequence the features assume
+      resetDetectors();  // too long a hole in the 10 s sequence the features assume
       det_doy = -1;
       status |= ST_DET_RESET;
       Serial.printf("# detector reset: %u rows in a row without valid inputs\n",
@@ -594,7 +614,14 @@ void setup() {
   Wire.begin(pins::I2C_SDA, pins::I2C_SCL, I2C_CLOCK_HZ);
   gbt_init(&det, nasim_score_nowind, /*use_wind=*/0, /*hybrid=*/1, NASIM_P_THRESHOLD,
            NASIM_PERSIST);
+  thr_init(&det_thr, THR_RISE_C);
+  cusum_inc_init(&det_cusum, CUSUM_KAPPA_C, CUSUM_H_C);
   Serial.println("# PV Phase 0 logger. NASIM-GBT (no wind, double) trained on SYNTHETIC data.");
+  Serial.printf("# alarm = %d NASIM-GBT (p >= %.3f, %d rows) + %d threshold (rise >= %.2f C in "
+                "10 min) + %d CUSUM (kappa %.3f C, h %.2f C); settings from SYNTHETIC data\n",
+                NASIM_ALARM_NASIM, (double)NASIM_P_THRESHOLD, NASIM_PERSIST,
+                NASIM_ALARM_THRESHOLD, (double)THR_RISE_C, NASIM_ALARM_CUSUM,
+                (double)CUSUM_KAPPA_C, (double)CUSUM_H_C);
   Serial.println("# timestamps are UTC (DS3231)");
   for (PvDevice *d : DEVICES) {
     if (d != &panel) d->begin();

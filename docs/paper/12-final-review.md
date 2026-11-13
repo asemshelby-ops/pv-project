@@ -15,7 +15,7 @@ hardware and days in the sun, not writing.
 
 | # | Finding | Fix |
 |---|---|---|
-| 1 | The draft said three detectors "run on the microcontroller". Only NASIM-GBT runs in `firmware/logger`; the threshold and CUSUM are computed offline. | Abstract, contribution 3 and Section III-D reworded; a TODO states the two honest options (port both, or say only one ran on the device) |
+| 1 | The draft said three detectors "run on the microcontroller". Only NASIM-GBT runs in `firmware/logger`; the threshold and CUSUM are computed offline. | Abstract, contribution 3 and Section III-D reworded; a TODO states the two honest options (port both, or say only one ran on the device). **Ported 2026-11-13** (first option): both baselines are plain C in `export/c/nasim.c`, run in `firmware/logger` on the same rows as NASIM-GBT, and are logged as bits of `alarm` (`07` §7); settings come from generated headers only. PC build of that C file against the pipeline on all 150 synthetic days: 0 alarm differences for each of the three detectors (`11` §6). Not yet run on the board |
 | 2 | Section cross-references were typed by hand ("Section IV-D"). | Replaced by `\label` / `\ref` |
 | 3 | The detection TODO did not ask for the comparison a reviewer will ask for first. | Added: lead time at a matched false-alarm rate |
 | 4 | Author placeholder. | Six authors in the order given; e-mail TODO kept |
@@ -46,7 +46,7 @@ Checks after the fixes: `python paper/check_draft.py` passes; the test suite pas
 | H2 | Logger robustness (audit items 4 and 5): one failed read resets NASIM for ≥ 10 min; RTC, BME280 and INA226 are not re-read for up to 60 s after an error; rows without RTC time are lost to `/nodate.csv`; `T_ROM` is empty. | **fixed in the firmware 2026-11-12, builds; not yet run on the board**: a failed read skips one row and NASIM resets only after 5 in a row; failed devices are re-read at the next row; rows without RTC time are kept (status bit, `uptime_ms`); ROMs are printed at boot and saved to `/rom_scan.txt`; scan-order columns no longer shift. `T_ROM` is still empty | fill `T_ROM` after the water bath; bench-check the new paths (unplug a sensor, pull the RTC, pull the card) |
 | H3 | The five approved CSV columns (`D`, `load_mode`, `sweep_id`, `uptime_ms`, `status`). | **done 2026-11-12**: written by the logger (`NaN`, `none`, `0` until the load exists), documented in `07` §7, read by `analysis/ingest.py`; old files still load | the load firmware fills `D`, `load_mode`, `sweep_id` |
 | H4 | GPIO14 toggles at boot. | mitigated on paper: 10 kΩ pull-down, bench step B1 | verify on the scope before connecting the module |
-| H5 | On-board parity not re-run with the retrained model; `export/replay.py` uses the old test set. | open (PROJECT_STATE, pending) | adapt and run with the board |
+| H5 | On-board parity not re-run with the retrained model; `export/replay.py` uses the old test set. | open (PROJECT_STATE, pending). The PC half was redone 2026-11-13 for all three detectors with the current model (`11` §6); the board half is unchanged | adapt `export/replay.py` and `firmware/nasim_replay` to the three detectors and this run's days, then run with the board |
 | H6 | NASIM in the logger is trained on synthetic data with a 21°→20° tilt change and literature thermal parameters. Its alarms in pilot data mean little. | stated in the firmware banner | retrain on real data; do not interpret pilot alarms |
 | H7 | Uncertainty budget rests on assumed values: shunt tolerance, cable resistance, PYR20 "5 %" basis, sensor noise, shield error. | open | bench B2; the seller's answer; water bath; validation day |
 | H8 | Data-logger model unknown: the validation protocol and `DEFAULT_MAPPING` are generic. | open | update `04` and the mapping when the model is known |
@@ -86,4 +86,4 @@ diagnose-before-spray and the reference panel · SCADA simulation.
 | `docs/paper/11` | pipeline and synthetic end-to-end results | written; synthetic only |
 | `analysis/` | ingestion, labelling, detectors, metrics, γ, validation, report, demo, export | tested (68 tests), run end to end on synthetic files |
 | `paper/` | IEEE draft and bibliography | not compiled; static check passes |
-| `firmware/` | tilt 20°, two-branch load constants, GPIO14, NASIM threshold 0.98 | builds; no load code; not flashed in this work |
+| `firmware/` | tilt 20°, two-branch load constants, GPIO14, NASIM threshold 0.98; since 2026-11-13 the threshold rule and the CUSUM next to NASIM | builds; not flashed in this work |

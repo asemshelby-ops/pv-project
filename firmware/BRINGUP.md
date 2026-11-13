@@ -357,6 +357,7 @@ Correct output on Serial:
 
 ```
 # PV Phase 0 logger. NASIM-GBT (no wind, double) trained on SYNTHETIC data.
+# alarm = 1 NASIM-GBT (p >= 0.980, 2 rows) + 2 threshold (rise >= 2.70 C in 10 min) + 4 CUSUM (kappa 0.020 C, h 2.00 C); settings from SYNTHETIC data
 # timestamps are UTC (DS3231)
 # boot ROM scan, UTC 2026-11-05 06:59:48: 5 DS18B20, T_ROM NOT filled in -> T1..T5 by scan order
 # 0,28-xx-xx-xx-xx-00-00-xx,crc ok,genuine pattern,T1

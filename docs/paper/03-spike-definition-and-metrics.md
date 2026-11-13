@@ -183,8 +183,9 @@ fewer, the threshold and CUSUM results are the primary result and NASIM is explo
 
 ## 8. On-device agreement (ESP32 parity)
 
-The logger writes `p` and `alarm` for every row. The same rows are replayed offline
-through the Python detector. Reported: number of rows compared, alarm mismatches, largest
+The logger writes `p` and `alarm` for every row; `alarm` carries one bit per on-board
+detector (1 NASIM-GBT, 2 threshold rule, 4 CUSUM; `07` §7). The same rows are replayed
+offline through the Python detectors. Reported, per detector: number of rows compared, alarm mismatches, largest
 `|Δp|`, and the number and total length of detector blackouts (rows where the logger gave
 no `p` during the day window).
 

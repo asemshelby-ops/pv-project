@@ -233,6 +233,34 @@ through Python and through the compiled C detector:
 The logger uses the double build; its alarm threshold constant is now 0.98 and it builds
 (457 670 B flash).
 
+**Redone 2026-11-13 for the three on-board detectors.** The threshold rule and the CUSUM
+were ported to the same C file (`export/c/nasim.c`) and run in the logger. Their settings
+(rise 2.7 °C; κ 0.02 °C per row, h 2.0 °C) and NASIM's 0.98 reach the firmware through
+`export/c/generated/nasim_tuned.h`, which `analysis/export_model.py` writes from
+`tuned.json`. The script now replays all 150 days (648 000 rows), not only the test days,
+through the PC build of the C file and compares every alarm, row by row, with the alarms
+of the pipeline (`analysis/detection.py`). The retrained model again equals the saved one
+and the generated model file did not change.
+
+| Build | Detector | Alarms Python / C | At the same row | Only Python / only C | Test days: alarms, differences |
+|---|---|---|---|---|---|
+| double | NASIM-GBT | 583 / 583 | 583 | **0 / 0** | 128, 0 |
+| double | Threshold | 626 / 626 | 626 | **0 / 0** | 137, 0 |
+| double | CUSUM | 657 / 657 | 657 | **0 / 0** | 137, 0 |
+| float | NASIM-GBT | 583 / 584 | 565 | 18 / 19 | 128, 7 |
+| float | Threshold | 626 / 626 | 575 | 51 / 51 | 137, 20 |
+| float | CUSUM | 657 / 657 | 641 | 16 / 16 | 137, 4 |
+
+Double, NASIM: largest |Δp| 1.1 × 10⁻¹⁶, worst feature difference 7.8 × 10⁻¹⁶. The float
+rows are for information: the board runs double. In float the baselines keep their alarm
+count but an alarm moves by a few rows when the rise lands within rounding of the limit;
+the time of every differing alarm is in `parity.json`. Logger build with the three
+detectors: 462 038 B flash (35 % of the app partition), 30 792 B global RAM (9 %); the two
+baselines add 1 084 B flash and 1 584 B RAM (their state: 1 032 B + 552 B). Time per row
+was not measured (no board connected). `[EST]` each baseline does less arithmetic than
+NASIM's warm-up path, measured earlier at 33 µs on the board, so the two add well under
+0.1 ms to a row whose NASIM update took 0.89 ms, against a 10 s period.
+
 **Not done: the check on the ESP32 itself.** `export/replay.py` flashes the board and
 replays a test set, but it still builds that set from the earlier evaluation. It must be
 pointed at this run's test days and run with the board connected. Until then the "ESP32

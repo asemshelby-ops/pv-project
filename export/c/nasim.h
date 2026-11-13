@@ -1,6 +1,9 @@
 /* NASIM on-device spike detection: features, thermal model, CUSUM core and
  * the NASIM-GBT alarm logic. A line-by-line port of detect/features.py,
  * detect/residual.py, sim/thermal.py (step) and detect/gbt.py (GbtDetector).
+ * Also the paper's two baselines, each with its own state: the temperature-rise
+ * threshold (detect/threshold.py, no irradiance gate) and the CUSUM on the
+ * temperature increment (detect/cusum_inc.py).
  *
  * Precision: `real` is double by default (bit-for-bit parity with Python).
  * Compile with -DNASIM_FLOAT -fsingle-precision-constant for single precision,
@@ -78,6 +81,24 @@ typedef struct {
     real f[MAX_FEATURES];  /* last feature vector (valid when p is not NAN) */
 } gbt_detector_t;
 
+/* Baseline (a): rise of the filtered temperature over 10 min >= rise_c
+ * (detect/threshold.py, ThresholdDetector(rise_c, gate=None)). */
+typedef struct {
+    real rise_c;
+    ring_t t_raw, t_med;
+    int quiet;
+    real rise;             /* last 10-min rise, NAN while warming up */
+} thr_detector_t;
+
+/* Baseline (b): CUSUM on the increment of the filtered temperature
+ * (detect/cusum_inc.py, CusumIncDetector). */
+typedef struct {
+    real kappa, h;
+    ring_t t_raw;
+    int has_prev, n, quiet;
+    real prev, S;
+} cusum_inc_t;
+
 real thermal_step(real t, real g, real ta, real v, real c, real u0, real u1);
 void cusum_core_init(cusum_core_t *cc, int use_wind, real k, real c, real u0, real u1);
 void cusum_core_reset(cusum_core_t *cc);
@@ -92,5 +113,13 @@ void gbt_init(gbt_detector_t *det, score_fn score, int use_wind, int hybrid,
               real p_threshold, int persist);
 void gbt_reset(gbt_detector_t *det);
 int gbt_update(gbt_detector_t *det, const sample_t *s);
+
+void thr_init(thr_detector_t *det, real rise_c);
+void thr_reset(thr_detector_t *det);
+int thr_update(thr_detector_t *det, const sample_t *s);
+
+void cusum_inc_init(cusum_inc_t *det, real kappa, real h);
+void cusum_inc_reset(cusum_inc_t *det);
+int cusum_inc_update(cusum_inc_t *det, const sample_t *s);
 
 #endif

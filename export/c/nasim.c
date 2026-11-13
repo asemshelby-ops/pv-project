@@ -236,3 +236,83 @@ int gbt_update(gbt_detector_t *det, const sample_t *s) {
     }
     return 0;
 }
+
+/* ---- baselines: shared signal (mean of T1..T5, then 3-sample median) ----- */
+
+static real back_mean(const sample_t *s) {
+    real t_mean = 0.0;
+    for (int i = 0; i < N_BACK; i++) t_mean += s->t_back[i];
+    return t_mean / N_BACK;
+}
+
+/* ---- baseline (a): threshold (detect/threshold.py, gate=None) ------------ */
+
+void thr_init(thr_detector_t *det, real rise_c) {
+    det->rise_c = rise_c;
+    thr_reset(det);
+}
+
+void thr_reset(thr_detector_t *det) {
+    ring_init(&det->t_raw, NASIM_MEDIAN_N);
+    ring_init(&det->t_med, NASIM_N10 + 1);
+    det->quiet = 0;
+    det->rise = NAN;
+}
+
+/* Warm-up as in the Python detector: its feature extractor is ready when the
+ * ring of filtered temperatures is full (the irradiance ring fills earlier). */
+int thr_update(thr_detector_t *det, const sample_t *s) {
+    ring_push(&det->t_raw, back_mean(s));
+    if (det->quiet > 0) det->quiet--;
+    det->rise = NAN;
+    if (!ring_full(&det->t_raw)) return 0;
+    real t = median3(ring_ago(&det->t_raw, 0), ring_ago(&det->t_raw, 1), ring_ago(&det->t_raw, 2));
+    ring_push(&det->t_med, t);
+    if (!ring_full(&det->t_med)) return 0;
+    det->rise = t - ring_ago(&det->t_med, NASIM_N10);
+    if (det->quiet > 0) return 0;
+    if (det->rise >= det->rise_c) {
+        det->quiet = NASIM_SILENCE_N;
+        return 1;
+    }
+    return 0;
+}
+
+/* ---- baseline (b): CUSUM on the increment (detect/cusum_inc.py) ---------- */
+
+void cusum_inc_init(cusum_inc_t *det, real kappa, real h) {
+    det->kappa = kappa;
+    det->h = h;
+    cusum_inc_reset(det);
+}
+
+void cusum_inc_reset(cusum_inc_t *det) {
+    ring_init(&det->t_raw, NASIM_MEDIAN_N);
+    det->has_prev = 0;
+    det->prev = 0;
+    det->S = 0.0;
+    det->n = 0;
+    det->quiet = 0;
+}
+
+int cusum_inc_update(cusum_inc_t *det, const sample_t *s) {
+    ring_push(&det->t_raw, back_mean(s));
+    if (!ring_full(&det->t_raw)) return 0;
+    real t = median3(ring_ago(&det->t_raw, 0), ring_ago(&det->t_raw, 1), ring_ago(&det->t_raw, 2));
+    if (!det->has_prev) {                                   /* first filtered value */
+        det->prev = t;
+        det->has_prev = 1;
+        return 0;
+    }
+    det->S = rmax(0.0, det->S + (t - det->prev) - det->kappa);
+    det->prev = t;
+    det->n++;
+    if (det->quiet > 0) det->quiet--;
+    if (det->n < NASIM_N10 || det->quiet > 0) return 0;
+    if (det->S >= det->h) {
+        det->S = 0.0;
+        det->quiet = NASIM_SILENCE_N;
+        return 1;
+    }
+    return 0;
+}

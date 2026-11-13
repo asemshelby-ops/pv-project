@@ -184,6 +184,19 @@ date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,win
 | `uptime_ms` | `millis()` at the start of the row's readings: orders the rows and gives their spacing when the RTC time is missing; a fall = the board restarted. Wraps after 49.7 days | number |
 | `status` | bit field, decimal; `0` = nothing to report | number |
 
+`alarm` (an older column, not one of the five; changed 2026-11-13). Since the threshold
+rule and the CUSUM run on the board next to NASIM-GBT, `alarm` holds one bit per detector
+and the values add up: `1` = NASIM-GBT, `2` = threshold rule, `4` = CUSUM; `0` = no alarm,
+e.g. `6` = threshold and CUSUM at the same row. A file written before this change holds
+only `0` and `1`, which reads the same way (NASIM alone). The bits are defined once, in
+`data/schema.py` (`ALARM_BITS`, `has_alarm`), and reach the firmware through the generated
+`nasim_config.h`. No column was added and the five columns above are unchanged. `p` stays
+NASIM's probability. The three detectors get the same rows and are skipped and reset
+together, so `DET_SKIPPED` and `DET_RESET` below apply to all three. Their settings come
+from generated files only: `export/c/generated/nasim_tuned.h` (written by
+`analysis/export_model.py` from the run's `tuned.json`) and `nasim_config.h` (from
+`config.py`).
+
 Changed from the first version of this table (decided by Asim, 2026-11-12): `load_mode`
 is text — `none`, `off`, `hold`, `sweep`, `trip` — instead of the numbers 0–3, and
 `sweep_id` is `0`, not empty, before the first sweep.
@@ -216,6 +229,10 @@ understated by up to ≈ 7 %. Accepted for now (Asim, 2026-11-12). To settle whe
 threshold and CUSUM detectors are ported to the board: compute rises and rates from the
 real time between samples (`uptime_ms`), not from a fixed 10 s. The offline analysis
 follows the same rule on purpose, so it carries the same small error.
+Ported 2026-11-13 and **still open**: the two detectors on the board count samples, exactly
+as the offline analysis does, because that is what makes the board and the pipeline give
+the same alarms. Moving to real time gaps changes the detectors' definition; it has to be
+made in `detect/` and in `export/c/nasim.c` together, and it is Asim's decision.
 
 Read order inside one row (since 2026-11-12): RTC time and `uptime_ms`, then at once the
 PYR20 irradiance (one Modbus exchange, ≈ 20–30 ms `[EST]`), then BME280, INA226, and last
