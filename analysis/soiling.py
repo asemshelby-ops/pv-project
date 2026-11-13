@@ -6,6 +6,9 @@ whether dust may have disturbed a day (docs/paper/05 sec. 9).
                     of the next logged cleaning (its morning was still dusty).
   cleaning_check()  for every logged cleaning: power per unit irradiance around solar
                     noon on the last day before it and on the first day after it.
+  sensitivity()     the main results twice: on all days, and without the flagged days.
+                    The flagged days are NOT excluded from the results (decision by Asim,
+                    2026-11-13); this only shows how much they matter.
 
 Limits of the check, to keep in mind when reading it:
   * the module and the PYR20 dome are cleaned together, so P / G shows the dust on the
@@ -18,6 +21,7 @@ import numpy as np
 import pandas as pd
 
 import config
+from analysis import detection
 from data.schema import BACK_SENSORS
 
 
@@ -84,3 +88,43 @@ def cleaning_check(df, joined):
     cols = ["cleaning", "date", "after_dust", "day_before", "day_after", "rows_before",
             "rows_after", "P_per_G_before", "P_per_G_after", "change", "dT_module_C", "note"]
     return pd.DataFrame(rows, columns=cols)
+
+
+def sensitivity(frame, events, excluded, det, dusty_dates):
+    """The main results with and without the days flagged after a dust storm.
+
+    Spike statistics: all days of the frame, and the same without the flagged days.
+    Detection: the test days, and the test days without the flagged ones. The detectors
+    are NOT retrained or retuned for the second line: the same alarms are scored on fewer
+    days, so the two lines differ only by the days left out. (Training and validation days
+    keep their flagged days in both lines.)
+    Returns (spike table, detection table, number of flagged test days)."""
+    dusty = set(dusty_dates)
+    spikes = events[(events["class"] == "spike") & events["valid"]]
+    all_days = sorted(frame["date"].unique())
+    test_days = det["parts"]["test"]
+    versions = [("all days", all_days, test_days),
+                ("without after_dust days", [d for d in all_days if d not in dusty],
+                 [d for d in test_days if d not in dusty])]
+    rows_s, rows_d = [], []
+    for label, days, tdays in versions:
+        sp = spikes[spikes["date_local"].isin(days)]
+        row = {"days used": label, "days": len(days), "spikes": len(sp),
+               "spikes per day": len(sp) / len(days) if days else np.nan,
+               "size C, median": sp["size_C"].median() if len(sp) else np.nan}
+        for c in ("irradiance", "non_irradiance", "mixed"):
+            row[c] = int((sp["cause"] == c).sum())
+        rows_s.append(row)
+        if not tdays:
+            continue
+        scorer = detection.Scorer(frame, events, excluded, tdays)
+        for name, alarms in det["alarms"].items():
+            s = scorer(alarms)[0]
+            rows_d.append({"detector": name, "test days used": label, "test days": len(tdays),
+                           "spikes": s["spikes"], "recall": s["recall"], "F1": s["F1"],
+                           "FA per day": s["FA_per_day"],
+                           "delay min, median": s["delay_median_min"]})
+    d = pd.DataFrame(rows_d)
+    if len(d):
+        d = d.sort_values(["detector", "test days used"], kind="stable").reset_index(drop=True)
+    return pd.DataFrame(rows_s), d, len([x for x in test_days if x in dusty])

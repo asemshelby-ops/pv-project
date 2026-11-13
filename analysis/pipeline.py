@@ -46,6 +46,7 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
     log(f"ingested {len(df)} rows, {n_days} days, {frame['segment'].nunique()} segments")
 
     joined = excluded = tests = None
+    dusty_dates = []
     if (data / "markers.csv").exists():
         m, no_time = ingest.read_markers(data / "markers.csv")
         joined, problems = ingest.join_logsheets(m, data / "logsheets")
@@ -55,6 +56,7 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
             notes.append(f"{no_time} marker presses had no RTC time and were left out")
         # soiling housekeeping (docs/paper/05 sec. 9): flags and a check, nothing is excluded
         dusty = soiling.dust_days(joined)
+        dusty_dates = list(dusty["date"])
         quality["after_dust"] = quality["date"].isin(dusty["date"])
         quality.to_csv(out / "day_quality.csv", index=False)
         if len(dusty):
@@ -115,6 +117,13 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
     else:
         notes.append("no reference export: the data-logger comparison is not computed")
 
+    # the flagged days stay in every result; this shows what they change (05 sec. 9)
+    sens_s = sens_d = None
+    if dusty_dates:
+        sens_s, sens_d, n_dusty_test = soiling.sensitivity(frame, ev, excluded, det, dusty_dates)
+        sens_s.to_csv(out / "sensitivity_dust_spikes.csv", index=False)
+        sens_d.to_csv(out / "sensitivity_dust_detection.csv", index=False)
+
     test_days = det["parts"]["test"]
     in_test = spikes[spikes["date_local"].isin(test_days)]
     pick = test_days[0]
@@ -161,6 +170,19 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
     if t6 is not None:
         lines += ["## Table 6 - cause rule against known causes", "", md(t6), ""]
     lines += ["## Table 9 - sensitivity of the cause labels to the two limits", "", md(t9), ""]
+    lines += ["## Sensitivity - with and without the days flagged after a dust storm", ""]
+    if sens_s is None:
+        lines += ["No day is flagged `after_dust`: the two versions are the same.", ""]
+    else:
+        lines += [f"{len(dusty_dates)} days are flagged ({', '.join(dusty_dates)}); "
+                  f"{n_dusty_test} of them are test days. **The flagged days are part of every "
+                  "result above.** The second line of each pair only shows what they change. "
+                  "The detectors are not retrained or retuned for it: the same alarms are "
+                  "scored on fewer days.", "", "Spikes, all days of the data set:", "",
+                  md(sens_s.round(2)), "", "Detection, test days:", ""]
+        lines += ([md(sens_d.round(2)), ""] if n_dusty_test and len(sens_d) else
+                  ["No test day is flagged, or none is left without the flagged ones: "
+                   "the detection results have no second version.", ""])
     if g_sum:
         lines += ["## Gamma", "", f"gamma = {100 * g_sum['gamma']:.3f} %/degC, U(k=2) = "
                   f"{100 * g_sum['U_k2']:.3f} %/degC, {g_sum['n_runs']} runs on {g_sum['n_days']} days; "

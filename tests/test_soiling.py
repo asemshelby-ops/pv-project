@@ -83,3 +83,77 @@ def test_pipeline_writes_the_flags_and_the_check_and_excludes_nothing(dusty_rig,
     assert "3 days flagged after a dust storm line" in notes and "NOT excluded" in notes
     assert "1 with a change above 3%" in notes
     assert res["frame"]["date"].nunique() == len(dates)        # no day was dropped
+
+
+# --- the main results with and without the flagged days ------------------------------------
+
+@pytest.fixture(scope="module")
+def ten_days(tmp_path_factory):
+    """Ten days with spikes. Split 6 / 2 / 2: days 9 and 10 are the test days. Dust storm
+    line on day 8 at 16:00, cleaned on day 9: days 8 and 9 are flagged, one of them a
+    test day."""
+    out = tmp_path_factory.mktemp("ten")
+    days = synth.generate(seed=5, n_days=10, hard=True)[0]
+    dates = sorted(days["date"].unique())
+    fake_logger.write_logger_files(days, out)
+    schedule = {d: list(CLEAN) for d in dates}
+    schedule[dates[7]].append(("16:00:00", "dust storm", ""))
+    fake_logger.write_markers(schedule, out)
+    res = pipeline.run(out, out / "res", n_boot=20, synthetic=True, log=lambda *_: None)
+    return dates, res
+
+
+def test_sensitivity_reports_both_versions_and_keeps_the_main_results(ten_days):
+    dates, res = ten_days
+    out, ev, det = res["out"], res["events"], res["detection"]
+    assert det["parts"]["test"] == dates[8:]
+    valid = ev[(ev["class"] == "spike") & ev["valid"]]
+
+    s = pd.read_csv(out / "sensitivity_dust_spikes.csv").set_index("days used")
+    assert list(s.index) == ["all days", "without after_dust days"]
+    assert (s.loc["all days", "days"], s.loc["without after_dust days", "days"]) == (10, 8)
+    assert s.loc["all days", "spikes"] == len(valid)
+    assert s.loc["without after_dust days", "spikes"] == \
+        len(valid[~valid["date_local"].isin(dates[7:9])])
+
+    d = pd.read_csv(out / "sensitivity_dust_detection.csv")
+    assert set(d["detector"]) == set(det["alarms"]) and len(d) == 2 * len(det["alarms"])
+    main = det["results"].set_index("detector")
+    for name, g in d.groupby("detector"):
+        g = g.set_index("test days used")
+        full, less = g.loc["all days"], g.loc["without after_dust days"]
+        assert (full["test days"], less["test days"]) == (2, 1)
+        # the first line IS the main result: same alarms, same days, same numbers
+        assert full["spikes"] == main.loc[name, "spikes"]
+        assert full["FA per day"] == pytest.approx(main.loc[name, "FA_per_day"], nan_ok=True)
+        assert full["recall"] == pytest.approx(main.loc[name, "recall"], nan_ok=True)
+        assert less["spikes"] == len(valid[valid["date_local"] == dates[9]])   # day 10 only
+
+    text = (out / "summary.md").read_text(encoding="utf-8")
+    part = text.split("## Sensitivity - with and without the days flagged after a dust storm")[1]
+    assert "The flagged days are part of every result above." in part
+    assert f"2 days are flagged ({dates[7]}, {dates[8]}); 1 of them are test days" in part
+    assert "without after_dust days" in part and "not retrained or retuned" in part
+    assert res["frame"]["date"].nunique() == 10                  # nothing was excluded
+
+
+def test_sensitivity_without_flagged_test_days_says_so(dusty_rig, tmp_path):
+    out, dates, _, _ = dusty_rig                                 # flagged: days 1-3, test: day 5
+    pipeline.run(out, tmp_path / "res", n_boot=20, synthetic=True, log=lambda *_: None)
+    text = (tmp_path / "res" / "summary.md").read_text(encoding="utf-8")
+    assert "the detection results have no second version" in text
+    s = pd.read_csv(tmp_path / "res" / "sensitivity_dust_spikes.csv")
+    assert list(s["days"]) == [5, 2]
+
+
+def test_no_dust_line_gives_one_sentence_and_no_tables(dusty_rig, tmp_path):
+    out, dates, _, _ = dusty_rig
+    clean = tmp_path / "clean"
+    clean.mkdir()
+    for f in out.glob("2*.csv"):
+        (clean / f.name).write_bytes(f.read_bytes())
+    fake_logger.write_markers({d: list(CLEAN) for d in dates}, clean)
+    pipeline.run(clean, tmp_path / "res", n_boot=20, synthetic=True, log=lambda *_: None)
+    text = (tmp_path / "res" / "summary.md").read_text(encoding="utf-8")
+    assert "No day is flagged `after_dust`: the two versions are the same." in text
+    assert not (tmp_path / "res" / "sensitivity_dust_spikes.csv").exists()

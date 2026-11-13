@@ -158,5 +158,20 @@ How to read the check, and what it cannot show:
   next to each line; 5 °C between the two middays is ≈ 2 % by itself `[EST, illustrative
   γ]`.
 - A day marked `after_dust` or a cleaning marked `check` is a reason to look at that day,
-  nothing more. Whether flagged days leave the statistics is a decision for Asim, not made
-  here.
+  nothing more.
+
+**Flagged days stay in the results (decision by Asim, 2026-11-13).** No day is excluded
+for dust. Instead `summary.md` reports the main results twice, as a sensitivity check
+(section "Sensitivity - with and without the days flagged after a dust storm"; files
+`sensitivity_dust_spikes.csv`, `sensitivity_dust_detection.csv`):
+
+| Result | First line (the result of the paper) | Second line |
+|---|---|---|
+| Spikes: number, per day, median size, count by cause | all days | the same without the `after_dust` days |
+| Detection on the test days: spikes, recall, F1, false alarms per day, median delay, per detector | all test days | the test days without the `after_dust` ones |
+
+The detectors are not retrained or retuned for the second line: the same alarms are
+scored on fewer days, so the two lines differ only by the days left out. Training and
+validation days keep their flagged days in both. If no day is flagged, or no test day is,
+the summary says so in one sentence. If the two lines differ by more than the
+bootstrap intervals of the main results (Table 2), that is to be stated in the paper.
