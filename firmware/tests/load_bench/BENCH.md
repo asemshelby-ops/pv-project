@@ -14,6 +14,10 @@ smells, smokes, hums or reads wrong.
 
 ## Before you start
 
+Separate from the load, and needed **before the logger goes outdoors** even with no load
+fitted: the INA226 reset check, `firmware/BRINGUP.md` step 4a (seven short checks with a
+supply, a resistor and a multimeter).
+
 Safety (from 06 §2): the resistors and the heatsink get hot enough to burn. Electrolytic
 capacitors can vent if reversed: check polarity twice. Switch the supply off before
 touching the power wiring. Never leave the load running unattended. Safety glasses on.

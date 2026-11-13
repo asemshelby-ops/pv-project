@@ -12,6 +12,9 @@ only — they are not measurements.
    `python -c "import datetime as d; print(d.datetime.now(d.timezone.utc))"` to the second.
 3. Flash the logger and press the marker button once: Serial shows
    `# marker: <date>,<HH:MM:SS.mmm>,<millis>` with a UTC time, and `/markers.csv` gains that row (step 9).
+4. **INA226 reset check (new 2026-11-13, not done yet):** the panel INA226 driver now resets
+   the chip every time it starts it. Run step 4a below once with the logger that will go
+   outdoors, before it goes.
 
 ## Build and flash
 
@@ -165,6 +168,33 @@ Correct output:
 | Current negative | Current path wired backwards: swap the leads, or accept the sign and document it |
 | Bus V 0 while current flows | **TODO:** check which terminal the M5 unit senses VBUS on (not stated in the M5 docs) |
 | Readings stuck or noisy | Default conversion time and averaging (not yet chosen; **TODO** from the TI datasheet, PROJECT_STATE §4) |
+
+### 4a. INA226 reset check — with the logger as flashed for the field (`HAS_LOAD 0`)
+
+Why: since 2026-11-13 `PvIna226::begin()` writes the chip's reset bit before it writes the
+calibration (so that the chip always converts continuously, even if a load test left it
+in single-shot mode). This runs in today's logger at every start and every 60 s re-start
+of a lost unit. It compiles; it has **not been run on the board**. A reset that went
+wrong would show as voltage that never changes, or as current and power stuck at 0.
+
+Set-up: bench supply 12 V, current limit 2 A, a power resistor that draws ≈ 0.5–1 A, the
+panel unit in the + lead, a multimeter for V at the unit and one in series for I.
+Flash the logger (`build_all.py logger`, upload from `out/firmware_build/logger`).
+
+| # | Do | Correct result |
+|---|---|---|
+| 1 | Read three rows (30 s). | `voltage` within ≈ 1 % of the meter; `current` within ≈ 1 % of the meter and **not 0**; `power` ≈ V × I; `status` without bit 16 (`PANEL_FAIL`). A current of exactly 0 with a correct voltage = the calibration was lost in the reset |
+| 2 | Change the supply to 9 V, wait two rows, back to 12 V. | The rows follow within one row (10 s). Values that do not move = the chip is not converting |
+| 3 | Press the ESP32 reset button (the unit stays powered). Repeat 1. | Same values as before the reset |
+| 4 | Unplug USB and the supply, wait 5 s, power up again. Repeat 1. | Same values |
+| 5 | The case the reset was added for: flash `tests/load_bench`, type `R` twice (this puts the chip in single-shot mode), then flash the logger again **without removing power**. Repeat 1 and 2. | Rows are correct and follow the supply. If they are frozen at the last `R` value, the reset does not work |
+| 6 | Re-start path: while the logger runs, pull the panel unit's Grove cable, wait two rows, plug it back. (Hot-plugging glitched the bus on our bench once: if other devices drop out, note it and power-cycle.) | Rows without the unit: empty `voltage,current,power`, `status` with bit 16. Within 60 s after plugging back: values as in 1, bit 16 gone |
+| 7 | Flash `tests/ina226`. | Still `IDs 0x5449 / 0x2260` and `current LSB 500.0 uA`; values update every second |
+
+Record date, meter model, and the rows of steps 1–6. All seven must pass before the
+logger is installed outdoors. If one fails: do not deploy; the fix is to remove the
+`ina_.reset()` line in `pv_ina226.cpp` (the logger then behaves as before 2026-11-13) and
+report it.
 
 Range: ±10 A and 0–30 V bus (M5 docs). The 100 W module's Voc is 21.5 V and Isc 5.88 A,
 inside the range. **After** the load capacitor, the pulses reach about Voc ÷ `R_BRANCH` =

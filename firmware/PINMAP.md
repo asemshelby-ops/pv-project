@@ -62,4 +62,4 @@ ESP32 (21/22) ── [level shifter if the M5 side idles near 5 V — measure fi
 
 ## PWM outputs
 
-LEDC, 20 kHz, 10-bit resolution (20 kHz is above hearing; 80 MHz / 20 kHz allows up to 11 bits). Both outputs are driven LOW (duty 0) at boot by every sketch in this folder; no sketch in Phase 0 turns them on. The pump and sweep logic come later.
+LEDC, 20 kHz, 11-bit resolution since 2026-11-13 (20 kHz is above hearing; 20 kHz × 2¹¹ = 40.96 MHz is within the 80 MHz APB clock, 12 bits would not be; `pv_config.h` checks this at compile time). Both outputs are driven LOW (duty 0) at boot by every sketch in this folder; no sketch in Phase 0 turns them on. The pump and sweep logic come later.

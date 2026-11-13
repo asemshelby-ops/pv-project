@@ -429,14 +429,40 @@ def test_stored_points_are_settled_at_any_irradiance(lib, g):
     assert s["t1"] - s["t0"] <= K["SWEEP_BUDGET_MS"]
 
 
-def test_a_sweep_that_cannot_settle_in_its_slot_is_flagged_and_still_ends(lib):
-    r = Rig(lib, g=100)                                    # tau about 36 ms: too slow
+@pytest.mark.parametrize("bits", [10, 11])
+def test_a_sweep_that_cannot_settle_in_its_slot_is_flagged_and_still_ends(lib, bits):
+    """80 W/m2: tau about 44 ms, far too slow for the slot at either PWM resolution (stored
+    points are up to 4-5 % of V_oc from their end value, so the flag is deserved).
+    Not 100 W/m2: there the sweep ends within 40 ms of SWEEP_BUDGET_MS, and which side it
+    falls on depends on the resolution; the next test pins that down."""
+    r = Rig(lib, g=80, cfg=firmware_cfg(pwm_bits=bits))
     r.to_hold_after_sweep()
     s = r.sweeps[0]
     assert s["flags"] == NOT_SETTLED and len(s["pts"]) == 48
+    assert _steady_points(r, s)[:, 1].max() > 0.02         # really unsettled, not a false flag
     assert s["t1"] - s["t0"] <= K["SWEEP_BUDGET_MS"] + K["T_SETTLE_MS"] + 2 * T_CONV_SWEEP_MS
     for t_set, t_trigger, _ in r.stored:
         assert t_trigger - t_set >= K["T_SETTLE_MS"]
+
+
+def test_finer_pwm_steps_need_fewer_extra_waits_near_the_budget(lib):
+    """Why the flag moved when PWM_RES_BITS went from 10 to 11. At 100 W/m2 the fine pass
+    sits near D = 0.02: 10 bit has about 11 distinct duties there, so each real step is
+    large (about 1.2 % of V_oc) and several points need an extra reading; 11 bit has about
+    20, with smaller steps. The coarse pass is the same. The difference, about 40 ms, is
+    what puts the 10 bit sweep just over SWEEP_BUDGET_MS and the 11 bit one just under."""
+    out = {}
+    for bits in (10, 11):
+        r = Rig(lib, g=100, cfg=firmware_cfg(pwm_bits=bits))
+        r.to_hold_after_sweep()
+        s = r.sweeps[0]
+        waits = np.array([t_trigger - t_set for t_set, t_trigger, _ in r.stored])
+        out[bits] = (len(set(np.round(s["pts"][24:, 0], 6))), waits[:24].sum(), waits[24:].sum(),
+                     s["t1"] - s["t0"])
+    assert out[11][0] > 1.5 * out[10][0]                   # more distinct fine duties
+    assert out[11][1] == out[10][1]                        # coarse pass: no difference
+    assert out[11][2] < out[10][2]                         # fine pass: less waiting
+    assert abs(out[10][3] - K["SWEEP_BUDGET_MS"]) < 60 and abs(out[11][3] - K["SWEEP_BUDGET_MS"]) < 60
 
 
 def test_hand_over_keeps_the_operating_point(lib):

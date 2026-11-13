@@ -57,7 +57,12 @@ constexpr uint8_t PYR20_FC = 0x04;             // manual: FC 3 or 4; its read ex
 
 // ---- PWM (LEDC) -------------------------------------------------------------------
 constexpr uint32_t PWM_FREQ_HZ = 20000;        // load: ~20 kHz (CLAUDE.md); pump: above hearing
-constexpr uint8_t PWM_RES_BITS = 10;
+constexpr uint8_t PWM_RES_BITS = 11;           // 2048 duty steps (doc 07 section 2)
+// The LEDC timer counts 2^bits steps per PWM period from the 80 MHz APB clock, so
+// frequency x 2^bits must not exceed 80 MHz: 20 kHz x 2048 = 40.96 MHz fits, 12 bit
+// (81.92 MHz) would not. The build stops here if either value is changed beyond that.
+static_assert((uint64_t)PWM_FREQ_HZ << PWM_RES_BITS <= 80000000ULL,
+              "PWM_FREQ_HZ x 2^PWM_RES_BITS exceeds the 80 MHz LEDC clock");
 
 // ---- Measurement load (option C, two branches; decision 2026-11-11) --------------------
 // Two identical resistor branches, each with its own MOSFET, in parallel across the module:

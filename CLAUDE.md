@@ -22,8 +22,17 @@ Last synced: 2026-11-10. Full status, reasons and sources: ./PROJECT_STATE.md
 - Load (decision 2026-11-11): two 1.5 ohm branches, each with its own MOSFET. Branch A
   alone holds the MPP (D ~0.46); branch B is added only during I-V sweeps (0.75 ohm
   total) so the sweep reaches ~4.4 V and Isc. Pulse ~14 A per MOSFET [EST] -> each
-  MOSFET >= 30 A pulse, low R_DS(on); capacitor ripple ~6 A RMS continuous. Per-step
-  settle 5*tau ~15-20 ms, INA226 1.1 ms conversion x4 avg [EST, verify on bench].
+  MOSFET >= 30 A pulse, low R_DS(on); capacitor ripple ~6 A RMS continuous.
+- Sweep settling (found 2026-11-13, simulation with 2000 uF [EST], NOT measured): the
+  time constant of a duty step is tau = C / (D/R + |dI/dV|), about C*V/I below the knee,
+  so it grows as the module current falls: worst tau ~3.9 ms at 1000 W/m2 (5*tau ~20 ms),
+  ~10 ms at 400 (5*tau ~50 ms), ~18 ms at 200 (5*tau ~90 ms). A fixed 15-20 ms is 5*tau
+  only near full sun. T_SETTLE_MS = 20 is therefore only the SHORTEST wait: the firmware
+  stores a sweep point only when two INA226 readings in a row (1.1 ms conversion, x4 avg)
+  agree within 0.2 % of V_oc (SWEEP_SETTLE_TOL, the stability check in
+  firmware/libraries/PvDaq/src/pv_load_logic.c), and flags a sweep that could not settle
+  in its slot as NOT_SETTLED (32). Details: docs/paper/07 section 12; real tau: bench B4.
+- PWM: 20 kHz, 11 bit (20 kHz x 2^11 = 40.96 MHz <= 80 MHz APB; 12 bit would not fit).
 - Timestamps: RTC and logs in UTC; NASIM adds +3 h internally. Run set_rtc.py first.
 - The supervisor lends a commercial data logger: reference for validating the ESP32
   DAQ (temps, V, I, PYR20 analog); align with /markers.csv button presses.

@@ -31,7 +31,7 @@ from the NASIM alarm.
 | `R_BRANCH`, `LOAD_BRANCHES` | 1.5 Ω, 2 → `R_HOLD` = 1.5 Ω (branch A alone), `R_SWEEP` = 0.75 Ω (A and B) | `pv_config.h` |
 | PWM, branch A | GPIO33, LEDC, 20 kHz | `pv_config.h` |
 | PWM, branch B | GPIO14, second LEDC channel on the same timer (same frequency and phase); 10 kΩ pull-down on the driver input because GPIO14 toggles at boot | `pv_config.h` (decision 2026-11-12) |
-| PWM resolution | 11 bit `[REC]` (now 10 bit in `pv_config.h`; 80 MHz / 20 kHz allows 11, PINMAP) | to change with the load code |
+| PWM resolution | 11 bit (set in `pv_config.h` on 2026-11-13; 20 kHz × 2¹¹ = 40.96 MHz ≤ 80 MHz APB clock, checked at compile time) | decided |
 | Current and voltage | panel INA226 unit, between module and capacitor | CLAUDE.md |
 | Heatsink temperature | one spare DS18B20 on the resistor heatsink, by ROM | new; needed for the trip |
 
@@ -319,7 +319,7 @@ Still needed before the load is switched on (`HAS_LOAD 1`):
 Files: `PvDaq/src/pv_load_logic.{h,c}` (plain C: modes, sweep, hold, faults),
 `PvDaq/src/pv_load.{h,cpp}` (LEDC, INA226 triggered readings), the load part of
 `logger/logger.ino` (inside `if (HAS_LOAD)`), `tests/load_bench/` (bench sketch and
-`BENCH.md`), `tests/test_load_logic.py` (60 tests). `build_all.py` compiles the logger
+`BENCH.md`), `tests/test_load_logic.py` (62 tests). `build_all.py` compiles the logger
 twice: as flashed today, and with `-DHAS_LOAD=1` (`logger_load`).
 
 Where the code differs from, or adds to, the sections above:
@@ -327,12 +327,12 @@ Where the code differs from, or adds to, the sections above:
 | Topic | Design | As built, and why |
 |---|---|---|
 | Settling (§4) | fixed `T_SETTLE_MS` = 20 ms per point | 20 ms is the **shortest** wait. A point is stored only when two readings in a row at that duty agree within `SWEEP_SETTLE_TOL` (0.2 % of V_oc); the first of the two is taken while the 20 ms run, so a settled point costs no extra time. Reason: the time constant is τ = C / (D/R + \|dI/dV\|), ≈ C·V/I below the knee, so it grows as the current falls. Simulation, 2000 µF `[EST]`: worst τ ≈ 3.9 ms at 1000 W/m² (5τ ≈ 20 ms), ≈ 10 ms at 400, ≈ 18 ms at 200. A fixed 20 ms is 5τ only near full sun. Bench B4 measures the real values |
-| New flag (§4) | five flags | sixth: `NOT_SETTLED` (value 32): the sweep ran out of its slot (`SWEEP_BUDGET_MS` = 2.2 s) and stored points that had not yet repeated. In the simulation this happens at ≈ 100 W/m², not at ≥ 200 |
+| New flag (§4) | five flags | sixth: `NOT_SETTLED` (value 32): the sweep ran out of its slot (`SWEEP_BUDGET_MS` = 2.2 s) and stored points that had not yet repeated. In the simulation the flag appears at ≤ 90 W/m² with 11 bit PWM (at ≤ 100 with 10 bit: at 100 W/m² the sweep ends within 40 ms of the budget, and finer duty steps in the fine pass need fewer extra readings). Flagged sweeps are really unsettled (points up to 4 % of V_oc from their end value at 80 W/m²). Between 100 and 200 W/m² sweeps are **not** flagged although points are up to ≈ 0.55 % of V_oc from their end value: agreement of two readings 9 ms apart is a weaker test than 5τ when τ is tens of ms |
 | Flag values | not numbered | `G_UNSTABLE` 1, `MAX_AT_EDGE` 2, `NON_MONOTONIC` 4, `LOW_LIGHT` 8, `INA_ERROR` 16, `NOT_SETTLED` 32. `G_UNSTABLE` is also set when G is not known before or after. `NON_MONOTONIC` ignores rises below 0.5 % of V_oc (`SWEEP_MONO_TOL`, `[ASSUMPTION]`) |
 | Sweep slot (§6) | "right after a row" | a sweep starts when it is due **and** the next row is ≥ `SWEEP_GUARD_MS` (3 s) away. Normal mode: ≈ 0.2 s after the row. γ mode: every 15 s where that fits, never across a row |
 | `sweep_id` (§7) | "id of the last finished sweep" | the UTC start time of the sweep in Unix seconds: unique across days and restarts with no counter on the card. Without RTC time: a count since boot, in `/SWnodate.csv` and `/SSnodate.csv` |
 | First sweep | — | starts in the same pass in which the load enters `HOLD` (if a slot is free); until it ends, `V_set` = 0.78·V_oc |
-| PWM resolution (§2, §10) | 11 bit `[REC]` | **still 10 bit** (`PWM_RES_BITS` unchanged, by instruction). The logic takes the resolution from `pv_config.h`; changing it to 11 needs no code change. Effect of 10 bit: hold-voltage steps ≈ 0.1 % `[EST]`; in weak sun several fine-pass duties round to the same value |
+| PWM resolution (§2, §10) | 11 bit `[REC]` | 11 bit, as designed (Asim, 2026-11-13; it was 10 in the first commit of the code). Checked first: the LEDC timer needs frequency × 2^bits ≤ the 80 MHz APB clock; 20 kHz × 2048 = 40.96 MHz fits, 12 bit (81.92 MHz) would not. A `static_assert` in `pv_config.h` stops the build if that is ever exceeded. Not verified on a scope: bench B1 |
 | Hold loop timing (§6) | RTC edge polled once per loop pass | `syncRtcEdge()` still loops for up to 1.1 s but serves the load inside the loop. The DS18B20 conversion is started 800 ms before the row, as designed. Worst gap in hold service outside sweeps `[EST]`: an SD write or a Modbus time-out, ≈ 0.3 s |
 | INA226 failure (§8) | freeze after 3 failures | as designed in hold. In a sweep, the first failed reading ends the sweep (`INA_ERROR`, back to the old hold point) |
 | Trip log (§8) | "reason logged" | `/load_log.csv` (`date,time,uptime_ms,event`): mode changes, trip reason, INA226 freeze, commands. No new `status` bit was added |
