@@ -79,7 +79,8 @@ async function open(browser, out, query) {
     out.rule = await page.evaluate(() => {
       const d = window.roof3d.decideTier;
       return {
-        slowHigh: d("high", { median: 45, p90: 60, cpu: 3 }, false),
+        slowHigh: d("high", { median: 55, p90: 60, cpu: 3 }, false),
+        steady30: d("medium", { median: 38, p90: 42, cpu: 3 }, false),
         slowCpu: d("medium", { median: null, p90: null, cpu: 30 }, false),
         slowLow: d("low", { median: 200, p90: 250, cpu: 3 }, false),
         fastFirst: d("medium", { median: 16.7, p90: 17, cpu: 2 }, true),

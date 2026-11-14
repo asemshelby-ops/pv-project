@@ -39,7 +39,10 @@ const TIERS = {
 };
 const ORDER = ["low", "medium", "high"];
 const DROPS_MAX = TIERS.high.drops, MIST_MAX = TIERS.high.mist;
-const SLOW_MS = 30, SLOW_CPU_MS = 22, FAST_MS = 20, FAST_CPU_MS = 7;   // frame-time limits
+// Frame-time limits. "Slow" = a median frame above 45 ms (below about 22 frames/s): a steady
+// 30 frames/s (33 ms; also what Chrome's energy saver caps animation to) is smooth enough
+// here and must not push the view down to the lowest tier.
+const SLOW_MS = 45, SLOW_CPU_MS = 22, FAST_MS = 20, FAST_CPU_MS = 7;
 
 function stored(key, fallback, allowed) {
   let v = params.get(key);

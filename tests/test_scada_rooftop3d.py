@@ -141,7 +141,7 @@ def test_page_loads_follows_the_simulation_and_answers_clicks(tmp_path):
     # camera presets
     assert out["presentation"] == "presentation" and out["overview"] == "overview"
     # frame-time rule: down when slow, up only once and only when nearly all frames are fast
-    assert out["rule"] == {"slowHigh": "medium", "slowCpu": "low", "slowLow": "low",
+    assert out["rule"] == {"slowHigh": "medium", "steady30": "medium", "slowCpu": "low", "slowLow": "low",
                            "fastFirst": "high", "fastLater": "medium", "mixed": "medium"}
     auto = out["autoInfo"]
     assert auto["choice"] == "auto" and auto["quality"] in ("low", "medium", "high")

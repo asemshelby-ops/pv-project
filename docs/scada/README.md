@@ -157,7 +157,8 @@ module's size (1200 x 540 mm, portrait), rows 2.6 m apart.
 
   `auto` (default) starts at medium and measures the frame time between animation frames
   (which includes the graphics card's work) and the time of each draw call. It steps down
-  when the median frame is above 30 ms (or a draw call above 22 ms), and steps up once, at
+  when the median frame is above 45 ms, i.e. below about 22 frames/s (or a draw call above
+  22 ms; a steady 30 frames/s, also Chrome's energy-saver cap, stays), and steps up once, at
   the start, only when 90 % of the frames are under 20 ms; the corner shows the tier and the
   frame time. The 120 modules are instanced, all textures are drawn once on canvases (no
   image files, no internet), a frame is drawn only when something changes or moves, about
