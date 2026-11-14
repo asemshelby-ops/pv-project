@@ -567,3 +567,35 @@ def test_command_line_lists_chats_and_sends_a_test(tmp_path, tg, monkeypatch, ca
     tg.mode = "401"
     assert notify.main(["--config", str(cfg), "--test"]) == 1
     assert TOKEN not in capsys.readouterr().err
+
+
+# --- --demo-alarm ------------------------------------------------------------------------------------
+
+def test_demo_alarm_has_the_real_format_marked_demo(db, tg):
+    raised, cleared = notify.demo_alarm_texts("PV rig", now=T0 + 240)
+    for text in (raised, cleared):
+        assert text.startswith("DEMO - NOT A REAL ALARM")
+    # the same fault through the real path: logger rows -> alarm engine -> notifier
+    n = make(db, tg.url, T0)
+    feed(db, [{"status": BIT["TEMP_FAIL"], "T3": None}], T0)
+    n.tick(T0 + 30)
+    feed(db, [{"status": BIT["TEMP_FAIL"], "T3": None}] * 21 + [{}] * 3, T0 + 10)   # 3rd good row at T0+240
+    n.tick(T0 + 30 + notify.RATE_LIMIT_S)
+    real_raised, real_cleared = tg.texts()
+    assert raised.split("\n\n", 1)[1] == real_raised
+    assert cleared.split("\n\n", 1)[1] == real_cleared
+
+
+def test_demo_alarm_command_touches_no_historian_and_no_rate_limit(tmp_path, tg, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(notify.TelegramClient.__init__, "__defaults__", (tg.url, 2.0))
+    cfg = write_config(tmp_path / "c.json")
+    before = sorted(p.name for p in tmp_path.rglob("*"))
+    assert notify.main(["--config", str(cfg), "--demo-alarm",
+                        "--db", str(tmp_path / "h.sqlite")]) == 0
+    assert sorted(p.name for p in tmp_path.rglob("*")) == before     # no file created
+    texts = tg.texts()
+    assert len(texts) == 2 and all(t.startswith("DEMO") for t in texts)
+    assert "RAISED TEMP_FAIL (P1)" in texts[0] and "CLEARED TEMP_FAIL" in texts[1]
+    assert notify.main(["--config", str(cfg), "--demo-alarm"]) == 0      # no 30-min hold
+    assert len(tg.texts()) == 4

@@ -3,6 +3,7 @@
     python -m scada.notify --chat-id      list the chats that wrote to the bot (setup)
     python -m scada.notify --test         send one test message
     python -m scada.notify --heartbeat    send the heartbeat of the live historian now
+    python -m scada.notify --demo-alarm   send a sample alarm (raised + cleared), marked DEMO
 
 Setup (BotFather, chat ID, config file): docs/scada/telegram.md.
 `scada.run` starts the notifier by itself for LIVE data when scada/telegram.local.json
@@ -265,6 +266,71 @@ def heartbeat_text(conn, now, label="PV rig", slot=None):
     return "\n".join(lines)
 
 
+# --- alarm message format (shared by the notifier and --demo-alarm) -----------------------------
+
+def _when(ev):
+    t = ev["t"] if ev["t"] is not None else ev["wall"]
+    s = fmt_time(t)
+    if ev["t"] is not None and ev["wall"] - ev["t"] > BACKFILL_NOTE_S:
+        s += f" (row time; received {fmt_duration(ev['wall'] - ev['t'])} later)"
+    return s
+
+
+def _alarm_line(code, agg, held):
+    head = f"{code} (P{agg['priority']}) {agg['text']}"
+    n = agg["n_raised"] + agg["n_cleared"]
+    ev = agg["last"]
+    if n == 1:
+        mark = ("\U0001F534" if agg["priority"] == 1 else "\U0001F7E0") \
+            if ev["event"] == "RAISED" else "\u2705"
+        out = f"{mark} {ev['event']} {head}\n   {_when(ev)}"
+        if ev["event"] == "RAISED" and ev["detail"]:
+            out += f" - {ev['detail']}"
+        if ev["event"] == "CLEARED" and ev.get("active_s") is not None:
+            out += f", was active {fmt_duration(ev['active_s'])}"
+        return out
+    now_state = "still ACTIVE" if ev["event"] == "RAISED" else "now cleared"
+    return (f"\U0001F501 {head}\n   raised {agg['n_raised']}x, cleared {agg['n_cleared']}x "
+            f"between {_when(agg['first'])} and {_when(ev)}; {now_state}"
+            + (" (grouped by the 30-min limit)" if held else ""))
+
+
+def format_alarm_message(label, pending, codes, active, held=()):
+    """The text of one alarm message. pending: {code: aggregate of events}; active: rows
+    of open_alarms(); held: codes that already had a message (rate limit)."""
+    n_ev = sum(pending[c]["n_raised"] + pending[c]["n_cleared"] for c in codes)
+    lines = [f"{label} SCADA: {n_ev} alarm event{'s' if n_ev > 1 else ''} "
+             "(times Makkah, UTC+3)"]
+    lines += [_alarm_line(c, pending[c], c in held) for c in codes]
+    lines.append("Active now: " + (", ".join(f"{a['code']} (P{a['priority']})"
+                                             for a in active) if active else "none"))
+    return "\n".join(lines)
+
+
+DEMO_BANNER = ("DEMO - NOT A REAL ALARM. Sample of the alarm format, sent by "
+               "scada.notify --demo-alarm; no logger row, historian or rate limit involved.")
+
+
+def demo_alarm_texts(label="PV rig", now=None):
+    """Two sample messages in the real format: TEMP_FAIL raised, then cleared 4 min later.
+    Built from the alarm definition in scada/model.py; touches no file and no state."""
+    from scada import model
+    d = model.ALARM_BY_CODE["TEMP_FAIL"]
+    now = time.time() if now is None else now
+    t0 = int(now) - 240
+    base = {"priority": d.priority, "text": d.text, "seen": t0}
+    raised = {"event": "RAISED", "t": t0, "wall": t0 + 1, "detail": "no value: T3"}
+    cleared = {"event": "CLEARED", "t": t0 + 240, "wall": t0 + 241, "detail": "",
+               "active_s": 240}
+    out = []
+    for ev, active in ((raised, [{"code": d.code, "priority": d.priority}]), (cleared, [])):
+        agg = {**base, "n_raised": int(ev is raised), "n_cleared": int(ev is cleared),
+               "first": ev, "last": ev}
+        out.append(DEMO_BANNER + "\n\n"
+                   + format_alarm_message(label, {d.code: agg}, [d.code], active))
+    return out
+
+
 # --- the notifier --------------------------------------------------------------------------------
 
 def state_path_for(db_path):
@@ -358,43 +424,9 @@ class Notifier:
         return sorted(allowed, key=lambda c: (pending[c]["priority"], c))
 
     # composing -------------------------------------------------------------------------------
-    @staticmethod
-    def _when(ev):
-        t = ev["t"] if ev["t"] is not None else ev["wall"]
-        s = fmt_time(t)
-        if ev["t"] is not None and ev["wall"] - ev["t"] > BACKFILL_NOTE_S:
-            s += f" (row time; received {fmt_duration(ev['wall'] - ev['t'])} later)"
-        return s
-
-    def _alarm_line(self, code, agg):
-        held = code in self.state["last_sent"]
-        head = f"{code} (P{agg['priority']}) {agg['text']}"
-        n = agg["n_raised"] + agg["n_cleared"]
-        ev = agg["last"]
-        if n == 1:
-            mark = ("\U0001F534" if agg["priority"] == 1 else "\U0001F7E0") \
-                if ev["event"] == "RAISED" else "✅"
-            out = f"{mark} {ev['event']} {head}\n   {self._when(ev)}"
-            if ev["event"] == "RAISED" and ev["detail"]:
-                out += f" - {ev['detail']}"
-            if ev["event"] == "CLEARED" and ev.get("active_s") is not None:
-                out += f", was active {fmt_duration(ev['active_s'])}"
-            return out
-        now_state = "still ACTIVE" if ev["event"] == "RAISED" else "now cleared"
-        return (f"\U0001F501 {head}\n   raised {agg['n_raised']}x, cleared {agg['n_cleared']}x "
-                f"between {self._when(agg['first'])} and {self._when(ev)}; {now_state}"
-                + (" (grouped by the 30-min limit)" if held else ""))
-
     def alarm_text(self, conn, codes):
-        pending = self.state["pending"]
-        n_ev = sum(pending[c]["n_raised"] + pending[c]["n_cleared"] for c in codes)
-        lines = [f"{self.label} SCADA: {n_ev} alarm event{'s' if n_ev > 1 else ''} "
-                 "(times Makkah, UTC+3)"]
-        lines += [self._alarm_line(c, pending[c]) for c in codes]
-        active = open_alarms(conn)
-        lines.append("Active now: " + (", ".join(f"{a['code']} (P{a['priority']})"
-                                                 for a in active) if active else "none"))
-        return "\n".join(lines)
+        return format_alarm_message(self.label, self.state["pending"], codes,
+                                    open_alarms(conn), held=set(self.state["last_sent"]))
 
     # sending ---------------------------------------------------------------------------------
     def _send(self, text, now):
@@ -471,6 +503,9 @@ def main(argv=None):
     g.add_argument("--test", action="store_true", help="send one test message")
     g.add_argument("--heartbeat", action="store_true",
                    help="send the heartbeat of the live historian now")
+    g.add_argument("--demo-alarm", action="store_true",
+                   help="send a sample alarm (a sensor fault raised, then cleared), marked "
+                        "DEMO; touches neither the historian nor the rate limit")
     a = ap.parse_args(argv)
     try:
         if a.chat_id:
@@ -494,7 +529,10 @@ def main(argv=None):
             return 0
         cfg = load_config(a.config)
         client = TelegramClient.from_config(cfg)
-        if a.test:
+        if a.demo_alarm:
+            for text in demo_alarm_texts(cfg.label):
+                client.send(text)
+        elif a.test:
             client.send(f"{cfg.label} SCADA: test message, sent "
                         f"{fmt_time(time.time())} Makkah. Phone alerts work.")
         else:

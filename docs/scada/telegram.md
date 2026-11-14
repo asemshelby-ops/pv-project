@@ -135,7 +135,11 @@ It prints `Telegram alerts: on (chat ...)`. Without the file it prints
 `Telegram alerts: off`; with a broken file it refuses to start (so nobody believes
 alerts are on when they are not); `--no-telegram` switches them off,
 `--telegram <file>` uses another config file. To see a heartbeat without waiting for
-08:00: `python -m scada.notify --heartbeat`.
+08:00: `python -m scada.notify --heartbeat`. To show the team what an alarm looks like:
+`python -m scada.notify --demo-alarm` sends two messages (a back-sheet sensor fault
+raised, then cleared 4 min later) in exactly the format of real alarms, each headed
+`DEMO - NOT A REAL ALARM`. It reads no historian, writes no file and does not count
+toward the 30-min limit, so it can be run while the SCADA is running.
 
 ## 4. Problems
 
