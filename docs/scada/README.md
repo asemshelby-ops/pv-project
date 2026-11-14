@@ -69,6 +69,12 @@ DTR and RTS low for this reason), and that the logger's commands (`GAMMA`, `LOAD
 
 ### 4. The rooftop twin: a SIMULATION, on its own page
 
+On Windows, double-click `start-rooftop.bat` (this page) or `start-scada-demo.bat` (the
+replay demo) in the project folder; `make-desktop-shortcuts.bat` puts both on the Desktop.
+Each switches to `twin-sim` only when no tracked file has uncommitted changes (otherwise it
+warns and starts nothing), starts the server, opens the page once the server answers, and
+keeps its window open: close the window to stop.
+
 ```
 .venv\Scripts\python -m scada.run --sim                  only the simulation
 .venv\Scripts\python -m scada.run --replay --sim nasim   next to a replay (or to live data)
