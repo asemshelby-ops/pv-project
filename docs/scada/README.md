@@ -11,6 +11,7 @@ anything to the board.
 |---|---|
 | [architecture.md](architecture.md) | the parts, the data flow, the two design choices (SQLite, light web app), the alarm life cycle, known limits |
 | [tag-list.md](tag-list.md) | generated: tags, units, ranges, status bits, alarm bits, alarm definitions |
+| [telegram.md](telegram.md) | phone alerts through a Telegram bot: what is sent, rate limit, daily heartbeat, BotFather setup, chat ID |
 | [roadmap.md](roadmap.md) | what comes later (MQTT from the ESP32, remote access, the cooling actuator), all marked FUTURE |
 
 ## How to run it (Windows, from the project folder)
@@ -165,6 +166,18 @@ module's size (1200 x 540 mm, portrait), rows 2.6 m apart.
   30 per second while a zone sprays, and none while the view is off screen or the tab is
   hidden. Without WebGL the view says so and the table shows the same values.
 
+### 5. Phone alerts (Telegram)
+
+With live data (`--folder` / `--serial`) the SCADA sends a Telegram message when an alarm
+of priority 1 or 2 is raised or cleared (at most one per alarm code every 30 min, grouped
+into one message), and a heartbeat every day at 08:00 Makkah time. Never for a replay or
+the simulation. It needs `scada/telegram.local.json` (git-ignored); without it alerts are
+off. Setup with BotFather and the chat ID: [telegram.md](telegram.md).
+
+```
+.venv\Scripts\python -m scada.notify --test
+```
+
 ### Where the data goes
 
 | File | Content |
@@ -174,6 +187,7 @@ module's size (1200 x 540 mm, portrait), rows 2.6 m apart.
 | `out/scada/replay_live/` | the folder the replay writes into |
 | `out/scada/demo_source/` | the demo data set |
 | `out/scada/simulation.sqlite` | the rooftop SIMULATION, emptied at every start; never real data |
+| `out/scada/historian.telegram.json` | the phone alerts' state: last journal event read, pending events, last message per code, last heartbeat |
 
 `out/` is not in git. Live and replay never share a file: a replay refuses to start on a
 live historian and the other way round (`--db` selects another file).
@@ -201,7 +215,7 @@ live historian and the other way round (`--db` selects another file).
 ### Tests
 
 ```
-.venv\Scripts\python -m pytest tests/test_scada_ingest.py tests/test_scada_alarms.py tests/test_scada_stack.py tests/test_scada_sim.py tests/test_scada_rooftop3d.py tests/test_scada_together.py
+.venv\Scripts\python -m pytest tests/test_scada_ingest.py tests/test_scada_alarms.py tests/test_scada_stack.py tests/test_scada_sim.py tests/test_scada_rooftop3d.py tests/test_scada_together.py tests/test_scada_notify.py
 ```
 
 `test_scada_rooftop3d.py` also loads the page in headless Chromium (load, live updates,
@@ -220,3 +234,4 @@ is skipped and says why.
 | port 8050 busy | `--port 8051` |
 | `... is a 'live' historian, not a simulation file: not touched` | by design: the simulation only empties its own file |
 | rooftop page says the simulation is not running | start `scada.run` with `--sim` |
+| `Telegram alerts: ...` | see [telegram.md](telegram.md), section 4; `--no-telegram` starts without alerts |

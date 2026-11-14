@@ -7,3 +7,6 @@ __pycache__/
 node_modules/
 *.lnk
 scada-live.cfg
+
+# Telegram bot token and chat ID (scada/notify.py): local only, never commit
+scada/telegram.local.json

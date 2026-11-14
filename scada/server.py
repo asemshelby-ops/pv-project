@@ -5,7 +5,8 @@ network (remote access is on the roadmap, docs/scada/roadmap.md). The only thing
 can change is the acknowledgement of an alarm; it cannot reach the logger.
 
   GET  /api/model      tags, bits and alarm definitions (scada/model.py)
-  GET  /api/state      newest row decoded, sensor health, alarm counts, ingest counters
+  GET  /api/state      newest row decoded, sensor health, alarm counts, ingest counters,
+                       state of the Telegram alerts (scada/notify.py)
   GET  /api/series     ?span=<s>&end=<unix s>&points=<n>   time series for the charts
   GET  /api/alarms     ?which=open|all
   GET  /api/journal
@@ -149,6 +150,8 @@ class Handler(BaseHTTPRequestHandler):
                 body = model.as_json()
             elif url.path == "/api/state":
                 body = state(conn, self.server.info)
+                ns = self.server.notify_status
+                body["telegram"] = ns() if ns else {"enabled": False}
             elif url.path == "/api/series":
                 body = series(conn, float(q.get("span", 3 * 3600)),
                               float(q["end"]) if q.get("end") else None,
@@ -216,13 +219,16 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, {"error": str(e)})
 
 
-def make_server(db_path, info, port=8050, sim_db_path=None, sim_info=None):
+def make_server(db_path, info, port=8050, sim_db_path=None, sim_info=None,
+                notify_status=None):
     """info: {"mode": "live" | "replay", ...} shown by the HMI. port 0 = any free port.
-    sim_db_path: the simulation file of scada/sim_source.py, or None (no simulation)."""
+    sim_db_path: the simulation file of scada/sim_source.py, or None (no simulation).
+    notify_status: callable giving the Telegram notifier's state (scada/notify.py), or None."""
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     server.db_path, server.info = str(db_path), info
     server.sim_db_path = None if sim_db_path is None else str(sim_db_path)
     server.sim_info = sim_info or {}
+    server.notify_status = notify_status
     return server
 

@@ -1,0 +1,6 @@
+{
+  "_comment": "Copy to scada/telegram.local.json (git-ignored) and fill in both values. Setup: docs/scada/telegram.md",
+  "bot_token": "<the token BotFather gave you, e.g. 123456789:AAH...>",
+  "chat_id": 0,
+  "label": "PV rig"
+}

@@ -64,10 +64,13 @@ Not read yet: `/SW*.csv`, `/SS*.csv` (I-V sweeps), `/load_log.csv`, `/rom_scan.t
 | `scada/web/vendor/three-0.160.0/` | Three.js, vendored for the 3D view only (MIT; source and hashes in its README) |
 | `scada/replay.py` | feeds recorded files faster than real time |
 | `scada/demo_data.py` | builds the synthetic demo set |
+| `scada/notify.py` | phone alerts through a Telegram bot: alarm messages, daily heartbeat ([telegram.md](telegram.md)) |
 | `scada/run.py` | starts everything in one process |
 
-One process, a few threads (folder ingest, optional serial, optional replay, the web
-server). Each thread has its own SQLite connection; the file is in WAL mode so the page
+One process, a few threads (folder ingest, optional serial, optional replay, optional
+Telegram notifier, the web server). The notifier only reads the historian (new events of
+`alarm_journal`, and the rows for the heartbeat) and sends over the internet; a slow or
+unreachable Telegram cannot hold up the ingest. Each thread has its own SQLite connection; the file is in WAL mode so the page
 can read while the ingest writes.
 
 ## 3. Tag list and data model
@@ -247,7 +250,7 @@ and only a historian whose `meta.mode` is `replay`.
 
 ## 9. What is tested, what is not
 
-Tested (65 tests, `tests/test_scada_*.py`, all on synthetic or typed rows):
+Tested (127 tests, `tests/test_scada_*.py`, all on synthetic or typed rows):
 
 - ingest: the three formats, mixed files, growing files, restart, duplicates, replaced
   file, rows without RTC time (same times as the offline loader), unplaceable rows,
@@ -255,6 +258,10 @@ Tested (65 tests, `tests/test_scada_*.py`, all on synthetic or typed rows):
 - alarms: each bit, the life cycle, the 3-row clear delay, restart in the middle of an
   alarm, old-format rows, rows without time, evaluation order, the no-data alarm
   (also in a replay that stops and resumes);
+- phone alerts against a mocked Telegram API: which alarms are sent, grouping, the
+  30-min limit without losing events, the heartbeat (on time, once a day, late after a
+  restart), Telegram failing / hanging / asking to wait, a restart with pending events,
+  the ingest going on while Telegram hangs, the token never printed;
 - tag model against the firmware header and the schema; replay; the fault scenario; the
   API including acknowledge; the separation of live and replay historians.
 
@@ -263,6 +270,7 @@ strip, health, alarm list, acknowledge, history, journal, 7-day view, tooltip).
 
 Not tested:
 
+- a message to the real Telegram, and whether the campus network allows it;
 - anything with the real board: the serial port (DTR/RTS reset behaviour), real files
   from the SD card, real fault patterns;
 - long runs (weeks of data in the historian, the page left open for days);
