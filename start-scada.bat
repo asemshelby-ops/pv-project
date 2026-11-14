@@ -14,6 +14,8 @@ set "URL=http://127.0.0.1:8050"
 cd /d "%~dp0"
 
 rem --- 1. git: only switch to twin-sim when no tracked file has uncommitted changes ------------
+rem A folder from GitHub's "Download ZIP" has no .git: run its files as they are, no git needed.
+if not exist ".git" goto :nogit
 where git >nul 2>&1 || (echo ERROR: git was not found on PATH. & goto :fail)
 set "DIRTY="
 for /f "delims=" %%L in ('git status --porcelain --untracked-files^=no 2^>nul') do set "DIRTY=1"
@@ -30,12 +32,16 @@ if /i not "%BRANCH%"=="twin-sim" (
   echo Switching from branch "%BRANCH%" to twin-sim ...
   git checkout twin-sim || (echo ERROR: could not switch to twin-sim. & goto :fail)
 )
+goto :python
+:nogit
+echo No git repository in this folder ^(a "Download ZIP" copy^): using its files as they are.
+
+:python
 
 rem --- 2. Python of the project ------------------------------------------------------------------
 if not exist ".venv\Scripts\python.exe" (
-  echo ERROR: .venv\Scripts\python.exe not found. Create it once, in this folder:
-  echo   python -m venv .venv
-  echo   .venv\Scripts\python -m pip install -r requirements.txt
+  echo ERROR: .venv\Scripts\python.exe not found. Double-click setup-windows.bat in this
+  echo folder once ^(it creates .venv and installs the packages^), then start again.
   goto :fail
 )
 

@@ -1,5 +1,28 @@
 # SCADA layer (post-paper work)
 
+## For teammates (Windows, no git needed)
+
+1. **Python 3.12 or newer, 64-bit.** Download the "Windows installer (64-bit)" from
+   <https://www.python.org/downloads/windows/>. On the installer's first screen tick
+   **"Add python.exe to PATH"**. (3.10 and 3.11 do not work: the pinned packages have no
+   Windows versions for them.)
+2. **Get the project.** On the GitHub page of the repository choose branch `twin-sim`, then
+   **Code → Download ZIP** (you must be signed in with an account that has access). Right-click
+   the ZIP → **Extract All...**; you get a folder like `pv-project-twin-sim`. Do not run
+   anything from inside the ZIP.
+3. **Double-click `setup-windows.bat`** in that folder. It checks Python, creates `.venv`,
+   installs `requirements.txt` (needs internet, several minutes) and puts **PV SCADA** on
+   your Desktop. If Windows says "Windows protected your PC", click *More info → Run anyway*
+   (it does that for any file downloaded from the internet).
+4. **Double-click PV SCADA** on the Desktop. The first start asks to build the demo data:
+   answer `Y` and wait a few minutes. The dashboard opens in the browser; close the black
+   window to stop it. The demo data are SYNTHETIC and the rooftop page is a SIMULATION.
+
+To update: download and extract a new ZIP and run `setup-windows.bat` there; the Desktop
+shortcut then points to the new folder (copy `scada-live.cfg` across if you made one).
+If something fails, the window says why and what to do; the table under
+[Problems](#problems) covers the SCADA itself.
+
 Branch `scada-prep`. This is preparation for the project **after** the paper; nothing here
 is used by the paper, and nothing in `firmware/` or `analysis/` is changed by it.
 
@@ -71,13 +94,15 @@ DTR and RTS low for this reason), and that the logger's commands (`GAMMA`, `LOAD
 ### 4. The rooftop twin: a SIMULATION, on its own page
 
 **Everything in one server (Windows):** double-click `start-scada.bat` in the project folder
-(`make-desktop-shortcuts.bat` puts a "PV SCADA" shortcut on the Desktop). It runs
+(`make-desktop-shortcuts.bat` puts a "PV SCADA" shortcut on the Desktop; `setup-windows.bat` does
+the whole first-time setup, see "For teammates" above). It runs
 `scada.run <real-module source> --sim`: the real module's source and this simulation in one
 process, still each with its own file and API. The real-module source is LIVE when a file
 `scada-live.cfg` exists in the project folder (one line of arguments, e.g.
 `--folder D:\sd_copy --serial COM5`; ignored by git), else the replay demo at 600x (built
 once if missing, after asking). It switches to `twin-sim` only when no tracked file has
-uncommitted changes (otherwise it warns and starts nothing), opens the dashboard once the
+uncommitted changes (otherwise it warns and starts nothing; a "Download ZIP" copy without
+`.git` skips git entirely), opens the dashboard once the
 server answers, and keeps its window open: close the window to stop. A bar at the top of both
 pages switches between "Real module · dashboard" and "Rooftop twin (SIMULATION)".
 
