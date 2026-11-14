@@ -48,6 +48,6 @@ ax[0].set_ylabel("Recall")
 ax[0].set_ylim(0, 1.05)
 ax[1].set_ylabel("Median delay (min)")
 ax[0].legend(loc="lower center", bbox_to_anchor=(1.1, 1.0), ncols=4)
-fig.text(0.995, 0.01, "SYNTHETIC DATA", ha="right", fontsize=7, color="#b03a10",
+fig.text(0.5, -0.06, "SYNTHETIC DATA", ha="center", fontsize=7, color="#b03a10",
          fontweight="bold")
 fig.savefig(sys.argv[2], dpi=300, bbox_inches="tight")

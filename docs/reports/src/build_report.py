@@ -42,12 +42,12 @@ sec.header_distance = sec.footer_distance = Cm(0.9)
 st = doc.styles["Normal"]
 st.font.name = "Calibri"
 st.element.rPr.rFonts.set(qn("w:eastAsia"), "Calibri")
-st.font.size = Pt(10.5)
+st.font.size = Pt(10)
 st.font.color.rgb = INK
-st.paragraph_format.space_after = Pt(5)
-st.paragraph_format.line_spacing = 1.12
+st.paragraph_format.space_after = Pt(4)
+st.paragraph_format.line_spacing = 1.07
 
-for name, size, before, after in (("Heading 1", 14, 14, 5), ("Heading 2", 11.5, 9, 3)):
+for name, size, before, after in (("Heading 1", 13.5, 11, 4), ("Heading 2", 11, 7, 2)):
     h = doc.styles[name]
     h.font.name = "Calibri"
     h.element.rPr.rFonts.set(qn("w:asciiTheme"), "")
@@ -61,7 +61,7 @@ for name, size, before, after in (("Heading 1", 14, 14, 5), ("Heading 2", 11.5, 
 for name in ("List Bullet", "List Number"):
     s = doc.styles[name]
     s.font.name = "Calibri"
-    s.font.size = Pt(10.5)
+    s.font.size = Pt(10)
     s.paragraph_format.space_after = Pt(2.5)
 
 
@@ -121,8 +121,17 @@ def B(text):
     return P(text, style="List Bullet")
 
 
-def N(text):
-    return P(text, style="List Number")
+_num = [0]
+
+
+def N(text, restart=False):
+    _num[0] = 1 if restart else _num[0] + 1
+    p = P(f"{_num[0]}.\t" + text)
+    f = p.paragraph_format
+    f.left_indent, f.first_line_indent = Cm(0.63), Cm(-0.63)
+    f.tab_stops.add_tab_stop(Cm(0.63))
+    f.space_after = Pt(2.5)
+    return p
 
 
 def H1(text):
@@ -146,7 +155,10 @@ def box(text, fill=NOTE_FILL, color=INK, size=10):
         p.paragraph_format.space_after = Pt(2)
         rich(p, line, size, color)
     _borders(t, "BFBDB7")
-    doc.add_paragraph().paragraph_format.space_after = Pt(0)
+    set_widths(t, [16.6])
+    sp = doc.add_paragraph()
+    sp.paragraph_format.space_after = Pt(0)
+    sp.paragraph_format.line_spacing = 0.6
     return t
 
 
@@ -161,6 +173,26 @@ def _borders(table, colour="9E9C96", size="4"):
         e.set(qn("w:color"), colour)
         b.append(e)
     pr.append(b)
+
+
+def set_widths(t, widths):
+    """Fixed layout with explicit grid widths (Word and LibreOffice both honour it)."""
+    t.autofit = False
+    pr = t._tbl.tblPr
+    lay = OxmlElement("w:tblLayout")
+    lay.set(qn("w:type"), "fixed")
+    pr.append(lay)
+    tw = OxmlElement("w:tblW")
+    tw.set(qn("w:w"), str(int(sum(widths) * 567)))
+    tw.set(qn("w:type"), "dxa")
+    for old in pr.findall(qn("w:tblW")):
+        pr.remove(old)
+    pr.append(tw)
+    for gc, w in zip(t._tbl.tblGrid.findall(qn("w:gridCol")), widths):
+        gc.set(qn("w:w"), str(int(w * 567)))
+    for row in t.rows:
+        for j, w in enumerate(widths):
+            row.cells[j].width = Cm(w)
 
 
 def caption(text):
@@ -205,9 +237,7 @@ def table(header, rows, widths=None, size=8.5, bold_rows=(), caption_text=None,
         cant = OxmlElement("w:cantSplit")
         row._tr.get_or_add_trPr().append(cant)
     if widths:
-        for row in t.rows:
-            for j, w in enumerate(widths):
-                row.cells[j].width = Cm(w)
+        set_widths(t, widths)
     sp = doc.add_paragraph()
     sp.paragraph_format.space_after = Pt(2)
     return t
@@ -310,8 +340,8 @@ table(["Cause label", "Rule (f_G = share of the rise explained by the irradiance
 P("Without an anemometer, wind cannot be observed, so the honest labels are "
   "“irradiance-driven or not”. The cause rule is checked on controlled tests whose cause "
   "is known (shade mesh removed = irradiance; windbreak = non-irradiance).")
-figure("fig1_example_day.png", 16.4,
-       "Figure 1. One SYNTHETIC day from the 150-day set: module temperature with the "
+figure("fig1_example_day.png", 13.2,
+       "Figure 1. One SYNTHETIC test day (the generator's calendar date 2027-04-04): module temperature with the "
        "labelled spikes, irradiance, and the alarm times of the detectors (pipeline figure "
        "fig1_example_day).")
 
@@ -367,7 +397,7 @@ P("**Split by whole days, in time order** — never random samples, which would 
   "information between neighbouring samples:")
 table(["Part", "Days", "Use"],
       [["Training", "90 (first 60 %)", "fit the trees; 193 spikes"],
-       ["Validation", "30 (next 20 %)", "choose every setting of every detector (p threshold, "
+       ["Validation", "30 (next 20 %)", "81 spikes; choose every setting of every detector (p threshold, "
                                          "rise limit, κ and h, irradiance step)"],
        ["Test", "30 (last 20 %)", "scored once, after all choices: 85 spikes, 39 of them not "
                                    "irradiance-driven; 340 valid daytime hours"]],
@@ -384,7 +414,7 @@ P("The feature code was written once in Python in a form that translates line by
   "and writes p and the alarm bit to the SD card. The logger runs in **double precision**; "
   "settings reach the firmware only through generated header files, so the board cannot "
   "drift from the analysis.")
-figure("fig_pipeline.png", 16.4,
+figure("fig_pipeline.png", 13.5,
        "Figure 2. What NASIM-GBT does with each 10 s sample on the ESP32. The diagram shows "
        "the processing steps only; it contains no results.")
 
@@ -420,21 +450,22 @@ box("**SYNTHETIC.** 30 test days, 85 spikes, 340 valid daytime hours. False alar
     "alarms that were real spikes; F1 = their harmonic mean; delay = alarm time − spike "
     "onset; lead = time by which the alarm precedes the 3 °C crossing.", size=9.3)
 table(["Detector", "TP/FN/FP", "Precision", "Recall (95 % CI)", "F1 (95 % CI)",
-       "False alarms /day", "Delay, min median (IQR)", "Lead, min", "Rise left at alarm"],
+       "False alarms /day (95 % CI)", "Delay, min median (IQR)", "Lead, min", "Rise left at alarm"],
       [["Threshold, fixed 3.0 °C", "84/1/1", "0.99", "0.99 (0.96–1.00)", "0.99 (0.97–1.00)",
-        "0.04", "8.0 (5.5–9.8)", "−0.7", "38 %"],
+        "0.04 (0.00–0.11)", "8.0 (5.5–9.8)", "−0.7", "38 %"],
        ["Threshold, tuned 2.7 °C", "85/0/2", "0.98", "1.00 (1.00–1.00)", "0.99 (0.97–1.00)",
-        "0.07", "7.3 (5.0–8.7)", "−0.5", "43 %"],
-       ["CUSUM", "83/2/4", "0.95", "0.98 (0.94–1.00)", "0.97 (0.94–0.99)", "0.14",
+        "0.07 (0.00–0.18)", "7.3 (5.0–8.7)", "−0.5", "43 %"],
+       ["CUSUM", "83/2/4", "0.95", "0.98 (0.94–1.00)", "0.97 (0.94–0.99)", "0.14 (0.00–0.32)",
         "5.7 (2.7–9.8)", "+0.5", "54 %"],
        ["Irradiance step", "40/45/11", "0.78", "0.47 (0.38–0.54)", "0.59 (0.50–0.66)",
-        "0.39", "0.5 (0.3–0.8)", "+2.8", "99 %"],
-       ["NASIM-GBT", "81/4/0", "1.00", "0.95 (0.91–0.99)", "0.98 (0.95–0.99)", "0.00",
+        "0.39 (0.18–0.64)", "0.5 (0.3–0.8)", "+2.8", "99 %"],
+       ["NASIM-GBT", "81/4/0", "1.00", "0.95 (0.91–0.99)", "0.98 (0.95–0.99)", "0.00 (0.00–0.00)",
         "1.8 (0.5–5.7)", "+3.0", "74 %"]],
-      widths=[2.9, 1.6, 1.4, 2.2, 2.2, 1.5, 2.1, 1.2, 1.4], size=7.8, bold_rows=(4,),
+      widths=[2.6, 1.6, 1.4, 2.1, 2.1, 2.0, 2.0, 1.1, 1.3], size=7.6, bold_rows=(4,),
       caption_text="Table 5. Each detector at its F1-tuned setting, test days (docs/paper/11 "
-                   "§3). The pipeline reports intervals for recall and F1; false alarms and "
-                   "delay are compared through the paired differences below.")
+                   "§3; pipeline table2_detection). Intervals: day bootstrap. For the delay the "
+                   "interquartile range (IQR) is given; delays are compared through the "
+                   "paired differences below.")
 P("**Paired differences, NASIM-GBT minus baseline** (mean, 95 % interval, same resampled "
   "days, F1-tuned settings):")
 B("vs tuned threshold: F1 −0.01 (−0.04 to +0.02); median delay **−5.2 min (−6.3 to −3.5)**.")
@@ -453,21 +484,21 @@ P("A detector set to alarm readily is early by construction, so delays must be c
   "spikes; that setting is then scored on the test days. The realised test rate is "
   "reported, because it need not equal the budget.")
 table(["Budget /day", "Detector", "Setting", "Test FA /day", "Test recall", "Delay, min",
-       "NASIM − this, delay min (95 % CI)"],
-      [["0.05 and 0.1", "Threshold", "2.7 °C", "0.07", "1.00", "7.3", "−5.2 (−6.3 to −3.5)"],
-       ["", "CUSUM", "κ 0.05, h 0.5", "0.07", "0.87", "2.0", "+0.3 (−0.8 to +1.8)"],
-       ["", "NASIM-GBT", "p 0.98", "0.00", "0.95", "1.8", ""],
-       ["**0.2 (primary)**", "Threshold", "2.1 °C", "0.18", "1.00", "6.0", "−4.1 (−5.2 to −2.9)"],
-       ["", "CUSUM", "κ 0.05, h 0.5", "0.07", "0.87", "2.0", "−0.1 (−1.0 to +0.8)"],
-       ["", "NASIM-GBT", "p 0.95", "0.07", "1.00", "1.8", ""],
-       ["0.5", "Threshold", "2.0 °C", "0.64", "1.00", "5.8", "−4.2 (−5.2 to −3.2)"],
-       ["", "CUSUM", "κ 0.05, h 0.5", "0.07", "0.87", "2.0", "−0.4 (−1.2 to +0.3)"],
-       ["", "NASIM-GBT", "p 0.90", "0.32", "1.00", "1.7", ""]],
-      widths=[2.4, 2.2, 2.3, 1.8, 1.7, 1.5, 4.6], size=8,
+       "NASIM − this: delay, min (95 % CI)", "NASIM − this: recall (95 % CI)"],
+      [["0.05 and 0.1", "Threshold", "2.7 °C", "0.07", "1.00", "7.3", "−5.2 (−6.3 to −3.5)", "−0.05 (−0.09 to −0.01)"],
+       ["", "CUSUM", "κ 0.05, h 0.5", "0.07", "0.87", "2.0", "+0.3 (−0.8 to +1.8)", "+0.08 (+0.02 to +0.15)"],
+       ["", "NASIM-GBT", "p 0.98", "0.00", "0.95", "1.8", "", ""],
+       ["**0.2 (primary)**", "Threshold", "2.1 °C", "0.18", "1.00", "6.0", "−4.1 (−5.2 to −2.9)", "+0.00 (+0.00 to +0.00)"],
+       ["", "CUSUM", "κ 0.05, h 0.5", "0.07", "0.87", "2.0", "−0.1 (−1.0 to +0.8)", "+0.13 (+0.07 to +0.19)"],
+       ["", "NASIM-GBT", "p 0.95", "0.07", "1.00", "1.8", "", ""],
+       ["0.5", "Threshold", "2.0 °C", "0.64", "1.00", "5.8", "−4.2 (−5.2 to −3.2)", "+0.00 (+0.00 to +0.00)"],
+       ["", "CUSUM", "κ 0.05, h 0.5", "0.07", "0.87", "2.0", "−0.4 (−1.2 to +0.3)", "+0.13 (+0.07 to +0.19)"],
+       ["", "NASIM-GBT", "p 0.90", "0.32", "1.00", "1.7", "", ""]],
+      widths=[2.0, 1.9, 2.0, 1.4, 1.3, 1.2, 3.4, 3.4], size=7.6,
       caption_text="Table 6. Matched false-alarm comparison, test days (docs/paper/11 §3a, "
                    "pipeline table8_matched_false_alarms). The irradiance step has no row: "
                    "no setting finds 90 % of the spikes (its recall never exceeds 0.47).")
-figure("fig6_delay_vs_false_alarms.png", 16.4,
+figure("fig6_delay_vs_false_alarms.png", 15.0,
        "Figure 3. SYNTHETIC test days. Left: the shortest median delay each detector reaches "
        "with at most x false alarms per day, among its settings that still find 90 % of the "
        "spikes (open markers: the F1-tuned settings of Table 5). Right: the highest recall "
@@ -490,7 +521,7 @@ table(["Detector", "irradiance (n = 46)", "non_irradiance (n = 25)", "mixed (n =
       caption_text="Table 7. Per cause, test days, F1-tuned settings: recall / F1 / median "
                    "delay in min (docs/paper/11 §3). Precision per cause uses all false "
                    "alarms, because a false alarm has no cause.")
-figure("fig_per_cause.png", 16.0,
+figure("fig_per_cause.png", 12.0,
        "Figure 4. The values of Table 7 as bars (SYNTHETIC). Left: recall; right: median "
        "delay. The irradiance step finds no non-irradiance or mixed spike, so it has no "
        "delay bar there.")
@@ -543,8 +574,9 @@ table(["Build", "Detector", "Alarms Python / C", "At the same row", "Only Python
       widths=[1.6, 2.4, 3.0, 2.4, 3.0, 4.2], size=8.5,
       caption_text="Table 8. Parity of the C code with Python, 150 SYNTHETIC days "
                    "(docs/paper/11 §6, parity.json). Double, NASIM: largest |Δp| "
-                   "1.1 × 10⁻¹⁶, worst feature difference 7.8 × 10⁻¹⁶. The board runs "
-                   "double; the float rows are for information.")
+                   "1.1 × 10⁻¹⁶, worst feature difference 7.8 × 10⁻¹⁶ (doc 11; the re-run of "
+                   "14 Nov on Linux gave 1.11 × 10⁻¹⁶ and 0, all alarm counts identical). "
+                   "The board runs double; the float rows are for information.")
 box("**Important qualification.** The zero-mismatch result was obtained with the logger's "
     "C source in double precision **compiled for the PC** (x86-64, gcc -O2), not with the "
     "ESP32 binary. The threshold rule and CUSUM use only add, subtract, divide and compare, "
@@ -649,7 +681,7 @@ B("Detectors count samples as their time base: after k skipped rows (k ≤ 4) a 
   "window spans 10 min + k·10 s, so a rate is understated by up to ≈ 7 % (accepted; the "
   "offline analysis uses the same rule).")
 H2("What the real data must show")
-N("θ = 3 °C must sit above normal heating: on clear periods with no event, the 99.9th "
+N(restart=True, text="θ = 3 °C must sit above normal heating: on clear periods with no event, the 99.9th "
   "percentile of the 10-min rise must be below 3 °C. If the morning warm-up alone reaches "
   "it, the analysis window is restricted rather than θ quietly raised.")
 N("Enough spikes: ≥ 50 for training and ≥ 20 on the test days, ≥ 8 of them not "
@@ -663,7 +695,7 @@ N("NASIM, retrained on real data, must meet C1–C3 at 0.2 false alarms per day;
 N("The on-board replay must again give 0 alarm mismatches with the retrained model, and "
   "the time per row must be measured on the board.")
 H2("What we need from you")
-N("**Confirm or change the pre-registered criteria** before the first field day: the "
+N(restart=True, text="**Confirm or change the pre-registered criteria** before the first field day: the "
   "primary budget of 0.2 false alarms per day, recall ≥ 0.90, ≥ 50 % of the rise remaining, "
   "and the precondition counts (Section 7).")
 N("**Decide whether controlled spikes count** towards the 20 test spikes and the 8 "
@@ -677,7 +709,7 @@ N("**Whether pilot logging at open circuit may start before the load exists**, s
 N("**Approval of the anemometer**, which would make the wind-lull cause observable, and "
   "the loan of the commercial data logger for validating the ESP32 measurements.")
 
-P("")
+
 P("Sources in the repository: docs/paper/03-spike-definition-and-metrics.md, "
   "docs/paper/11-pipeline-and-synthetic-results.md, docs/paper/07-load-firmware-spec.md §7, "
   "config.py, detect/, export/c/; out/paper_demo/seed5/verdict.json and parity.json "
@@ -685,5 +717,7 @@ P("Sources in the repository: docs/paper/03-spike-definition-and-metrics.md, "
   "Figures 1 and 3 are the pipeline's own figures; Figures 2 and 4 are drawn by "
   "docs/reports/src/.", size=8.5, color=MUTED)
 
+doc.core_properties.author = "Asim and the project team"
+doc.core_properties.title = "NASIM-GBT detector: status report (synthetic results)"
 doc.save(OUT)
 print("wrote", OUT)
