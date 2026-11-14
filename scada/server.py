@@ -1,4 +1,4 @@
-"""HMI server: a small JSON API and three static files, standard library only.
+"""HMI server: a small JSON API and its static files, standard library only.
 
 It listens on 127.0.0.1 only: there is no login, so it must not be reachable from the
 network (remote access is on the roadmap, docs/scada/roadmap.md). The only thing the HMI
@@ -18,6 +18,10 @@ never reads or writes the historian of the real module (scada/sim_source.py):
   GET  /api/sim/series   ?span=<s>&end=<unix s>&points=<n>
   GET  /api/sim/alarms   ?which=open|all          GET /api/sim/journal
   POST /api/sim/ack      as /api/ack, for the simulation's alarms
+
+The 3D view of /rooftop (rooftop3d.js) also reads GET /api/state, only to draw our real
+module apart from the rooftop and labelled as the only measured one; nothing of it goes
+into the simulation, and no simulated value is drawn on it.
 """
 import json
 import math
@@ -33,7 +37,13 @@ WEB = pathlib.Path(__file__).resolve().parent / "web"
 STATIC = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascript"),
           "/style.css": ("style.css", "text/css"),
           "/rooftop": ("rooftop.html", "text/html"),
-          "/rooftop.js": ("rooftop.js", "text/javascript")}
+          "/rooftop.js": ("rooftop.js", "text/javascript"),
+          "/rooftop3d.js": ("rooftop3d.js", "text/javascript"),
+          # Three.js for the 3D view of the rooftop page, vendored so the SCADA works offline
+          "/vendor/three-0.160.0/three.module.min.js":
+              ("vendor/three-0.160.0/three.module.min.js", "text/javascript"),
+          "/vendor/three-0.160.0/OrbitControls.js":
+              ("vendor/three-0.160.0/OrbitControls.js", "text/javascript")}
 SIM_OFF = {"available": False, "simulation": True,
            "hint": "The rooftop simulation is not running. Start it with: "
                    "python -m scada.run --sim"}

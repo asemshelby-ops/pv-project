@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SIMULATION · Rooftop twin</title>
 <link rel="stylesheet" href="style.css">
+<!-- Three.js 0.160.0, vendored (works offline): scada/web/vendor/three-0.160.0/README.md -->
+<script type="importmap">{"imports": {"three": "/vendor/three-0.160.0/three.module.min.js"}}</script>
 </head>
 <body class="sim">
 <header class="top">
@@ -33,10 +35,30 @@
 
 <section class="tiles" id="tiles" aria-label="Newest simulated step"></section>
 
+<section class="card" id="view3d">
+  <h2>Rooftop in 3D <small>simulated; each module coloured by its back-sheet temperature, same scale as the table below</small></h2>
+  <div class="legend">
+    <span><span class="scaleLo">20</span>&nbsp;degC <i class="scalebar"></i> <span class="scaleHi">70</span>&nbsp;degC</span>
+    <span><i class="box" style="background:var(--series-1)"></i>valve open, spray over the string</span>
+    <span><i class="dot"></i>module with one of the string's five sensors</span>
+    <span>▲ in a string's label: open alarm</span>
+    <span><i class="box" style="background:var(--ink)"></i>our real module, apart on its own stand with its own tag: the only measured one</span>
+  </div>
+  <p id="v3msg" class="note" hidden></p>
+  <div class="v3">
+    <div id="v3stage" class="stage">
+      <span class="badge replay">SIMULATION</span>
+      <button id="v3reset" type="button" class="reset">Reset view</button>
+      <span class="hint">drag: orbit · scroll: zoom · right-drag: pan · click: values</span>
+    </div>
+    <aside id="v3info" class="v3info" aria-live="polite"></aside>
+  </div>
+</section>
+
 <section class="card" id="overview">
   <h2>Strings, spray zones and valves <small>simulated; each cell is one module, coloured by its back-sheet temperature</small></h2>
   <div class="legend">
-    <span><span id="scaleLo">20</span>&nbsp;degC <i id="scaleBar" class="scalebar"></i> <span id="scaleHi">70</span>&nbsp;degC</span>
+    <span><span class="scaleLo">20</span>&nbsp;degC <i class="scalebar"></i> <span class="scaleHi">70</span>&nbsp;degC</span>
     <span><i class="dot"></i>module with one of the string's five sensors</span>
     <span><i class="box" style="background:var(--series-1)"></i>valve open: zone is sprayed</span>
     <span><i class="box" style="background:var(--detector)"></i>detector alarm</span>
@@ -90,5 +112,6 @@
 
 <div id="tip" class="tip" hidden></div>
 <script src="rooftop.js"></script>
+<script type="module" src="rooftop3d.js"></script>
 </body>
 </html>

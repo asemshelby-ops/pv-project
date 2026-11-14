@@ -91,7 +91,7 @@ pipeline's synthetic run (`python -m analysis.demo_synth`).
 - the page has an orange `SIMULATION` badge and banner at all times, and the time shown
   is the simulated time of the weather day, not the clock.
 
-On the page: tiles (irradiance, string power against the same rooftop without cooling,
+On the page: a 3D view of the rooftop (below); tiles (irradiance, string power against the same rooftop without cooling,
 pump and valve power, net energy and water of the simulated day, tank temperature); one
 row per string with its valve, its 20 modules coloured by temperature (a dot marks the
 five modules that carry the string's sensors), sensor temperature, power, voltage and
@@ -99,6 +99,34 @@ current; charts of string temperature, power, and valves and detector alarms per
 the simulation's alarm list, history and journal. The spike alarms come from the
 controller's detector, or, for controllers without one, from a detector that only watches.
 Model, assumptions and placeholders: `docs/twin/`.
+
+**3D view** (`scada/web/rooftop3d.js`, Three.js 0.160.0 vendored in
+`scada/web/vendor/three-0.160.0/`, so it works without internet). A flat roof with the 6
+strings of 20 modules tilted 20 deg facing south, the pump and tank, the manifold, and one
+branch, valve and spray pipe per string. The layout is a drawing, not a plant design: our
+module's size (1200 x 540 mm, portrait), rows 2.6 m apart.
+
+- Each module is coloured by its simulated temperature, on the same fixed scale (20 to
+  70 degC) and legend as the string table, and follows the simulation (once a second).
+- A string whose valve is open shows the valve lit in the valve colour and a light spray
+  (droplets running down the glass and a white sheen); its label says "spraying" and an
+  open alarm of the string adds "▲ spike / hot / bypass".
+- Drag to orbit, scroll to zoom, right-drag to pan, **Reset view** to come back. Clicking a
+  module shows its temperature, sensor, soiling and wind factor and its string's values;
+  clicking a string's label, valve or pipe shows the string; clicking the pump or tank shows
+  pump, flow and water.
+- A `SIMULATION` badge sits on the view at all times; every value in the side panel is
+  tagged SIMULATED.
+- **Our real module** stands apart, on its own stand west of the roof, with a dark tag "the
+  only measured one". It is the one object that reads `/api/state` (the real module's newest
+  row, read-only); it is coloured by the measured module temperature (mean of T1..T5) on the
+  same scale, grey when no row exists. Clicking it shows the measured values, LIVE or
+  "REPLAY ...: not live measurements" as on the module page. Nothing of it enters the
+  simulation, and no simulated value is drawn on it.
+- Light: the 120 modules are two instanced meshes, no shadows, at most 1.5x pixel ratio. A
+  frame is drawn only when the view moves or new data arrive, about 30 per second while a
+  zone sprays, and none while the view is scrolled off screen or the tab is hidden. Without
+  WebGL the view says so and the table shows the same values.
 
 ### Where the data goes
 
@@ -136,8 +164,13 @@ live historian and the other way round (`--db` selects another file).
 ### Tests
 
 ```
-.venv\Scripts\python -m pytest tests/test_scada_ingest.py tests/test_scada_alarms.py tests/test_scada_stack.py tests/test_scada_sim.py
+.venv\Scripts\python -m pytest tests/test_scada_ingest.py tests/test_scada_alarms.py tests/test_scada_stack.py tests/test_scada_sim.py tests/test_scada_rooftop3d.py
 ```
+
+`test_scada_rooftop3d.py` also loads the page in headless Chromium (load, live updates,
+colours, spray, clicks, real module, no drawing off screen). That part needs Node.js with
+Playwright (in the repository folder: `npm install --no-save playwright`, then `npx playwright install chromium`); without them it
+is skipped and says why.
 
 ### Problems
 

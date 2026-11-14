@@ -2,6 +2,7 @@
 // Rooftop twin page. EVERYTHING shown here is a SIMULATION (twin/, placeholder parameters).
 // It reads /api/sim/* only: the simulation's own file, never the historian of the real
 // module. Plain JavaScript, no library. Text from the server goes in with textContent.
+// The 3D view (rooftop3d.js) gets each state from here and uses the same colour scale.
 
 const $ = (id) => document.getElementById(id);
 const TZ_S = 3 * 3600;                       // Makkah = UTC+3
@@ -105,9 +106,11 @@ function renderRoof() {
   });
   $("roof").tHead.replaceChildren(head);
   $("roof").tBodies[0].replaceChildren(...rows);
-  $("scaleLo").textContent = SCALE.lo; $("scaleHi").textContent = SCALE.hi;
+  // every scale bar of the page (table and 3D view) shows the same scale
+  document.querySelectorAll(".scaleLo").forEach((e) => { e.textContent = SCALE.lo; });
+  document.querySelectorAll(".scaleHi").forEach((e) => { e.textContent = SCALE.hi; });
   const ramp = dark() ? [...RAMP].reverse() : RAMP;
-  $("scaleBar").style.background = `linear-gradient(90deg, ${ramp.join(",")})`;
+  document.querySelectorAll(".scalebar").forEach((e) => { e.style.background = `linear-gradient(90deg, ${ramp.join(",")})`; });
 }
 
 // ---- charts ----------------------------------------------------------------------------------
@@ -323,6 +326,8 @@ async function tick() {
     if (!on) { $("offHint").textContent = S.state.hint; return; }
     await renderAlarms();
     renderState();
+    RoofShared.last = { state: S.state, open: S.open };
+    window.dispatchEvent(new CustomEvent("roof:state", { detail: RoofShared.last }));
     const newest = S.state.latest ? S.state.latest.t_utc : 0, key = `${newest}|${S.span}`;
     if (key !== S.key) {
       const at = S.hover >= 0 && S.data ? S.data.t[S.hover] : null;
@@ -335,6 +340,10 @@ async function tick() {
     $("age").textContent = "SCADA server not reachable"; $("age").className = "pill bad";
   } finally { setTimeout(tick, 1000); }
 }
+// shared with the 3D view (a module script): one colour scale, one way to write values
+const RoofShared = { SCALE, tempColor, css, dark, el, num, local, last: null };
+window.RoofShared = RoofShared;
+
 function init() {
   for (const [label, span] of RANGES) {
     const b = el("button", label, span === S.span ? "on" : ""); b.type = "button";

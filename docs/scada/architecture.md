@@ -60,7 +60,8 @@ Not read yet: `/SW*.csv`, `/SS*.csv` (I-V sweeps), `/load_log.csv`, `/rom_scan.t
 | `scada/ingest.py` | `RowParser`, `FolderIngest`, `SerialIngest` |
 | `scada/alarms.py` | alarm life cycle, acknowledge, history, journal |
 | `scada/server.py` | the API and the static files |
-| `scada/web/` | the HMI page |
+| `scada/web/` | the HMI pages (module page, rooftop SIMULATION page with its 3D view) |
+| `scada/web/vendor/three-0.160.0/` | Three.js, vendored for the 3D view only (MIT; source and hashes in its README) |
 | `scada/replay.py` | feeds recorded files faster than real time |
 | `scada/demo_data.py` | builds the synthetic demo set |
 | `scada/run.py` | starts everything in one process |
@@ -147,7 +148,7 @@ because the schema is fixed and every query is "these columns over this time ran
 | Install | none; served by the same Python process | a service to install; plus a SQLite plugin |
 | Alarm acknowledge and history | plain buttons writing to our tables | Grafana alerting has silences, not an operator acknowledge against our alarm table; a second app would be needed anyway |
 | Status-bit decoding, "not recorded" for old files | a few lines of code | awkward in SQL panels |
-| Works offline on the lab PC | yes: no CDN, no library | yes |
+| Works offline on the lab PC | yes: no CDN; one vendored library (Three.js), only for the 3D view of the simulation page | yes |
 | Charts | hand-written, limited to what we need | much richer, zoom, ad-hoc queries |
 | Explaining it at the defence | 3 short files | a product configuration |
 
