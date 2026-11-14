@@ -46,14 +46,27 @@
     <span><i class="box" style="background:var(--series-1)"></i>valve open, spray over the string</span>
     <span><i class="dot"></i>module with one of the string's five sensors</span>
     <span>▲ in a string's label: open alarm</span>
+    <span>sun and shadows: Makkah at the simulated time (drawing only)</span>
     <span><i class="box" style="background:var(--ink)"></i>our real module, apart on its own stand with its own tag: the only measured one</span>
   </div>
   <p id="v3msg" class="note" hidden></p>
   <div class="v3">
     <div id="v3stage" class="stage">
       <span class="badge replay">SIMULATION</span>
-      <button id="v3reset" type="button" class="reset">Reset view</button>
+      <div class="ctl">
+        <span id="v3mode" class="seg" role="group" aria-label="Module look">
+          <button type="button" data-mode="heat">Heat map</button>
+          <button type="button" data-mode="realistic">Realistic</button>
+        </span>
+        <button id="v3present" type="button">Presentation</button>
+        <button id="v3reset" type="button">Overview</button>
+        <label class="q">quality <select id="v3quality">
+          <option value="auto">auto</option><option value="high">high</option>
+          <option value="medium">medium</option><option value="low">low</option></select></label>
+      </div>
+      <span id="v3modeNote" class="modenote" hidden>Realistic look: temperatures on click and in the table below</span>
       <span class="hint">drag: orbit · scroll: zoom · right-drag: pan · click: values</span>
+      <span id="v3perf" class="perf"></span>
     </div>
     <aside id="v3info" class="v3info" aria-live="polite"></aside>
   </div>

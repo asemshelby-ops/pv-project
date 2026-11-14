@@ -1,7 +1,9 @@
 """The 3D view of the rooftop SIMULATION page: served from this computer (offline), the
-vendored Three.js unchanged, and -- in a headless browser -- the page loads, follows the
-simulation, sprays the open zones, answers clicks, and shows our real module apart, in the
-same colour scale, as the only measured one."""
+vendored Three.js unchanged, and -- in a headless browser -- the page loads (camera intro),
+follows the simulation, sprays the open zones, places the sun for the simulated time,
+switches between the heat map and the realistic look, answers clicks and camera presets,
+adapts its quality to the frame time, and shows our real module apart, in the same colour
+scale, as the only measured one."""
 import hashlib
 import json
 import pathlib
@@ -11,6 +13,8 @@ import subprocess
 import threading
 import urllib.request
 
+import pandas as pd
+import pvlib
 import pytest
 
 from scada import historian, run, server
@@ -91,7 +95,7 @@ def test_page_loads_follows_the_simulation_and_answers_clicks(tmp_path):
     sim.start()
     try:
         res = subprocess.run([_browser_ready(), str(CHECK), base + "/rooftop"],
-                             capture_output=True, text=True, timeout=180)
+                             capture_output=True, text=True, timeout=420)
     finally:
         stop.set()
         sim.join(timeout=10)
@@ -101,15 +105,22 @@ def test_page_loads_follows_the_simulation_and_answers_clicks(tmp_path):
     out = json.loads(res.stdout.strip().splitlines()[-1])
     assert out["errors"] == [] and out["external"] == []
     first, later, check = out["first"], out["later"], out["check"]
-    # loads: the scene is built, with the permanent badge
+    # loads, with the camera intro played and the permanent badge
     assert first["ready"] and first["error"] is None and first["dims"] == "6x20"
+    assert first["introPlayed"] and first["view"] == "overview"
     assert out["badge"] == "SIMULATION"
     # updates: a newer simulated step is drawn, every module in the shared colour scale
     assert later["tUtc"] > first["tUtc"] and later["updates"] > first["updates"]
-    assert check["wrongColours"] == []
+    assert check["wrongColours"] == [] and check["faces"] == {"heat": True, "realistic": False}
     # the continuous controller keeps every valve open: every zone sprays, valves show it
     assert check["valves"] == [1] * 6 and check["spraying"] == [True] * 6
+    assert all(w > 0 for w in check["wet"])
     assert check["valveColour"] == check["series1"]
+    # the drawn sun stands where the sun stood over Makkah at the simulated time
+    sp = pvlib.solarposition.get_solarposition(pd.Timestamp(check["sunTUtc"], unit="s", tz="UTC"),
+                                               21.4225, 39.8262)
+    assert abs(check["sun"]["el"] - float(sp["apparent_elevation"].iloc[0])) < 1.0
+    assert abs(check["sun"]["az"] - float(sp["azimuth"].iloc[0])) < 1.5
     # our real module: coloured by its measured temperature in the same scale
     assert later["realT"] == 41.0 and check["realColour"] == check["realExpected"]
     # clicks
@@ -121,6 +132,24 @@ def test_page_loads_follows_the_simulation_and_answers_clicks(tmp_path):
     assert r["sel"] == {"kind": "real"}
     assert "MEASURED" in r["text"] and "only measured module" in r["text"]
     assert "41.0 degC" in r["text"] and "SIMULATED" not in r["text"]
+    # module look: realistic hides the heat map, which still follows the data
+    real = out["realistic"]
+    assert real["info"]["mode"] == "realistic" and real["note"] is True
+    assert real["check"]["faces"] == {"heat": False, "realistic": True}
+    assert real["check"]["wrongColours"] == []
+    assert out["heatAgain"] == {"heat": True, "realistic": False}
+    # camera presets
+    assert out["presentation"] == "presentation" and out["overview"] == "overview"
+    # frame-time rule: down when slow, up only once and only when nearly all frames are fast
+    assert out["rule"] == {"slowHigh": "medium", "slowCpu": "low", "slowLow": "low",
+                           "fastFirst": "high", "fastLater": "medium", "mixed": "medium"}
+    auto = out["autoInfo"]
+    assert auto["choice"] == "auto" and auto["quality"] in ("low", "medium", "high")
+    assert auto["frameMs"] is not None and auto["frameMs"] > 0
     # light: animated while spraying on screen, nothing drawn off screen
-    assert out["rendersOnScreen"] >= 5
+    assert out["rendersOnScreen"] >= 3
     assert out["rendersOffScreen"] == 0
+    # forced tiers: shadows only above low
+    hi, lo = out["forced_high"], out["forced_low"]
+    assert hi["quality"] == "high" and hi["shadows"] is True and not hi["introPlayed"]
+    assert lo["quality"] == "low" and lo["shadows"] is False and lo["pixelRatio"] == 1

@@ -1,61 +1,174 @@
 // 3D view of the rooftop SIMULATION (page /rooftop). Everything on the rooftop is SIMULATED
 // (twin/, placeholder parameters); its values come from rooftop.js, which reads /api/sim/*.
 //
-// One object is NOT simulated: our real module, drawn apart on its own stand and labelled as
-// the only measured one. Only that object reads /api/state (the real module's newest row,
-// read-only). Its values are never mixed with the simulation, and no simulated value is
-// ever drawn on it.
+// One object is NOT simulated: our real module, drawn apart on its own stand on the ground
+// and labelled as the only measured one. Only that object reads /api/state (the real
+// module's newest row, read-only). Its values are never mixed with the simulation, and no
+// simulated value is ever drawn on it.
 //
+// What is drawing only, not data: the look of the modules (an illustrative 4 x 9 cell grid:
+// our module's cell count is NOT known), the roof, its parapet, AC units and access door, the
+// sky, and the sun, placed for Makkah at the SIMULATED time of the newest step. Nothing here
+// changes the simulation or its values.
+//
+// Two module looks: "heat" (every module in the shared colour scale of the page, exact, no
+// lighting on the colour) and "realistic" (cells, frame, glass reflections; temperatures
+// then come from a click and from the table).
+//
+// Fast on a normal laptop: the 120 modules are instanced, textures are drawn once on canvases
+// (offline, no image files), a frame is drawn only when something changes or animates, and
+// nothing is drawn off screen. Quality has three tiers (pixel ratio, shadow map, droplets);
+// "auto" measures the frame time and steps down when it is slow.
 // Three.js 0.160.0 is vendored in vendor/three-0.160.0/ (the SCADA must work offline).
-// Light by design: two instanced meshes for the 120 modules, a few dozen other meshes, no
-// shadows, and a frame is drawn only when something changed (view moved, new data) or,
-// while a zone is sprayed, at about 30 frames per second. Nothing is drawn while the view
-// is scrolled off screen or the tab is hidden.
 import * as THREE from "three";
 import { OrbitControls } from "/vendor/three-0.160.0/OrbitControls.js";
 
 const R = window.RoofShared;                  // shared with rooftop.js: one colour scale
 const $ = (id) => document.getElementById(id);
 const deg = Math.PI / 180;
+const params = new URLSearchParams(location.search);
 
 // Display layout, NOT a plant design [ASSUMPTION]: modules of our rig's size (1200 x 540 mm)
 // in portrait, tilt 20 deg facing south, one row per string. +x = east, +z = south, y = up.
-const G = { w: 0.54, l: 1.2, t: 0.035, gap: 0.03, tilt: 20 * deg, pitch: 2.6, clear: 0.35 };
-const SPRAY_N = 140;                          // droplets drawn per sprayed string
+const G = { w: 0.54, l: 1.2, t: 0.035, gap: 0.03, tilt: 20 * deg, pitch: 2.6, clear: 0.35, bldgH: 3.6 };
+const SITE = { lat: 21.4225, lon: 39.8262 };  // Makkah: only to place the drawn sun
+const TIERS = {
+  low: { pr: 1, shadow: 0, drops: 110, mist: 10 },
+  medium: { pr: 1.25, shadow: 1024, drops: 220, mist: 18 },
+  high: { pr: 2, shadow: 2048, drops: 360, mist: 28 },
+};
+const ORDER = ["low", "medium", "high"];
+const DROPS_MAX = TIERS.high.drops, MIST_MAX = TIERS.high.mist;
+const SLOW_MS = 30, SLOW_CPU_MS = 22, FAST_MS = 20, FAST_CPU_MS = 7;   // frame-time limits
+
+function stored(key, fallback, allowed) {
+  let v = params.get(key);
+  if (!v) { try { v = localStorage.getItem("scada.3d." + key); } catch (e) { v = null; } }
+  return allowed.includes(v) ? v : fallback;
+}
+function store(key, v) { try { localStorage.setItem("scada.3d." + key, v); } catch (e) { /* not kept */ } }
 
 const V = {                                   // the view's state; window.roof3d reads it (tests)
   ready: false, error: null, renders: 0, updates: 0, tUtc: null, dims: "",
   state: null, open: [], real: null, realError: false, sel: null, visible: true,
+  mode: stored("mode", "heat", ["heat", "realistic"]),
+  choice: stored("quality", "auto", ["auto", ...ORDER]),
+  tier: "medium", frameMs: null, cpuMs: null, decided: false,
+  sun: { el: 60, az: 180 }, envKey: "", tween: null, intro: false, introPlayed: false, view: "overview",
 };
 let renderer, scene, camera, controls, roof, realObj, raycaster, pickables = [];
-let pending = false, lastFrame = 0, sprayTimer = null;
+let sky, skyMat, envScene, pmrem, envRT, sunLight, hemi;
+let pending = false, insideFrame = false, chained = false, dirty = true, lastFrame = 0, lastRender = 0;
+const perf = { intervals: [], cpu: [] };
+const TEX = {};
 
 // ---- small helpers ---------------------------------------------------------------------------
-const color = (cssVar) => new THREE.Color(R.css(cssVar) || "#888");
 function mat(kind, cssVar, extra = {}) {
-  const m = kind === "basic" ? new THREE.MeshBasicMaterial(extra) : new THREE.MeshLambertMaterial(extra);
+  const m = kind === "basic" ? new THREE.MeshBasicMaterial(extra) : new THREE.MeshStandardMaterial(extra);
   m.userData.cssVar = cssVar;
   if (cssVar) m.color.set(R.css(cssVar));
   return m;
 }
-function box(w, h, d, material, x, y, z) {
+function box(w, h, d, material, x, y, z, shadows = true) {
   const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
   b.position.set(x, y, z);
+  b.castShadow = b.receiveShadow = shadows;
   return b;
 }
 function pipe(a, b, material, r = 0.035) {    // a cylinder from point a to point b
   const va = new THREE.Vector3(...a), vb = new THREE.Vector3(...b), len = va.distanceTo(vb);
-  const p = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 8, 1), material);
+  const p = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10, 1), material);
   p.position.copy(va).add(vb).multiplyScalar(0.5);
   p.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), vb.clone().sub(va).normalize());
+  p.castShadow = true;
   return p;
 }
+const pct = (a, q) => { if (!a.length) return null; const s = [...a].sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; };
+const median = (a) => pct(a, 0.5);
+const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+const mix = (a, b, t) => a + (b - a) * t;
+const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
+
+// ---- textures, drawn once on canvases (no image files, works offline) ------------------------
+function canvasTex(w, h, draw, srgb = true) {
+  const cv = document.createElement("canvas"); cv.width = w; cv.height = h;
+  draw(cv.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(cv);
+  if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  return t;
+}
+function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+function makeTextures() {
+  // module face: an ILLUSTRATIVE 4 x 9 grid of mono cells with busbars; not our module's count
+  TEX.cells = canvasTex(256, 568, (g, w, h) => {
+    g.fillStyle = "#dfe3e8"; g.fillRect(0, 0, w, h);                     // backsheet between cells
+    const cols = 4, rows = 9, m = 7, gap = 3, cw = (w - 2 * m - (cols - 1) * gap) / cols, ch = (h - 2 * m - (rows - 1) * gap) / rows;
+    const r = rng(7);
+    for (let i = 0; i < cols; i++) for (let j = 0; j < rows; j++) {
+      const x = m + i * (cw + gap), y = m + j * (ch + gap), c = 6;      // cut corners of mono cells
+      const gr = g.createLinearGradient(x, y, x + cw, y + ch);
+      const k = 0.9 + 0.2 * r();
+      gr.addColorStop(0, `rgb(${18 * k},${36 * k},${72 * k})`); gr.addColorStop(1, `rgb(${26 * k},${50 * k},${96 * k})`);
+      g.fillStyle = gr;
+      g.beginPath(); g.moveTo(x + c, y); g.lineTo(x + cw - c, y); g.lineTo(x + cw, y + c); g.lineTo(x + cw, y + ch - c);
+      g.lineTo(x + cw - c, y + ch); g.lineTo(x + c, y + ch); g.lineTo(x, y + ch - c); g.lineTo(x, y + c); g.closePath(); g.fill();
+      g.strokeStyle = "rgba(70,100,150,.35)"; g.lineWidth = 0.6;               // fingers
+      for (let f = y + 3; f < y + ch; f += 3.2) { g.beginPath(); g.moveTo(x + 1, f); g.lineTo(x + cw - 1, f); g.stroke(); }
+      g.strokeStyle = "#b9c1cc"; g.lineWidth = 1.4;                             // busbars
+      for (let b = 1; b <= 3; b++) { const bx = x + (cw * b) / 4; g.beginPath(); g.moveTo(bx, y); g.lineTo(bx, y + ch); g.stroke(); }
+    }
+  });
+  TEX.concrete = canvasTex(512, 512, (g, w, h) => {
+    g.fillStyle = "#b8b3a8"; g.fillRect(0, 0, w, h);
+    const r = rng(11);
+    for (let k = 0; k < 22000; k++) {                                      // aggregate speckle
+      const v = 150 + 70 * r(); g.fillStyle = `rgba(${v},${v - 4},${v - 10},${0.25 + 0.4 * r()})`;
+      g.fillRect(r() * w, r() * h, 1 + 2 * r(), 1 + 2 * r());
+    }
+    for (let k = 0; k < 14; k++) {                                         // stains
+      const x = r() * w, y = r() * h, s = 30 + 90 * r(), gr = g.createRadialGradient(x, y, 0, x, y, s);
+      gr.addColorStop(0, `rgba(90,85,75,${0.06 + 0.08 * r()})`); gr.addColorStop(1, "rgba(90,85,75,0)");
+      g.fillStyle = gr; g.fillRect(x - s, y - s, 2 * s, 2 * s);
+    }
+    g.strokeStyle = "rgba(70,66,58,.55)"; g.lineWidth = 3; g.strokeRect(1.5, 1.5, w - 3, h - 3);  // slab joints
+  });
+  TEX.concrete.wrapS = TEX.concrete.wrapT = THREE.RepeatWrapping;
+  TEX.sand = canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = "#c8b593"; g.fillRect(0, 0, w, h);
+    const r = rng(3);
+    for (let k = 0; k < 9000; k++) { const v = 160 + 60 * r(); g.fillStyle = `rgba(${v},${v - 18},${v - 50},.35)`; g.fillRect(r() * w, r() * h, 1.5, 1.5); }
+  });
+  TEX.sand.wrapS = TEX.sand.wrapT = THREE.RepeatWrapping; TEX.sand.repeat.set(40, 40);
+  TEX.fan = canvasTex(128, 128, (g, w) => {
+    g.fillStyle = "#c9ccd0"; g.fillRect(0, 0, w, w);
+    g.fillStyle = "#2b2e33"; g.beginPath(); g.arc(64, 64, 54, 0, 7); g.fill();
+    g.strokeStyle = "#8d9299"; g.lineWidth = 2;
+    for (let r0 = 12; r0 < 54; r0 += 7) { g.beginPath(); g.arc(64, 64, r0, 0, 7); g.stroke(); }
+    for (let a = 0; a < 4; a++) { g.beginPath(); g.moveTo(64, 64); g.lineTo(64 + 54 * Math.cos(a * Math.PI / 2), 64 + 54 * Math.sin(a * Math.PI / 2)); g.stroke(); }
+  });
+  TEX.louvre = canvasTex(64, 64, (g, w) => {
+    g.fillStyle = "#d6d9dd"; g.fillRect(0, 0, w, w);
+    g.fillStyle = "#9aa0a8"; for (let y = 4; y < w; y += 8) g.fillRect(4, y, w - 8, 3);
+  });
+  TEX.drop = canvasTex(64, 64, (g) => {
+    const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, "rgba(255,255,255,1)"); gr.addColorStop(0.25, "rgba(225,240,255,.85)"); gr.addColorStop(1, "rgba(200,225,255,0)");
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  });
+  TEX.mist = canvasTex(64, 64, (g) => {
+    const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+    gr.addColorStop(0, "rgba(255,255,255,.55)"); gr.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  });
+}
+
+// ---- labels ----------------------------------------------------------------------------------
 function label(lines, height = 0.02, strong = false) {
   // A text tag that always faces the camera, at a constant size on screen (`height` = share
   // of the view's height per line), drawn on a canvas with the page's colours.
   const cv = document.createElement("canvas"), tex = new THREE.CanvasTexture(cv);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false }));
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true, sizeAttenuation: false, toneMapped: false, fog: false }));
   sp.renderOrder = 10;
   sp.userData.label = { lines: null, height, strong, cv, tex };
   setLabel(sp, lines);
@@ -86,6 +199,133 @@ function setLabel(sp, lines, force = false) {
   sp.scale.set(h * cv.width / cv.height, h, 1);
 }
 
+// ---- sky, sun and light ----------------------------------------------------------------------
+function sunPosition(tUtc) {
+  // Sun elevation and azimuth (deg, azimuth from north, clockwise) at Makkah; low-precision
+  // almanac (about 0.5 deg), enough to place the drawn sun and its shadows.
+  const d = tUtc / 86400 - 10957.5;                                     // days since J2000.0
+  const g = (357.529 + 0.98560028 * d) * deg, q = 280.459 + 0.98564736 * d;
+  const L = (q + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * deg, e = (23.439 - 3.6e-7 * d) * deg;
+  const ra = Math.atan2(Math.cos(e) * Math.sin(L), Math.cos(L)), dec = Math.asin(Math.sin(e) * Math.sin(L));
+  const gmst = (18.697374558 + 24.06570982441908 * d) * 15;
+  const H = ((gmst + SITE.lon) * deg - ra), lat = SITE.lat * deg;
+  const el = Math.asin(Math.sin(lat) * Math.sin(dec) + Math.cos(lat) * Math.cos(dec) * Math.cos(H));
+  const az = Math.atan2(-Math.sin(H), Math.tan(dec) * Math.cos(lat) - Math.sin(lat) * Math.cos(H));
+  return { el: el / deg, az: ((az / deg) % 360 + 360) % 360 };
+}
+function sunDir(s) {
+  const el = s.el * deg, az = s.az * deg;
+  return new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
+}
+function skyColours(el) {
+  const c = (h) => new THREE.Color(h), day = clamp((el - 2) / 14, 0, 1), night = clamp((-el - 1) / 8, 0, 1);
+  const top = c("#5d7fb5").lerp(c("#3d7bd0"), day).lerp(c("#0b1430"), night);
+  const hor = c("#f0b47a").lerp(c("#d2e4f3"), day).lerp(c("#1c2846"), night);
+  const bot = c("#8b8174").lerp(c("#a49b8b"), day).lerp(c("#0f1116"), night);
+  return { top, hor, bot, day, night };
+}
+function buildSky() {
+  skyMat = new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false, fog: false,
+    uniforms: { top: { value: new THREE.Color() }, hor: { value: new THREE.Color() }, bot: { value: new THREE.Color() },
+      sunDir: { value: new THREE.Vector3(0, 1, 0) }, sunGlow: { value: 1 } },
+    vertexShader: `varying vec3 vDir;
+      void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `uniform vec3 top; uniform vec3 hor; uniform vec3 bot; uniform vec3 sunDir; uniform float sunGlow;
+      varying vec3 vDir;
+      void main() {
+        float h = vDir.y;
+        vec3 c = h > 0.0 ? mix(hor, top, pow(h, 0.5)) : mix(hor, bot, pow(-h, 0.35));
+        float s = max(dot(normalize(vDir), sunDir), 0.0);
+        c += sunGlow * (vec3(1.0, 0.95, 0.85) * pow(s, 900.0) * 3.0 + vec3(1.0, 0.85, 0.6) * pow(s, 10.0) * 0.18);
+        gl_FragColor = vec4(c, 1.0);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+  });
+  sky = new THREE.Mesh(new THREE.SphereGeometry(200, 32, 16), skyMat);
+  sky.frustumCulled = false;
+  scene.add(sky);
+  envScene = new THREE.Scene();
+  envScene.add(new THREE.Mesh(sky.geometry, skyMat));
+  pmrem = new THREE.PMREMGenerator(renderer);
+}
+function applySun() {
+  const st = V.state, r = st && st.latest;
+  if (r) V.sun = sunPosition(r.t_utc);
+  const s = V.sun, dir = sunDir(s), k = skyColours(s.el);
+  skyMat.uniforms.top.value.copy(k.top); skyMat.uniforms.hor.value.copy(k.hor); skyMat.uniforms.bot.value.copy(k.bot);
+  skyMat.uniforms.sunDir.value.copy(dir); skyMat.uniforms.sunGlow.value = s.el > -2 ? 1 : 0;
+  // brightness: the elevation, dimmed by the simulated irradiance when clouds pass
+  const clear = Math.max(0, Math.sin(s.el * deg)), g = r && r.g !== null ? r.g : null;
+  const cloud = g === null || clear < 0.05 ? 1 : clamp(g / (1000 * clear + 1e-6), 0.3, 1);
+  sunLight.intensity = 3.2 * Math.pow(clear, 0.5) * cloud;
+  sunLight.color.setHSL(0.09, clamp(0.9 - k.day * 0.8, 0.05, 0.9), 0.5 + 0.45 * k.day);
+  hemi.intensity = 0.35 + 1.15 * k.day * (0.6 + 0.4 * cloud);
+  hemi.color.copy(k.top).lerp(new THREE.Color("#ffffff"), 0.72); hemi.groundColor.copy(k.bot);
+  scene.fog.color.copy(k.hor);
+  if (roof) {
+    const c = roof.center;
+    sunLight.target.position.copy(c);
+    sunLight.position.copy(c).addScaledVector(dir, 45);
+  }
+  const key = `${Math.round(s.el / 4)}|${Math.round(s.az / 20)}`;      // the reflections follow the sky
+  if (key !== V.envKey) {
+    V.envKey = key;
+    const old = envRT;
+    envRT = pmrem.fromScene(envScene, 0.02, 0.1, 400);
+    scene.environment = envRT.texture;
+    if (old) old.dispose();
+  }
+}
+
+// ---- quality tiers and the frame-time watch -------------------------------------------------
+function decideTier(tier, m, allowUp) {
+  // m = {median, p90} of the frame interval (ms, between chained animation frames: includes the
+  // GPU's time) and cpu = median time of the render call. Step down when frames are slow; step
+  // up once, at the first decision, only when nearly all frames are fast.
+  const i = ORDER.indexOf(tier);
+  const slow = (m.median !== null && m.median > SLOW_MS) || (m.cpu !== null && m.cpu > SLOW_CPU_MS);
+  const fast = m.p90 !== null && m.p90 < FAST_MS && m.cpu !== null && m.cpu < FAST_CPU_MS;
+  if (slow && i > 0) return ORDER[i - 1];
+  if (fast && allowUp && i < ORDER.length - 1) return ORDER[i + 1];
+  return tier;
+}
+function setTier(t) {
+  V.tier = t;
+  const T = TIERS[t];
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, T.pr));
+  const on = T.shadow > 0;
+  if (renderer.shadowMap.enabled !== on || (on && sunLight.shadow.mapSize.x !== T.shadow)) {
+    renderer.shadowMap.enabled = on; sunLight.castShadow = on;
+    if (on) sunLight.shadow.mapSize.set(T.shadow, T.shadow);
+    if (sunLight.shadow.map) { sunLight.shadow.map.dispose(); sunLight.shadow.map = null; }
+    scene.traverse((o) => { if (o.material) o.material.needsUpdate = true; });
+  }
+  if (roof) roof.strings.forEach((x) => { x.drops.geometry.setDrawRange(0, T.drops); x.mist.geometry.setDrawRange(0, T.mist); });
+  perf.intervals.length = perf.cpu.length = 0;
+  resize();
+  showPerf();
+}
+function watchPerf() {
+  if (V.choice !== "auto") return;
+  const iv = perf.intervals, n = iv.length;
+  if (n < 30 && perf.cpu.length < 30) return;
+  const m = { median: n >= 30 ? median(iv) : null, p90: n >= 90 ? pct(iv, 0.9) : null, cpu: median(perf.cpu) };
+  const next = decideTier(V.tier, m, !V.decided);
+  if (next !== V.tier) { V.decided = true; setTier(next); return; }
+  if (n >= 90) { V.decided = true; perf.intervals.length = 0; perf.cpu.length = 0; }   // judged: keep the tier
+}
+function showPerf() {
+  const el = $("v3perf");
+  if (!el) return;
+  const iv = median(perf.intervals), cpu = median(perf.cpu);
+  const ms = iv !== null && perf.intervals.length >= 10 ? iv : cpu;
+  if (ms !== null) V.frameMs = ms;                     // keep the last value after a tier change
+  el.textContent = `quality ${V.choice === "auto" ? "auto → " : ""}${V.tier}` +
+    (V.frameMs !== null ? ` · ${V.frameMs.toFixed(0)} ms/frame` : "");
+}
+
 // ---- the rooftop -----------------------------------------------------------------------------
 function moduleTransform(s, m) {
   const o = roof.geo, x = o.x0 + m * (G.w + G.gap), z = o.zRow[s];
@@ -100,120 +340,175 @@ function buildRoof(st) {
   const zTop = zRow.map((z) => z - half * Math.cos(G.tilt)), zBot = zRow.map((z) => z + half * Math.cos(G.tilt));
   const xW = -rowLen / 2, xE = rowLen / 2, xMan = xE + 1.4, yPipe = yTop + 0.07;
   const zS = zRow[n - 1] + 2.4;                              // pump and tank, south-east corner
-  roof = { group, n, m, geo: { x0, zRow, zTop, zBot, yTop, yPipe, xW, xE, xMan, rowLen }, strings: [] };
+  const minX = xW - 2.6, maxX = xMan + 3.6, minZ = zRow[0] - 4.2, maxZ = zS + 1.6;
+  const W = maxX - minX, D = maxZ - minZ, cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+  roof = { group, n, m, geo: { x0, zRow, zTop, zBot, yTop, yPipe, xW, xE, xMan, rowLen }, strings: [],
+    bounds: { minX, maxX, minZ, maxZ }, center: new THREE.Vector3(cx, 0, cz) };
 
-  // roof slab and a low parapet
-  const minX = xW - 2.6, maxX = xMan + 3.6, minZ = zRow[0] - 2.2, maxZ = zS + 1.6;
-  const slab = mat("lambert", "--unknown"), wall = mat("lambert", "--axis");
-  group.add(box(maxX - minX, 0.3, maxZ - minZ, slab, (minX + maxX) / 2, -0.15, (minZ + maxZ) / 2));
-  for (const [w, d, x, z] of [[maxX - minX, 0.2, (minX + maxX) / 2, minZ], [maxX - minX, 0.2, (minX + maxX) / 2, maxZ],
-    [0.2, maxZ - minZ, minX, (minZ + maxZ) / 2], [0.2, maxZ - minZ, maxX, (minZ + maxZ) / 2]]) {
-    group.add(box(w, 0.45, d, wall, x, 0.22, z));
+  // building, roof slab with a concrete texture, parapet with a coping, ground around it
+  const conc = TEX.concrete.clone(); conc.needsUpdate = true; conc.repeat.set(W / 3, D / 3);
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(W, 0.3, D), new THREE.MeshStandardMaterial({ map: conc, roughness: 0.95 }));
+  slab.position.set(cx, -0.15, cz); slab.receiveShadow = true;
+  const wallTex = TEX.concrete.clone(); wallTex.needsUpdate = true; wallTex.repeat.set(W / 4, 1);
+  const plaster = new THREE.MeshStandardMaterial({ map: wallTex, color: 0xe9dfcc, roughness: 0.9 });
+  const body = box(W, G.bldgH - 0.3, D, plaster, cx, -0.3 - (G.bldgH - 0.3) / 2, cz);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ map: TEX.sand, roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -G.bldgH; ground.receiveShadow = true;
+  group.add(slab, body, ground);
+  const pH = 0.9, pT = 0.25, cap = new THREE.MeshStandardMaterial({ color: 0xd9d4ca, roughness: 0.8 });
+  for (const [w, d, x, z] of [[W, pT, cx, minZ + pT / 2], [W, pT, cx, maxZ - pT / 2],
+    [pT, D, minX + pT / 2, cz], [pT, D, maxX - pT / 2, cz]]) {
+    group.add(box(w, pH, d, plaster, x, pH / 2, z), box(w + 0.08, 0.06, d + 0.08, cap, x, pH + 0.03, z));
   }
-  roof.bounds = { minX, maxX, minZ, maxZ };
+  // roof details: an access stair house with its door, and three AC condensing units
+  const sx = minX + 1.7, sz = minZ + 1.45;
+  group.add(box(2.6, 2.5, 2.2, plaster, sx, 1.25, sz), box(2.8, 0.12, 2.4, cap, sx, 2.56, sz));
+  const door = box(0.95, 2.05, 0.06, new THREE.MeshStandardMaterial({ color: 0x5b4636, roughness: 0.6 }), sx + 0.4, 1.03, sz + 1.12);
+  const knob = box(0.05, 0.05, 0.06, new THREE.MeshStandardMaterial({ color: 0xc8c8c8, metalness: 0.9, roughness: 0.3 }), sx + 0.75, 1.0, sz + 1.17, false);
+  group.add(door, knob, label(["Roof access"], 0.016)).children.at(-1).position.set(sx, 3.2, sz);
+  const acBody = new THREE.MeshStandardMaterial({ color: 0xe4e6e8, roughness: 0.55, metalness: 0.2 });
+  const acSide = new THREE.MeshStandardMaterial({ map: TEX.louvre, roughness: 0.6 });
+  [2.0, 3.6, 5.2].forEach((dx) => {
+    const x = sx + 1.6 + dx, z = minZ + 1.2;
+    const unit = new THREE.Mesh(new THREE.BoxGeometry(1.0, 0.75, 0.8), [acSide, acSide, acBody, acBody, acSide, acSide]);
+    unit.position.set(x, 0.45, z); unit.castShadow = unit.receiveShadow = true;
+    const fan = new THREE.Mesh(new THREE.CircleGeometry(0.33, 24), new THREE.MeshStandardMaterial({ map: TEX.fan, roughness: 0.7 }));
+    fan.rotation.x = -Math.PI / 2; fan.position.set(x, 0.83, z);
+    group.add(unit, fan, box(1.05, 0.08, 0.85, cap, x, 0.04, z));
+  });
 
-  // modules: an aluminium frame and a glass face coloured by temperature (two draw calls)
-  const frameM = new THREE.InstancedMesh(new THREE.BoxGeometry(G.w, G.t, G.l), mat("lambert", null, { color: 0x8c9096 }), n * m);
-  const cellM = new THREE.InstancedMesh(new THREE.BoxGeometry(G.w - 0.05, G.t + 0.004, G.l - 0.05), mat("basic", null), n * m);
+  // modules: aluminium frame + a face that is either the heat map or the realistic cells
+  const frameMat = new THREE.MeshStandardMaterial({ color: 0xc9cdd2, metalness: 0.85, roughness: 0.32 });
+  const faceGeo = new THREE.BoxGeometry(G.w - 0.05, G.t + 0.004, G.l - 0.05);
+  const frameM = new THREE.InstancedMesh(new THREE.BoxGeometry(G.w, G.t, G.l), frameMat, n * m);
+  const heatM = new THREE.InstancedMesh(faceGeo, new THREE.MeshBasicMaterial({ toneMapped: false }), n * m);
+  const realM = new THREE.InstancedMesh(faceGeo, new THREE.MeshStandardMaterial({ map: TEX.cells, metalness: 0.15,
+    roughness: 0.16, envMapIntensity: 1.15 }), n * m);
+  frameM.castShadow = frameM.receiveShadow = realM.receiveShadow = true;
   const sens = st.sensor_idx.reduce((k, a) => k + a.length, 0);
-  const dotM = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.045, 0.045, 0.01, 10), mat("basic", "--ink"), sens);
+  const dotM = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.045, 0.045, 0.01, 10), mat("basic", "--ink", { toneMapped: false }), sens);
   const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), G.tilt), one = new THREE.Vector3(1, 1, 1);
-  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q), mx = new THREE.Matrix4(), white = new THREE.Color(R.css("--unknown"));
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(q), mx = new THREE.Matrix4(), grey = new THREE.Color(R.css("--unknown"));
   let d = 0;
   for (let s = 0; s < n; s++) for (let k = 0; k < m; k++) {
     const p = moduleTransform(s, k), i = s * m + k, pos = new THREE.Vector3(p.x, p.y, p.z);
-    mx.compose(pos, q, one); frameM.setMatrixAt(i, mx); cellM.setMatrixAt(i, mx); cellM.setColorAt(i, white);
+    mx.compose(pos, q, one); frameM.setMatrixAt(i, mx); heatM.setMatrixAt(i, mx); realM.setMatrixAt(i, mx); heatM.setColorAt(i, grey);
     if (st.sensor_idx[s].includes(k)) { mx.compose(pos.clone().addScaledVector(up, G.t / 2 + 0.008), q, one); dotM.setMatrixAt(d++, mx); }
   }
-  frameM.userData.pick = cellM.userData.pick = "module";
-  group.add(frameM, cellM, dotM);
-  roof.cells = cellM; roof.frames = frameM; roof.q = q; roof.up = up;
+  frameM.userData.pick = heatM.userData.pick = realM.userData.pick = "module";
+  group.add(frameM, heatM, realM, dotM);
+  Object.assign(roof, { heat: heatM, real: realM, frames: frameM, dots: dotM, q, up });
 
-  // racks: a low front rail and a high back rail under each row
-  const steel = mat("lambert", "--muted");
+  // racks: a front and a back rail on legs under each row (legs in one instanced mesh)
+  const alu = new THREE.MeshStandardMaterial({ color: 0xaeb3b9, metalness: 0.7, roughness: 0.4 });
+  const nLeg = 6, legs = new THREE.InstancedMesh(new THREE.BoxGeometry(0.05, 1, 0.05), alu, n * nLeg * 2);
+  legs.castShadow = true;
+  let li = 0;
   zRow.forEach((z, s) => {
-    group.add(box(rowLen + 0.2, 0.06, 0.06, steel, 0, G.clear - 0.03, zBot[s] - 0.1));
-    group.add(box(rowLen + 0.2, 0.06, 0.06, steel, 0, yTop - 0.1, zTop[s] + 0.1));
+    group.add(box(rowLen + 0.2, 0.05, 0.05, alu, 0, G.clear - 0.03, zBot[s] - 0.1), box(rowLen + 0.2, 0.05, 0.05, alu, 0, yTop - 0.1, zTop[s] + 0.1));
+    for (let k = 0; k < nLeg; k++) {
+      const x = xW + 0.2 + k * (rowLen - 0.4) / (nLeg - 1);
+      for (const [h, zz] of [[G.clear - 0.03, zBot[s] - 0.1], [yTop - 0.1, zTop[s] + 0.1]]) {
+        mx.compose(new THREE.Vector3(x, h / 2, zz), new THREE.Quaternion(), new THREE.Vector3(1, h, 1)); legs.setMatrixAt(li++, mx);
+      }
+    }
   });
+  group.add(legs);
 
   // water: tank, pump, a manifold along the east side, one branch, valve and spray pipe per string
-  const pipeMat = mat("lambert", "--series-1"), tankMat = mat("lambert", null, { color: 0xf2f2ee });
-  const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 1.3, 24), tankMat);
-  tank.position.set(xMan + 2.2, 0.65, zS); tank.userData.pick = "pump";
-  const pump = box(0.6, 0.4, 0.4, mat("lambert", "--ink2"), xMan + 0.8, 0.2, zS); pump.userData.pick = "pump";
-  group.add(tank, pump, pipe([xMan + 1.45, 0.25, zS], [xMan + 1.1, 0.25, zS], pipeMat),
-    pipe([xMan + 0.5, 0.12, zS], [xMan, 0.12, zS], pipeMat),
-    pipe([xMan, 0.12, zS], [xMan, 0.12, zTop[0] - 0.1], pipeMat));
+  const pipeMat = new THREE.MeshStandardMaterial({ color: 0xd5d9dd, roughness: 0.45 });
+  const tank = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.75, 1.3, 32), new THREE.MeshStandardMaterial({ color: 0xf1f1ec, roughness: 0.5 }));
+  tank.position.set(xMan + 2.2, 0.65, zS); tank.castShadow = tank.receiveShadow = true; tank.userData.pick = "pump";
+  const lid = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.08, 24), new THREE.MeshStandardMaterial({ color: 0x3b6fb6, roughness: 0.5 }));
+  lid.position.set(xMan + 2.2, 1.34, zS);
+  const pump = box(0.6, 0.4, 0.4, new THREE.MeshStandardMaterial({ color: 0x3a3f46, metalness: 0.5, roughness: 0.45 }), xMan + 0.8, 0.2, zS);
+  pump.userData.pick = "pump";
+  group.add(tank, lid, pump, pipe([xMan + 1.45, 0.25, zS], [xMan + 1.1, 0.25, zS], pipeMat),
+    pipe([xMan + 0.5, 0.12, zS], [xMan, 0.12, zS], pipeMat), pipe([xMan, 0.12, zS], [xMan, 0.12, zTop[0] - 0.1], pipeMat));
   const pumpLabel = label(["Pump and tank", "shared by all zones"], 0.019);
   pumpLabel.position.set(xMan + 1.5, 2.0, zS); pumpLabel.userData.pick = "pump";
   group.add(pumpLabel);
   roof.pumpPos = new THREE.Vector3(xMan + 0.8, 0.4, zS);
 
+  const sheenQ = q.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2));
   for (let s = 0; s < n; s++) {
     const zp = zTop[s] - 0.1, items = [];
-    items.push(pipe([xMan, 0.12, zp], [xMan, yPipe, zp], pipeMat),          // riser
-      pipe([xMan, yPipe, zp], [xW - 0.1, yPipe, zp], pipeMat, 0.03));         // branch + spray pipe
-    const valveMat = mat("lambert", "--muted");
+    items.push(pipe([xMan, 0.12, zp], [xMan, yPipe, zp], pipeMat), pipe([xMan, yPipe, zp], [xW - 0.1, yPipe, zp], pipeMat, 0.03));
+    const valveMat = mat("std", "--muted", { roughness: 0.4, metalness: 0.3 });
     const valve = box(0.2, 0.2, 0.2, valveMat, xMan - 0.45, yPipe, zp);
     const handle = box(0.36, 0.05, 0.05, valveMat, 0, 0.16, 0);
     valve.add(handle);
     const lab = label([`String ${s + 1}`], 0.02);
     lab.position.set(xW - 1.9, yTop + 0.4, zRow[s]);
-    // spray: droplets running from the pipe down the glass, and a light mist over the string
-    const pos = new Float32Array(SPRAY_N * 3), seed = new Float32Array(SPRAY_N * 3);
-    for (let k = 0; k < SPRAY_N; k++) { seed[3 * k] = Math.random(); seed[3 * k + 1] = Math.random(); seed[3 * k + 2] = 0.6 + 0.8 * Math.random(); }
-    const pg = new THREE.BufferGeometry(); pg.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    const drops = new THREE.Points(pg, new THREE.PointsMaterial({ color: 0xffffff, size: 0.09, transparent: true, opacity: 0.95, depthWrite: false }));
-    drops.frustumCulled = false;
-    const mist = new THREE.Mesh(new THREE.PlaneGeometry(rowLen + 0.1, G.l + 0.1),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false, side: THREE.DoubleSide }));
-    mist.quaternion.copy(q).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -Math.PI / 2));
-    mist.position.set(0, G.clear + half * Math.sin(G.tilt), zRow[s]).addScaledVector(up, 0.09);
-    drops.visible = mist.visible = false;
+    // spray: droplets that glint (additive, per-droplet sparkle), soft mist, and a wet sheen
+    const dg = new THREE.BufferGeometry();
+    dg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(DROPS_MAX * 3), 3));
+    dg.setAttribute("color", new THREE.BufferAttribute(new Float32Array(DROPS_MAX * 3), 3));
+    const drops = new THREE.Points(dg, new THREE.PointsMaterial({ map: TEX.drop, size: 0.1, vertexColors: true, transparent: true,
+      depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false }));
+    const mg = new THREE.BufferGeometry();
+    mg.setAttribute("position", new THREE.BufferAttribute(new Float32Array(MIST_MAX * 3), 3));
+    const mist = new THREE.Points(mg, new THREE.PointsMaterial({ map: TEX.mist, size: 1.1, transparent: true, opacity: 0.3,
+      depthWrite: false, color: 0xffffff }));
+    const sheen = new THREE.Mesh(new THREE.PlaneGeometry(rowLen + 0.05, G.l - 0.02),
+      new THREE.MeshStandardMaterial({ color: 0xe6f2ff, transparent: true, opacity: 0, roughness: 0.03, metalness: 0,
+        envMapIntensity: 2.6, depthWrite: false }));
+    sheen.quaternion.copy(sheenQ);
+    sheen.position.set(0, G.clear + half * Math.sin(G.tilt), zRow[s]).addScaledVector(up, G.t / 2 + 0.012);
+    drops.frustumCulled = mist.frustumCulled = false;
+    drops.visible = mist.visible = sheen.visible = false;
+    const seed = new Float32Array(DROPS_MAX * 4), r = rng(100 + s);
+    for (let k = 0; k < DROPS_MAX * 4; k++) seed[k] = r();
     for (const o of [...items, valve, lab]) o.userData.pick = "string", o.userData.s = s;
-    group.add(...items, valve, lab, drops, mist);
-    roof.strings.push({ valve, valveMat, handle, lab, drops, mist, seed, open: false });
+    group.add(...items, valve, lab, drops, mist, sheen);
+    roof.strings.push({ valve, valveMat, handle, lab, drops, mist, sheen, seed, open: false, wet: 0 });
   }
 
   // a north arrow on the roof
-  const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.9, 16), mat("lambert", "--ink2"));
+  const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.35, 0.9, 16), new THREE.MeshStandardMaterial({ color: 0x3a3f46 }));
   arrow.rotation.x = -Math.PI / 2; arrow.position.set(maxX - 1.0, 0.25, minZ + 1.0);
   const north = label(["N"], 0.02); north.position.set(maxX - 1.0, 0.9, minZ + 0.3);
   group.add(arrow, north);
 
   // selection outline, reused for a module, a string or the real module
   const outline = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)),
-    new THREE.LineBasicMaterial({ color: R.css("--ink"), depthTest: false }));
-  outline.renderOrder = 9; outline.visible = false; outline.userData.cssVar = "--ink";
+    new THREE.LineBasicMaterial({ color: R.css("--ink"), depthTest: false, toneMapped: false }));
+  outline.renderOrder = 9; outline.visible = false; outline.material.userData.cssVar = "--ink";
   group.add(outline);
   roof.outline = outline;
 
+  // the sun's shadow camera covers the building and our real module beside it
+  const ext = Math.max(W, D) / 2 + 8, sc = sunLight.shadow.camera;
+  sc.left = -ext; sc.right = ext; sc.top = ext; sc.bottom = -ext; sc.near = 1; sc.far = 120; sc.updateProjectionMatrix();
+
   scene.add(group);
   buildReal();
-  pickables = [cellM, frameM, tank, pump, pumpLabel, ...roof.strings.flatMap((x) => [x.valve, x.lab]),
+  pickables = [heatM, realM, frameM, tank, pump, pumpLabel, ...roof.strings.flatMap((x) => [x.valve, x.lab]),
     ...group.children.filter((o) => o.userData.pick === "string" && o.isMesh), ...realObj.pick];
   V.dims = `${n}x${m}`;
+  setTier(V.tier);
+  applyMode();
 }
 
-// ---- our real module: a separate stand, the only measured object ------------------------------
+// ---- our real module: on its own stand on the ground, the only measured object ---------------
 function buildReal() {
   if (realObj) { scene.remove(realObj.group); }
-  const g = new THREE.Group(), b = roof.bounds, x = b.minX - 4.2, z = 0;
-  const half = G.l / 2, yc = G.clear + half * Math.sin(G.tilt), q = roof.q;
-  g.add(box(2.6, 0.08, 2.6, mat("lambert", "--grid"), x, -0.3, z));       // its own pad, not the roof
-  const frame = new THREE.Mesh(new THREE.BoxGeometry(G.w, G.t, G.l), mat("lambert", null, { color: 0x8c9096 }));
-  const cell = new THREE.Mesh(new THREE.BoxGeometry(G.w - 0.05, G.t + 0.004, G.l - 0.05), mat("basic", "--unknown"));
-  for (const o of [frame, cell]) { o.position.set(x, yc, z); o.quaternion.copy(q); o.userData.pick = "real"; }
-  const steel = mat("lambert", "--muted");
-  g.add(frame, cell, box(0.05, G.clear + 0.05, 0.05, steel, x, (G.clear - 0.3) / 2, z + half * Math.cos(G.tilt) - 0.1),
-    box(0.05, yc + half * Math.sin(G.tilt) - 0.1 + 0.3, 0.05, steel, x, (yc + half * Math.sin(G.tilt) - 0.4) / 2, z - half * Math.cos(G.tilt) + 0.1));
-  const pyr = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.06, 16), mat("lambert", "--ink2"));   // PYR20, coplanar
+  const g = new THREE.Group(), b = roof.bounds, x = b.minX - 4.5, z = b.maxZ - 2.0, y0 = -G.bldgH;   // south-west, clear of the labels
+  const half = G.l / 2, yc = y0 + G.clear + half * Math.sin(G.tilt), q = roof.q;
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(G.w, G.t, G.l), roof.frames.material);
+  const heatMat = new THREE.MeshBasicMaterial({ color: R.css("--unknown"), toneMapped: false });
+  const cell = new THREE.Mesh(new THREE.BoxGeometry(G.w - 0.05, G.t + 0.004, G.l - 0.05), heatMat);
+  for (const o of [frame, cell]) { o.position.set(x, yc, z); o.quaternion.copy(q); o.userData.pick = "real"; o.castShadow = true; }
+  const steel = new THREE.MeshStandardMaterial({ color: 0x6d7076, metalness: 0.6, roughness: 0.5 });   // mild-steel stand
+  g.add(frame, cell, box(0.05, G.clear + 0.05, 0.05, steel, x, y0 + G.clear / 2, z + half * Math.cos(G.tilt) - 0.1),
+    box(0.05, yc + half * Math.sin(G.tilt) - 0.1 - y0, 0.05, steel, x, (yc + half * Math.sin(G.tilt) - 0.1 + y0) / 2, z - half * Math.cos(G.tilt) + 0.1));
+  const pyr = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.06, 16), steel);   // PYR20, coplanar
   pyr.position.set(x + G.w / 2 + 0.16, yc, z); pyr.quaternion.copy(q); pyr.userData.pick = "real";
   const tag = label(["Our real module", "the only measured one · not part of the rooftop"], 0.022, true);
-  tag.position.set(x, 2.3, z); tag.userData.pick = "real";
+  tag.position.set(x, y0 + 2.3, z); tag.userData.pick = "real";
   g.add(pyr, tag);
   scene.add(g);
-  realObj = { group: g, cell, tag, pick: [frame, cell, pyr, tag], pos: new THREE.Vector3(x, yc, z) };
+  realObj = { group: g, cell, heatMat, tag, pick: [frame, cell, pyr, tag], pos: new THREE.Vector3(x, yc, z) };
 }
 
 // ---- data → scene ----------------------------------------------------------------------------
@@ -221,32 +516,44 @@ function openAlarms(s) {
   return V.open.filter((a) => !a.cleared && a.code.endsWith("_Z" + (s + 1)))
     .map((a) => a.code.replace("SIM_", "").replace(/_Z\d+$/, "").toLowerCase());
 }
+function applyMode() {
+  const heat = V.mode === "heat";
+  if (roof) { roof.heat.visible = roof.dots.visible = heat; roof.real.visible = !heat; }   // sensor dots: heat map only
+  if (realObj) realObj.cell.material = heat ? realObj.heatMat : roof.real.material;
+  document.querySelectorAll("#v3mode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === V.mode));
+  const note = $("v3modeNote");
+  if (note) note.hidden = heat;
+  requestRender();
+}
 function applyState() {
   const st = V.state;
   if (!st || !st.available || !st.modules) return;
   if (!roof || V.dims !== `${st.n_strings}x${st.modules_per_string}`) buildRoof(st);
   const c = new THREE.Color();
-  st.modules.forEach((row, s) => row.forEach((t, m) => roof.cells.setColorAt(s * roof.m + m, c.set(R.tempColor(t)))));
-  roof.cells.instanceColor.needsUpdate = true;
+  st.modules.forEach((row, s) => row.forEach((t, m) => roof.heat.setColorAt(s * roof.m + m, c.set(R.tempColor(t)))));
+  roof.heat.instanceColor.needsUpdate = true;
   st.strings.forEach((x) => {
     const z = x.string - 1, o = roof.strings[z], open = !!x.valve;
     o.open = open;
     o.valveMat.color.set(R.css(open ? "--series-1" : "--muted"));
-    o.valveMat.emissive.set(open ? R.css("--series-1") : "#000000"); o.valveMat.emissiveIntensity = open ? 0.45 : 0;
+    o.valveMat.emissive.set(open ? R.css("--series-1") : "#000000"); o.valveMat.emissiveIntensity = open ? 0.5 : 0;
     o.handle.rotation.y = open ? 0 : Math.PI / 2;        // handle along the pipe = open
     o.drops.visible = o.mist.visible = open;
+    o.sheen.visible = open || o.wet > 0.01;
     const al = openAlarms(z);
     setLabel(o.lab, [`String ${z + 1}` + (open ? " · spraying" : "") + (al.length ? " · ▲ " + al.join(", ") : "")]);
   });
   V.tUtc = st.latest ? st.latest.t_utc : null;
   V.updates++;
+  applySun();
   renderInfo();
+  showPerf();
   requestRender();
 }
 function applyReal() {
   if (!realObj) return;
   const r = V.real && V.real.latest, t = r ? r.T_module : null;
-  realObj.cell.material.color.set(t === null || t === undefined ? R.css("--unknown") : R.tempColor(t));
+  realObj.heatMat.color.set(t === null || t === undefined ? R.css("--unknown") : R.tempColor(t));
   const mode = V.real ? (V.real.mode === "replay" ? "REPLAY, not live" : "measured") : "not reachable";
   setLabel(realObj.tag, ["Our real module", `the only measured one · ${t === null || t === undefined ? "no row yet" : t.toFixed(1) + " degC, " + mode}`]);
   if (V.sel && V.sel.kind === "real") renderInfo();
@@ -263,45 +570,122 @@ async function pollReal() {
 }
 
 // ---- spray animation -------------------------------------------------------------------------
+let sprayClock = 0;
 function animateSpray(dt) {
   if (!roof) return false;
-  let any = false;
-  const o = roof.geo, half = G.l / 2;
+  let busy = false;
+  sprayClock += dt;
+  const o = roof.geo, half = G.l / 2, T = TIERS[V.tier], up = roof.up;
+  const sunK = clamp(sunLight.intensity / 3.2, 0.15, 1), heat = V.mode === "heat";
   roof.strings.forEach((x, s) => {
+    // wet sheen: comes up in about 2 s, dries in about 25 s after the valve closes (drawing only)
+    const target = x.open ? 1 : 0, rate = x.open ? 0.5 : 0.04;
+    x.wet = target > x.wet ? Math.min(1, x.wet + rate * dt) : Math.max(0, x.wet - rate * dt);
+    x.sheen.material.opacity = x.wet * (heat ? 0.16 : 0.4);
+    x.sheen.visible = x.open || x.wet > 0.01;
+    if (x.wet > 0 && x.wet < 1) busy = true;
     if (!x.open) return;
-    any = true;
-    const a = x.drops.geometry.attributes.position, p = a.array, sd = x.seed;
-    for (let k = 0; k < SPRAY_N; k++) {
-      sd[3 * k + 1] = (sd[3 * k + 1] + dt * 0.55 * sd[3 * k + 2]) % 1;      // phase down the glass
-      const f = sd[3 * k + 1], along = -half + f * G.l;                         // from the top edge
-      const lift = 0.06 + 0.55 * Math.sin(Math.PI * Math.min(1, f * 1.4)) * (1 - f);   // a fan from the nozzles
-      p[3 * k] = o.xW + sd[3 * k] * o.rowLen;
-      p[3 * k + 1] = G.clear + half * Math.sin(G.tilt) - along * Math.sin(G.tilt) + lift * roof.up.y;
-      p[3 * k + 2] = o.zRow[s] + along * Math.cos(G.tilt) + lift * roof.up.z;
+    busy = true;
+    const p = x.drops.geometry.attributes.position.array, col = x.drops.geometry.attributes.color.array, sd = x.seed;
+    for (let k = 0; k < T.drops; k++) {
+      const a = sd[4 * k], b = sd[4 * k + 1], sp = 0.55 + 0.9 * sd[4 * k + 2], tw = sd[4 * k + 3];
+      const f = (b + sprayClock * 0.5 * sp) % 1, along = -half + f * G.l;          // down the glass
+      const lift = 0.04 + 0.6 * Math.sin(Math.PI * Math.min(1, f * 1.5)) * (1 - f) * (0.6 + 0.6 * tw);
+      p[3 * k] = o.xW + a * o.rowLen + 0.04 * Math.sin(30 * tw + sprayClock * 3);
+      p[3 * k + 1] = G.clear + half * Math.sin(G.tilt) - along * Math.sin(G.tilt) + lift * up.y;
+      p[3 * k + 2] = o.zRow[s] + along * Math.cos(G.tilt) + lift * up.z;
+      const glint = sunK * (0.35 + 0.65 * Math.pow(0.5 + 0.5 * Math.sin(sprayClock * (6 + 10 * tw) + 40 * a), 6));
+      col[3 * k] = col[3 * k + 1] = glint * 1.1; col[3 * k + 2] = glint * 1.2;
     }
-    a.needsUpdate = true;
+    x.drops.geometry.attributes.position.needsUpdate = x.drops.geometry.attributes.color.needsUpdate = true;
+    const mp = x.mist.geometry.attributes.position.array;
+    for (let k = 0; k < T.mist; k++) {
+      const a = sd[4 * k + 2], f = (sd[4 * k] + sprayClock * 0.08 * (0.5 + a)) % 1;
+      mp[3 * k] = o.xW + sd[4 * k + 1] * o.rowLen + 0.3 * Math.sin(sprayClock * 0.7 + 9 * a);
+      mp[3 * k + 1] = G.clear + 2 * half * Math.sin(G.tilt) + 0.15 + 0.25 * f - f * half * Math.sin(G.tilt);
+      mp[3 * k + 2] = o.zTop[s] + f * G.l * Math.cos(G.tilt) * 0.8;
+    }
+    x.mist.geometry.attributes.position.needsUpdate = true;
   });
-  return any;
+  return busy;
+}
+
+// ---- camera: intro, presets, tweens ----------------------------------------------------------
+function views() {
+  const b = roof ? roof.bounds : { minX: -10, maxX: 10, minZ: -8, maxZ: 8 };
+  const t = new THREE.Vector3((b.minX + b.maxX) / 2 - 2.5, 0, (b.minZ + b.maxZ) / 2 + 0.5);
+  return {
+    overview: { target: t, pos: t.clone().add(new THREE.Vector3(5, 16, 20.5)) },
+    presentation: { target: t.clone().add(new THREE.Vector3(-1.6, -1.0, 1.5)), pos: t.clone().add(new THREE.Vector3(-4.6, 9.8, 24.5)) },
+    intro: { target: t, pos: t.clone().add(new THREE.Vector3(34, 38, -22)) },
+  };
+}
+function flyTo(name, ms = 1600) {
+  const v = views()[name];
+  V.view = name;
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduce || ms <= 0) {
+    controls.target.copy(v.target); camera.position.copy(v.pos); controls.update();
+    V.tween = null; V.intro = false; requestRender(); return;
+  }
+  // interpolate around the end target in spherical coordinates: a smooth swoop, not a straight cut
+  const s0 = new THREE.Spherical().setFromVector3(camera.position.clone().sub(v.target));
+  const s1 = new THREE.Spherical().setFromVector3(v.pos.clone().sub(v.target));
+  let dTheta = s1.theta - s0.theta;
+  if (dTheta > Math.PI) dTheta -= 2 * Math.PI; if (dTheta < -Math.PI) dTheta += 2 * Math.PI;
+  V.tween = { t0: performance.now(), ms, s0, s1, dTheta, tgt0: controls.target.clone(), tgt1: v.target.clone() };
+  requestRender();
+}
+function stepTween(now) {
+  const w = V.tween;
+  if (!w) return false;
+  const x = clamp((now - w.t0) / w.ms, 0, 1), e = ease(x);
+  const s = new THREE.Spherical(mix(w.s0.radius, w.s1.radius, e), mix(w.s0.phi, w.s1.phi, e), w.s0.theta + w.dTheta * e);
+  controls.target.lerpVectors(w.tgt0, w.tgt1, e);
+  camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(s));
+  camera.lookAt(controls.target);
+  if (x >= 1) { V.tween = null; V.intro = false; return false; }
+  return true;
 }
 
 // ---- rendering on demand ---------------------------------------------------------------------
 function requestRender() {
+  dirty = true;
   if (!renderer || pending) return;
   if (!V.visible) return;                      // off screen: drawn again when it comes back
   pending = true;
+  if (insideFrame) chained = true;
   requestAnimationFrame(frame);
 }
+function animating() {
+  return !!V.tween || (!!roof && roof.strings.some((x) => x.open || (x.wet > 0 && x.wet < 1)));
+}
 function frame(now) {
+  // Every animation runs on chained animation frames, so the interval between two of them
+  // includes the GPU's work: that is the frame time the quality watch judges. While only the
+  // spray moves, a frame is drawn about 30 times a second and the others are skipped.
   pending = false;
-  const dt = Math.min(0.1, lastFrame ? (now - lastFrame) / 1000 : 0);
+  const wasChained = chained; chained = false;
+  if (!V.visible || document.hidden) { lastFrame = lastRender = 0; return; }   // drawn again when back
+  if (wasChained && lastFrame) { perf.intervals.push(now - lastFrame); if (perf.intervals.length > 120) perf.intervals.shift(); }
   lastFrame = now;
-  controls.update();
-  const spraying = animateSpray(dt);
-  renderer.render(scene, camera);
-  V.renders++;
-  clearTimeout(sprayTimer);
-  if (spraying && V.visible && !document.hidden) sprayTimer = setTimeout(requestRender, 33);
-  else lastFrame = 0;
+  const anim = animating() && V.visible && !document.hidden;
+  const skip = anim && !dirty && !V.tween && lastRender && now - lastRender < 30;
+  if (!skip) {
+    const dt = Math.min(0.1, lastRender ? (now - lastRender) / 1000 : 0);
+    lastRender = now; dirty = false;
+    insideFrame = true;
+    if (!stepTween(now)) controls.update();    // may ask for the next frame while damping
+    animateSpray(dt);
+    const t0 = performance.now();
+    renderer.render(scene, camera);
+    perf.cpu.push(performance.now() - t0); if (perf.cpu.length > 120) perf.cpu.shift();
+    V.renders++;
+    insideFrame = false;
+    watchPerf();
+  }
+  if (!pending && animating() && V.visible && !document.hidden) { chained = true; pending = true; requestAnimationFrame(frame); }
+  else if (!pending) { lastFrame = 0; lastRender = 0; }
 }
 function resize() {
   const st = $("v3stage"), w = st.clientWidth, h = st.clientHeight;
@@ -310,14 +694,7 @@ function resize() {
   camera.aspect = w / h; camera.updateProjectionMatrix();
   requestRender();
 }
-function resetView() {
-  const b = roof ? roof.bounds : { minX: -10, maxX: 10, minZ: -8, maxZ: 8 };
-  controls.target.set((b.minX + b.maxX) / 2 - 2.5, 0, (b.minZ + b.maxZ) / 2 + 0.5);
-  camera.position.set(controls.target.x + 5, 16, controls.target.z + 20.5);
-  controls.update(); requestRender();
-}
 function applyTheme() {
-  scene.background = color("--page");
   scene.traverse((o) => {
     const m = o.material;
     if (m && m.userData && m.userData.cssVar) m.color.set(R.css(m.userData.cssVar));
@@ -415,24 +792,33 @@ function renderInfo() {
 function init() {
   const stage = $("v3stage");
   try {
-    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "low-power" });
+    renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "default" });
   } catch (e) {
     V.error = "WebGL is not available in this browser: the 3D view is off. The table below shows the same values.";
     $("v3msg").textContent = V.error; $("v3msg").hidden = false; stage.hidden = true;
     return;
   }
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.0;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   stage.prepend(renderer.domElement);
+  makeTextures();
   scene = new THREE.Scene();
-  camera = new THREE.PerspectiveCamera(40, 2, 0.1, 300);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x808080, 2.2));
-  const sun = new THREE.DirectionalLight(0xffffff, 1.4); sun.position.set(6, 12, 9); scene.add(sun);
+  scene.fog = new THREE.Fog(0xd2e4f3, 70, 190);
+  camera = new THREE.PerspectiveCamera(40, 2, 0.1, 500);
+  hemi = new THREE.HemisphereLight(0xffffff, 0x8b8174, 1.2); scene.add(hemi);
+  sunLight = new THREE.DirectionalLight(0xffffff, 3); scene.add(sunLight, sunLight.target);
+  sunLight.shadow.bias = -0.0004; sunLight.shadow.normalBias = 0.03;
+  buildSky();
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true; controls.dampingFactor = 0.12;
-  controls.minDistance = 3; controls.maxDistance = 70; controls.maxPolarAngle = 85 * deg;
+  controls.minDistance = 3; controls.maxDistance = 80; controls.maxPolarAngle = 86 * deg;
   controls.addEventListener("change", requestRender);
+  controls.addEventListener("start", () => { V.tween = null; V.intro = false; });   // the user takes over
   raycaster = new THREE.Raycaster();
-  scene.background = color("--page");
+  const forced = params.get("quality");
+  V.tier = V.choice === "auto" ? (forced && ORDER.includes(forced) ? forced : "medium") : V.choice;
+  setTier(V.tier);
+  applySun();
 
   let down = null;
   renderer.domElement.addEventListener("pointerdown", (e) => { down = [e.clientX, e.clientY]; });
@@ -446,7 +832,17 @@ function init() {
     hoverAt = performance.now();
     renderer.domElement.style.cursor = pickAt(e.clientX, e.clientY) ? "pointer" : "";
   });
-  $("v3reset").onclick = resetView;
+  $("v3reset").onclick = () => flyTo("overview", 1200);
+  $("v3present").onclick = () => flyTo("presentation", 1800);
+  document.querySelectorAll("#v3mode button").forEach((b) => {
+    b.onclick = () => { V.mode = b.dataset.mode; store("mode", V.mode); applyMode(); };
+  });
+  const qsel = $("v3quality");
+  qsel.value = V.choice;
+  qsel.onchange = () => {
+    V.choice = qsel.value; store("quality", V.choice); V.decided = false;
+    setTier(V.choice === "auto" ? "medium" : V.choice);
+  };
   new ResizeObserver(resize).observe(stage);
   new IntersectionObserver((es) => { V.visible = es[0].isIntersecting; if (V.visible) requestRender(); }).observe(stage);
   document.addEventListener("visibilitychange", () => { if (!document.hidden) requestRender(); });
@@ -455,7 +851,14 @@ function init() {
     V.state = e.detail.state; V.open = e.detail.open || [];
     const first = !roof;
     applyState();
-    if (first && roof) { applyReal(); resetView(); }
+    if (first && roof) {
+      applyReal();
+      const v = views(), intro = params.get("intro") !== "0";
+      controls.target.copy(v.overview.target);
+      camera.position.copy(intro ? v.intro.pos : v.overview.pos); controls.update();
+      if (intro) { V.intro = V.introPlayed = true; flyTo(params.get("view") === "presentation" ? "presentation" : "overview", 2600); }
+      else flyTo(params.get("view") === "presentation" ? "presentation" : "overview", 0);
+    }
   });
   if (R.last) window.dispatchEvent(new CustomEvent("roof:state", { detail: R.last }));
   resize();
@@ -463,16 +866,22 @@ function init() {
   V.ready = true;
 }
 
-// Read-only hooks for the page test (tests/browser/rooftop3d_check.mjs); nothing writes here.
+// Read-only hooks for the page tests (tests/browser/*.cjs); nothing writes here.
 window.roof3d = {
   get info() {
     return { ready: V.ready, error: V.error, renders: V.renders, updates: V.updates, tUtc: V.tUtc,
-      dims: V.dims, sel: V.sel, realT: V.real && V.real.latest ? V.real.latest.T_module : null };
+      dims: V.dims, sel: V.sel, realT: V.real && V.real.latest ? V.real.latest.T_module : null,
+      mode: V.mode, quality: V.tier, choice: V.choice, frameMs: V.frameMs, shadows: renderer ? renderer.shadowMap.enabled : false,
+      intro: V.intro || !!V.tween, introPlayed: V.introPlayed, view: V.view, sun: { ...V.sun }, sunIntensity: sunLight ? sunLight.intensity : null,
+      pixelRatio: renderer ? renderer.getPixelRatio() : null };
   },
-  colorAt: (s, m) => { const c = new THREE.Color(); roof.cells.getColorAt(s * roof.m + m, c); return "#" + c.getHexString(); },
-  realColor: () => "#" + realObj.cell.material.color.getHexString(),
-  spraying: () => (roof ? roof.strings.map((x) => x.drops.visible && x.mist.visible) : []),
+  colorAt: (s, m) => { const c = new THREE.Color(); roof.heat.getColorAt(s * roof.m + m, c); return "#" + c.getHexString(); },
+  realColor: () => "#" + realObj.heatMat.color.getHexString(),
+  spraying: () => (roof ? roof.strings.map((x) => x.drops.visible && x.sheen.visible) : []),
+  wet: () => (roof ? roof.strings.map((x) => +x.wet.toFixed(2)) : []),
   valveColor: (s) => "#" + roof.strings[s].valveMat.color.getHexString(),
+  faceVisible: () => (roof ? { heat: roof.heat.visible, realistic: roof.real.visible } : null),
+  decideTier, sunPosition, tiers: TIERS,
   screenOf(kind, s, m) {                     // client pixel position of an object's centre
     const p = kind === "module" ? (({ x, y, z }) => new THREE.Vector3(x, y, z))(moduleTransform(s, m))
       : kind === "string" ? roof.strings[s].lab.position.clone() : realObj.pos.clone();

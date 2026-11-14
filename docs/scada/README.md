@@ -117,27 +117,52 @@ strings of 20 modules tilted 20 deg facing south, the pump and tank, the manifol
 branch, valve and spray pipe per string. The layout is a drawing, not a plant design: our
 module's size (1200 x 540 mm, portrait), rows 2.6 m apart.
 
-- Each module is coloured by its simulated temperature, on the same fixed scale (20 to
-  70 degC) and legend as the string table, and follows the simulation (once a second).
-- A string whose valve is open shows the valve lit in the valve colour and a light spray
-  (droplets running down the glass and a white sheen); its label says "spraying" and an
-  open alarm of the string adds "▲ spike / hot / bypass".
-- Drag to orbit, scroll to zoom, right-drag to pan, **Reset view** to come back. Clicking a
-  module shows its temperature, sensor, soiling and wind factor and its string's values;
-  clicking a string's label, valve or pipe shows the string; clicking the pump or tank shows
-  pump, flow and water.
+- **Two module looks** (buttons on the view, remembered by the browser): **Heat map**, every
+  module in the shared colour scale of the page (20 to 70 degC, the same legend as the string
+  table, unlit so a colour always means the same temperature), and **Realistic**: dark blue
+  cells with busbars, an aluminium frame and sky reflections on the glass. The cell grid is an
+  illustration (4 x 9): our module's cell count is not known. In the realistic look the
+  temperatures are on a click and in the table; both follow the simulation once a second.
+- **Scene (drawing only):** a concrete roof with a parapet and coping, an access stair house
+  with its door, three AC units, the building and the ground. The sun stands where it stood
+  over Makkah at the SIMULATED time of the newest step (low-precision almanac, within 1 deg of
+  pvlib; checked by the test), dimmed when the simulated irradiance drops; the sky gradient,
+  the reflections and the shadows follow it, and at night the scene is dark.
+- **Spray:** a string whose valve is open shows its valve lit in the valve colour, droplets
+  that glint in the sun, a light mist, and a wet sheen on the glass that dries in about 25 s
+  after the valve closes (drawing only, not the model's evaporation). Its label says
+  "spraying"; an open alarm adds "▲ spike / hot / bypass".
+- **Camera:** a short intro flight on opening (skipped with `?intro=0` or when the system
+  asks for reduced motion; any drag stops it), **Presentation** (a three-quarter view of the
+  roof with our real module in the frame) and **Overview**. Drag to orbit, scroll to zoom,
+  right-drag to pan. Clicking a module shows its temperature, sensor, soiling and wind factor
+  and its string's values; a string's label, valve or pipe shows the string; the pump or tank
+  shows pump, flow and water.
 - A `SIMULATION` badge sits on the view at all times; every value in the side panel is
   tagged SIMULATED.
-- **Our real module** stands apart, on its own stand west of the roof, with a dark tag "the
-  only measured one". It is the one object that reads `/api/state` (the real module's newest
-  row, read-only); it is coloured by the measured module temperature (mean of T1..T5) on the
-  same scale, grey when no row exists. Clicking it shows the measured values, LIVE or
-  "REPLAY ...: not live measurements" as on the module page. Nothing of it enters the
-  simulation, and no simulated value is drawn on it.
-- Light: the 120 modules are two instanced meshes, no shadows, at most 1.5x pixel ratio. A
-  frame is drawn only when the view moves or new data arrive, about 30 per second while a
-  zone sprays, and none while the view is scrolled off screen or the tab is hidden. Without
-  WebGL the view says so and the table shows the same values.
+- **Our real module** stands apart, on its own stand on the ground south-west of the
+  building, with a dark tag "the only measured one". It is the one object that reads
+  `/api/state` (the real module's newest row, read-only); in the heat map it is coloured by
+  the measured module temperature (mean of T1..T5) on the same scale, grey when no row
+  exists. Clicking it shows the measured values, LIVE or "REPLAY ...: not live measurements"
+  as on the module page. Nothing of it enters the simulation, and no simulated value is drawn
+  on it.
+- **Speed:** three quality tiers, chosen in the `quality` list or with `?quality=`:
+
+  | Tier | Pixel ratio (max) | Shadows | Droplets per string |
+  |---|---|---|---|
+  | high | 2 | soft, 2048 px map | 360 |
+  | medium | 1.25 | soft, 1024 px map | 220 |
+  | low | 1 | none | 110 |
+
+  `auto` (default) starts at medium and measures the frame time between animation frames
+  (which includes the graphics card's work) and the time of each draw call. It steps down
+  when the median frame is above 30 ms (or a draw call above 22 ms), and steps up once, at
+  the start, only when 90 % of the frames are under 20 ms; the corner shows the tier and the
+  frame time. The 120 modules are instanced, all textures are drawn once on canvases (no
+  image files, no internet), a frame is drawn only when something changes or moves, about
+  30 per second while a zone sprays, and none while the view is off screen or the tab is
+  hidden. Without WebGL the view says so and the table shows the same values.
 
 ### Where the data goes
 
