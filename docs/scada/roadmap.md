@@ -57,8 +57,10 @@ one row per 10 s. One logger does not justify it (architecture.md, sections 5 an
 
 **Why.** The supervisor and the team want to look at the rig without being at the lab PC.
 
-**Today.** The server listens on `127.0.0.1` only and has no login. It must not simply be
-opened to the network: anyone who reaches it could acknowledge alarms.
+**Today.** The server listens on `127.0.0.1` by default and has no login. It must not simply be
+opened to the network: anyone who reaches it could acknowledge alarms. `scada.run --lan`
+(2026-11-14) is a stopgap for a trusted network only (lab, phone hotspot): it listens on
+the local network, prints the address and a no-login warning. It is not remote access.
 
 **Options, to be decided with the university's IT rules:**
 

@@ -1,7 +1,8 @@
 """HMI server: a small JSON API and its static files, standard library only.
 
-It listens on 127.0.0.1 only: there is no login, so it must not be reachable from the
-network (remote access is on the roadmap, docs/scada/roadmap.md). The only thing the HMI
+It listens on 127.0.0.1 by default: there is no login, so it must not be reachable from
+an untrusted network (remote access is on the roadmap, docs/scada/roadmap.md).
+`scada.run --lan` opts in to listening on the local network, for a trusted network only. The only thing the HMI
 can change is the acknowledgement of an alarm; it cannot reach the logger.
 
   GET  /api/model      tags, bits and alarm definitions (scada/model.py)
@@ -220,11 +221,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(db_path, info, port=8050, sim_db_path=None, sim_info=None,
-                notify_status=None):
+                notify_status=None, host="127.0.0.1"):
     """info: {"mode": "live" | "replay", ...} shown by the HMI. port 0 = any free port.
+    host: "127.0.0.1" (default, this PC only) or "0.0.0.0" (every network interface;
+    scada.run --lan, trusted network only: there is no login).
     sim_db_path: the simulation file of scada/sim_source.py, or None (no simulation).
     notify_status: callable giving the Telegram notifier's state (scada/notify.py), or None."""
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     server.db_path, server.info = str(db_path), info
     server.sim_db_path = None if sim_db_path is None else str(sim_db_path)

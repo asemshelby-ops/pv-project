@@ -11,6 +11,11 @@
 Then open http://127.0.0.1:8050 ; the bar at the top switches between the real module's
 dashboard and the rooftop page. Stop with Ctrl+C.
 
+--lan listens on the local network instead of 127.0.0.1 only, so teammates on the same
+Wi-Fi can open the page; it prints the address to give them. There is NO login: anyone
+on that network can see the data and acknowledge alarms. Trusted network only (the lab
+or a phone hotspot), never public or university-wide Wi-Fi. Default: 127.0.0.1.
+
 Phone alerts (Telegram, scada/notify.py) start by themselves for LIVE data (--folder /
 --serial) when scada/telegram.local.json exists; --no-telegram turns them off, --telegram
 <file> uses another config file. Never for a replay or the simulation.
@@ -26,6 +31,7 @@ that holds live data is never emptied and never receives replayed rows.
 """
 import argparse
 import pathlib
+import socket
 import threading
 
 from scada import historian, ingest, notify, replay, server, sim_source
@@ -34,6 +40,24 @@ LIVE_DB = "out/scada/historian.sqlite"
 REPLAY_DB = "out/scada/replay.sqlite"
 REPLAY_FOLDER = "out/scada/replay_live"
 DEMO_SOURCE = "out/scada/demo_source"
+LAN_HOST = "0.0.0.0"
+LAN_WARNING = """\
+!! --lan: the SCADA page is open to EVERY device on this network. There is NO login:
+!! anyone who can reach this PC can read the data and acknowledge alarms.
+!! Use it on a trusted network only (the lab, a phone hotspot), never on public or
+!! university-wide Wi-Fi. Stop with Ctrl+C; without --lan it listens on 127.0.0.1 only."""
+
+
+def lan_address():
+    """This PC's address on the local network, or None if it has none. Connecting a UDP
+    socket only picks the outgoing interface; no packet is sent."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(("192.0.2.1", 9))     # TEST-NET-1 (RFC 5737): never routed to a host
+            ip = s.getsockname()[0]
+        except OSError:
+            return None
+    return None if ip.startswith("127.") or ip == "0.0.0.0" else ip
 
 
 def open_historian(path, mode):
@@ -90,6 +114,9 @@ def main():
     ap.add_argument("--speed", type=float, default=120.0, help="replay speed, times real time")
     ap.add_argument("--db", help=f"historian file (default {LIVE_DB}; replay: {REPLAY_DB})")
     ap.add_argument("--port", type=int, default=8050)
+    ap.add_argument("--lan", action="store_true",
+                    help="listen on the local network, not only 127.0.0.1, and print the "
+                         "address for teammates. NO login: trusted network only")
     ap.add_argument("--sim", nargs="?", const="predictive", metavar="CONTROLLER",
                     choices=sim_source.CONTROLLERS,
                     help="run the rooftop SIMULATION (page /rooftop) with this controller: "
@@ -139,12 +166,27 @@ def main():
         t.daemon = True
         t.start()
     httpd = server.make_server(db, info, a.port, sim_db, sim_info,
-                               notifier.status if notifier else None)
-    print(f"SCADA ({info['mode']}) on http://127.0.0.1:{httpd.server_address[1]}   "
+                               notifier.status if notifier else None,
+                               host=LAN_HOST if a.lan else "127.0.0.1")
+    port = httpd.server_address[1]
+    print(f"SCADA ({info['mode']}) on http://127.0.0.1:{port}   "
           f"historian: {db}   Ctrl+C stops", flush=True)
     if a.sim:
         print(f"Rooftop SIMULATION ({feeder.controller.name}) on "
-              f"http://127.0.0.1:{httpd.server_address[1]}/rooftop   file: {sim_db}", flush=True)
+              f"http://127.0.0.1:{port}/rooftop   file: {sim_db}", flush=True)
+    if a.lan:
+        print(LAN_WARNING, flush=True)
+        ip = lan_address()
+        if ip:
+            print(f"Teammates on this network open: http://{ip}:{port}"
+                  + (f"   (simulation: http://{ip}:{port}/rooftop)" if a.sim else ""),
+                  flush=True)
+        else:
+            print("No local network address found (not connected?). Find this PC's address "
+                  "with ipconfig and give teammates http://<address>:" + str(port), flush=True)
+        print("If teammates cannot connect: allow Python through the Windows firewall for "
+              "this network (Private), or check that the network keeps devices apart.",
+              flush=True)
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

@@ -178,6 +178,24 @@ off. Setup with BotFather and the chat ID: [telegram.md](telegram.md).
 .venv\Scripts\python -m scada.notify --test
 ```
 
+### 6. Open the page from teammates' laptops (`--lan`, trusted network only)
+
+By default the server listens on `127.0.0.1`: only the PC that runs it can open the page.
+Add `--lan` to any start command to listen on the local network instead:
+
+```
+.venv\Scripts\python -m scada.run --replay --speed 120 --sim --lan
+```
+
+It prints the address to give teammates on the same Wi-Fi, e.g.
+`Teammates on this network open: http://192.168.1.23:8050`, and a warning: **there is no
+login**. Anyone who can reach the PC can read the data and acknowledge alarms (the page
+cannot reach the logger or change anything else). Use it only on a network you trust (the
+lab, a phone hotspot), never on public or university-wide Wi-Fi. Windows asks once whether
+Python may accept connections: allow it for **Private** networks only. If teammates still
+cannot connect, the Wi-Fi may keep devices apart (common on guest networks): use a phone
+hotspot. Real remote access with accounts is on the [roadmap](roadmap.md#3-future-remote-access).
+
 ### Where the data goes
 
 | File | Content |
