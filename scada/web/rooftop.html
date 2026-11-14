@@ -9,6 +9,11 @@
 <script type="importmap">{"imports": {"three": "/vendor/three-0.160.0/three.module.min.js"}}</script>
 </head>
 <body class="sim">
+<nav class="pages" aria-label="Pages">
+  <span class="brand">PV SCADA</span>
+  <a href="/" title="Our real module: live or replayed logger data">Real module · dashboard</a>
+  <a href="/rooftop" aria-current="page" title="Digital twin of a 120-module rooftop: a simulation, not measurements">Rooftop twin (SIMULATION)</a>
+</nav>
 <header class="top">
   <h1>Rooftop twin</h1>
   <span class="badge replay">SIMULATION</span>
@@ -17,7 +22,6 @@
   <span class="clock"><span id="tSim">no data</span> <small>simulated time (Makkah)</small></span>
   <span id="age" class="pill">–</span>
   <a href="#alarms" id="alarmBadge" class="pill">alarms –</a>
-  <a href="/" class="pill" title="The real module: the only real data source of this SCADA">← Real module</a>
 </header>
 <div id="simBanner" class="banner">SIMULATION – digital twin with placeholder parameters. Not a measurement; no claim about a real plant. The only real data source of this SCADA is the module page.</div>
 

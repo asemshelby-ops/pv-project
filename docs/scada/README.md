@@ -69,11 +69,16 @@ DTR and RTS low for this reason), and that the logger's commands (`GAMMA`, `LOAD
 
 ### 4. The rooftop twin: a SIMULATION, on its own page
 
-On Windows, double-click `start-rooftop.bat` (this page) or `start-scada-demo.bat` (the
-replay demo) in the project folder; `make-desktop-shortcuts.bat` puts both on the Desktop.
-Each switches to `twin-sim` only when no tracked file has uncommitted changes (otherwise it
-warns and starts nothing), starts the server, opens the page once the server answers, and
-keeps its window open: close the window to stop.
+**Everything in one server (Windows):** double-click `start-scada.bat` in the project folder
+(`make-desktop-shortcuts.bat` puts a "PV SCADA" shortcut on the Desktop). It runs
+`scada.run <real-module source> --sim`: the real module's source and this simulation in one
+process, still each with its own file and API. The real-module source is LIVE when a file
+`scada-live.cfg` exists in the project folder (one line of arguments, e.g.
+`--folder D:\sd_copy --serial COM5`; ignored by git), else the replay demo at 600x (built
+once if missing, after asking). It switches to `twin-sim` only when no tracked file has
+uncommitted changes (otherwise it warns and starts nothing), opens the dashboard once the
+server answers, and keeps its window open: close the window to stop. A bar at the top of both
+pages switches between "Real module · dashboard" and "Rooftop twin (SIMULATION)".
 
 ```
 .venv\Scripts\python -m scada.run --sim                  only the simulation
@@ -170,7 +175,7 @@ live historian and the other way round (`--db` selects another file).
 ### Tests
 
 ```
-.venv\Scripts\python -m pytest tests/test_scada_ingest.py tests/test_scada_alarms.py tests/test_scada_stack.py tests/test_scada_sim.py tests/test_scada_rooftop3d.py
+.venv\Scripts\python -m pytest tests/test_scada_ingest.py tests/test_scada_alarms.py tests/test_scada_stack.py tests/test_scada_sim.py tests/test_scada_rooftop3d.py tests/test_scada_together.py
 ```
 
 `test_scada_rooftop3d.py` also loads the page in headless Chromium (load, live updates,

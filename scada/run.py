@@ -6,8 +6,10 @@
     python -m scada.run --replay <folder> --speed 600     replay any folder of logger files
     python -m scada.run --sim                             only the rooftop SIMULATION
     python -m scada.run --replay --sim nasim              ... or next to a replay / live data
+    python -m scada.run --replay --speed 600 --sim        everything (start-scada.bat)
 
-Then open http://127.0.0.1:8050 . Stop with Ctrl+C.
+Then open http://127.0.0.1:8050 ; the bar at the top switches between the real module's
+dashboard and the rooftop page. Stop with Ctrl+C.
 
 --sim runs the rooftop twin (twin/, 120 simulated modules) and shows it on the page
 /rooftop, marked SIMULATION. It has its own file (out/scada/simulation.sqlite) and never

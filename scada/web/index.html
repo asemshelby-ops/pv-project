@@ -7,6 +7,11 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<nav class="pages" aria-label="Pages">
+  <span class="brand">PV SCADA</span>
+  <a href="/" aria-current="page" title="Our real module: live or replayed logger data">Real module · dashboard</a>
+  <a href="/rooftop" title="Digital twin of a 120-module rooftop: a simulation, not measurements">Rooftop twin (SIMULATION)</a>
+</nav>
 <header class="top">
   <h1>PV thermal-spike rig</h1>
   <span id="mode" class="badge">…</span>
@@ -15,7 +20,6 @@
     <small id="tUtc"></small></span>
   <span id="age" class="pill">–</span>
   <a href="#alarms" id="alarmBadge" class="pill">alarms –</a>
-  <a href="/rooftop" class="pill" title="Digital twin of a 120-module rooftop: a simulation, not measurements">Rooftop twin (SIMULATION) →</a>
 </header>
 <div id="replayBanner" class="banner" hidden></div>
 
