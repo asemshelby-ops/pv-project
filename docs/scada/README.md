@@ -6,9 +6,9 @@
    <https://www.python.org/downloads/windows/>. On the installer's first screen tick
    **"Add python.exe to PATH"**. (3.10 and 3.11 do not work: the pinned packages have no
    Windows versions for them.)
-2. **Get the project.** On the GitHub page of the repository choose branch `twin-sim`, then
+2. **Get the project.** On the GitHub page of the repository stay on branch `main` (the default), then
    **Code → Download ZIP** (you must be signed in with an account that has access). Right-click
-   the ZIP → **Extract All...**; you get a folder like `pv-project-twin-sim`. Do not run
+   the ZIP → **Extract All...**; you get a folder like `pv-project-main`. Do not run
    anything from inside the ZIP.
 3. **Double-click `setup-windows.bat`** in that folder. It checks Python, creates `.venv`,
    installs `requirements.txt` (needs internet, several minutes) and puts **PV SCADA** on
@@ -100,9 +100,9 @@ the whole first-time setup, see "For teammates" above). It runs
 process, still each with its own file and API. The real-module source is LIVE when a file
 `scada-live.cfg` exists in the project folder (one line of arguments, e.g.
 `--folder D:\sd_copy --serial COM5`; ignored by git), else the replay demo at 600x (built
-once if missing, after asking). It switches to `twin-sim` only when no tracked file has
-uncommitted changes (otherwise it warns and starts nothing; a "Download ZIP" copy without
-`.git` skips git entirely), opens the dashboard once the
+once if missing, after asking). It never switches git branches: it runs whatever branch is
+checked out (`main`) and only prints its name; a "Download ZIP" copy without `.git` skips git
+entirely. It opens the dashboard once the
 server answers, and keeps its window open: close the window to stop. A bar at the top of both
 pages switches between "Real module · dashboard" and "Rooftop twin (SIMULATION)".
 

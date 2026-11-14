@@ -92,6 +92,6 @@ def test_launcher_runs_both_sources_and_old_launchers_are_gone():
     assert '-m scada.run %REAL_ARGS% --sim' in text
     assert 'set "REAL_ARGS=--replay --speed 600"' in text and "scada-live.cfg" in text
     assert 'set "URL=http://127.0.0.1:8050"' in text and "CLOSE THIS WINDOW TO STOP IT." in text
-    assert "--untracked-files^=no" in text and "git checkout twin-sim" in text
+    assert "git checkout" not in text and "twin-sim" not in text          # uses the checked-out branch
     assert not (ROOT / "start-rooftop.bat").exists() and not (ROOT / "start-scada-demo.bat").exists()
     assert "start-scada.bat" in (ROOT / "make-desktop-shortcuts.bat").read_text()

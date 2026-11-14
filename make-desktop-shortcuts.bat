@@ -2,6 +2,7 @@
 rem Puts the shortcut "PV SCADA" on YOUR Desktop, pointing at start-scada.bat in this folder.
 rem The shortcut is created on the Desktop only, never in the repository. It also removes the
 rem two older shortcuts ("Rooftop simulation", "SCADA demo") this script used to create.
+rem It never switches git branches: the shortcut runs whatever branch is checked out (main).
 rem Run again after moving the folder. setup-windows.bat calls it with /nopause.
 rem Exit code 0 when the shortcut was created, 1 otherwise.
 setlocal

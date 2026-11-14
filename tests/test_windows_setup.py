@@ -56,3 +56,4 @@ def test_shortcut_script_can_run_without_pause():
     text = (ROOT / "make-desktop-shortcuts.bat").read_text(encoding="ascii")
     assert '"%~1"=="/nopause"' in text and "exit /b %RC%" in text
     assert "$ErrorActionPreference='Stop'" in text                         # failure -> exit code 1
+    assert "git checkout" not in text and "twin-sim" not in text          # never switches branches

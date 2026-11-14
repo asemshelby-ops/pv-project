@@ -251,7 +251,7 @@ Phase 4: evaluation and thesis.
 Strategies compared: no control / temperature-rise rule / AI with the net-power rule /
 fixed threshold 45-35 degC (Moharram et al. 2013; also report the best setpoint).
 
-## Digital twin — branch twin-sim (post-paper work, SIMULATION only)
+## Digital twin — on main since 2026-11-14, built on the retired branch twin-sim (post-paper work, SIMULATION only)
 
 What exists (2026-11-13/14): `twin/` = single-diode model of our module (De Soto, fitted to
 the seller listing) + lumped Faiman thermal model with spray, evaporation, pump and tank;

@@ -1,6 +1,6 @@
 # Digital twin of the module and a simulated rooftop (post-paper work)
 
-Branch `twin-sim`. This is project work for **after** the paper. Nothing here is used by
+On `main` since 2026-11-14 (built on branch `twin-sim`, now retired). This is project work for **after** the paper. Nothing here is used by
 the paper; `paper/`, `analysis/`, `firmware/`, `detect/` and `export/` are not changed (the
 twin imports from `analysis/`, `detect/`, `sim/`, `data/` and `config.py`, read only).
 

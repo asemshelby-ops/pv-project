@@ -57,6 +57,8 @@
 
 **M5Stack Unit INA226-10A facts `[DS — m5-docs]`:** 5 mΩ shunt, ±10 A, bus 0–30 V, isolated power and I2C, 5 V supply on the HY2.0-4P (Grove) port, **fixed I2C address 0x41** (no address option documented). Consequences `[REC]`: (a) two units on one bus collide → put each on its own ESP32 hardware I2C bus (two controllers available) or use a TCA9548A multiplexer; (b) the I2C logic level on the Grove side is not documented → measure the idle SDA/SCL voltage on arrival and add a 3.3 V↔5 V level shifter if it is near 5 V (likely the supervisor's "I2C converter"); (c) place the panel unit between the module and the load capacitor, where current stays ≤ Isc (5.88 A) — after the capacitor the PWM pulses reach ≈ 14 A, above the unit's ±10 A; (d) 5 mΩ gives ≈ 0.32 mA resolution, ample for a 1 % signal.
 
+**Branches (2026-11-14):** `twin-sim` was merged into `main`; `main` now holds the whole project (paper, firmware, analysis, SCADA, twin, launchers, `setup-windows.bat`) and is the only working branch. `twin-sim` stays on GitHub but is no longer used. `start-scada.bat` no longer switches branches; it runs whatever is checked out.
+
 **Changes on 2026-11-14 (branch `twin-sim`, post-paper, SIMULATION):** the digital twin and simulated rooftop are summarised in §8 (what exists, how to run it, the measurement priorities it revealed: evaporation and spray cooling, the pump's power and flow, wind); the four twin references first quoted from memory were checked (`docs/twin/refs.md`); new working documents in §11.
 
 ---

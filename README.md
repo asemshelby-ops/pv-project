@@ -56,7 +56,7 @@ with the earlier labels; it is kept and tested, but not used for the paper.
 
 Details and the synthetic results: `docs/paper/11-pipeline-and-synthetic-results.md`.
 
-## Post-paper work: digital twin and simulated rooftop (branch `twin-sim`)
+## Post-paper work: digital twin and simulated rooftop (on `main`; built on the retired branch `twin-sim`)
 
 `twin/` is a digital twin of the module (single-diode + lumped thermal model) scaled to a
 simulated rooftop of 120 modules with spray zones, for developing and comparing cooling

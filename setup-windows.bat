@@ -1,6 +1,6 @@
 @echo off
 rem One-time setup for a teammate who has only Python (no git). Double-click this file.
-rem Works in a folder unzipped from GitHub's "Download ZIP" (for example pv-project-twin-sim).
+rem Works in a folder unzipped from GitHub's "Download ZIP" (for example pv-project-main).
 rem   1. checks that Python 3.12 or newer, 64-bit, is on PATH
 rem      (the pinned packages in requirements.txt have no Windows wheels for 3.10/3.11 or 32-bit)
 rem   2. creates .venv in this folder

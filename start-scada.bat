@@ -13,26 +13,18 @@ title PV SCADA is running - close this window to stop
 set "URL=http://127.0.0.1:8050"
 cd /d "%~dp0"
 
-rem --- 1. git: only switch to twin-sim when no tracked file has uncommitted changes ------------
+rem --- 1. git: use whatever branch is checked out (main); this script never switches branches ---
 rem A folder from GitHub's "Download ZIP" has no .git: run its files as they are, no git needed.
 if not exist ".git" goto :nogit
-where git >nul 2>&1 || (echo ERROR: git was not found on PATH. & goto :fail)
-set "DIRTY="
-for /f "delims=" %%L in ('git status --porcelain --untracked-files^=no 2^>nul') do set "DIRTY=1"
-if defined DIRTY (
-  echo WARNING: there are uncommitted changes in this folder:
-  git status --short --untracked-files=no
-  echo.
-  echo Nothing was switched and nothing was started. Commit or stash the changes, then run this again.
-  goto :fail
-)
+where git >nul 2>&1 || goto :python
 set "BRANCH="
-for /f "delims=" %%B in ('git branch --show-current') do set "BRANCH=%%B"
-if /i not "%BRANCH%"=="twin-sim" (
-  echo Switching from branch "%BRANCH%" to twin-sim ...
-  git checkout twin-sim || (echo ERROR: could not switch to twin-sim. & goto :fail)
-)
+for /f "delims=" %%B in ('git branch --show-current 2^>nul') do set "BRANCH=%%B"
+if defined BRANCH echo Using the checked-out branch "%BRANCH%" ^(no branch switch^).
 goto :python
+:nogit
+echo No git repository in this folder ^(a "Download ZIP" copy^): using its files as they are.
+
+:python
 :nogit
 echo No git repository in this folder ^(a "Download ZIP" copy^): using its files as they are.
 
