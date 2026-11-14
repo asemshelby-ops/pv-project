@@ -20,7 +20,10 @@ same rooftop, and shown in the SCADA as a simulation source.
 | [parameters.md](parameters.md) | generated from `twin/params.py`: every value, unit, tag, source |
 | [placeholders.md](placeholders.md) | what must be measured to replace each placeholder, who measures it, and how the value gets in without a code change |
 | [simulation-results.md](simulation-results.md) | the first runs: validation hook on synthetic files, comparison of the five strategies. Simulation only |
+| [ranking.md](ranking.md) | which unmeasured quantity changes the result most, one at a time (`twin.rank`) |
+| [refs.md](refs.md), [refs.bib](refs.bib) | the twin's references not in `paper/refs.bib`, checked 2026-11-14, and what each check covered |
 | [SUMMARY-AR.md](SUMMARY-AR.md) | ملخص بالعربية للفريق |
+| [WHAT-DECIDES-AR.md](WHAT-DECIDES-AR.md) | ما الذي يحسم مشروع التبريد؟ ترتيب الكميات غير المقيسة (للفريق) |
 
 ## The parts
 
@@ -33,6 +36,7 @@ same rooftop, and shown in the SCADA as a simulation source.
 | `twin/rooftop.py` | 120 module twins, 6 strings, spread, valves, shared pump and tank |
 | `twin/controllers.py` | no cooling, continuous, fixed threshold, spike-triggered (NASIM), predictive |
 | `twin/compare.py` | all strategies on the same weather and rooftop, with sensitivity blocks |
+| `twin/rank.py` | one-at-a-time ranking of the unmeasured quantities by their effect on net energy |
 | `twin/fit.py` | fits parameters to rig files and writes the overlay that replaces placeholders |
 | `twin/validate.py` | validation hook: replay of logger files against measured temperature and power |
 | `twin/data/pump_curve_R385_TEMPLATE.csv` | the table Abdullah fills in on the bench |
@@ -46,6 +50,7 @@ On Windows use `.venv\Scripts\python` in place of `python`.
 python -m twin.validate --demo            validation hook on SYNTHETIC rig files (about 30 s)
 python -m twin.compare                    five strategies, 5 synthetic days (about 10 min)
 python -m twin.compare --no-sensitivity   the main table only (about 2 min)
+python -m twin.rank                       one quantity at a time, ranked (about 8 min, 4 processes)
 python -m scada.run --sim                 rooftop page: http://127.0.0.1:8050/rooftop
 python -m twin.params                     regenerate docs/twin/parameters.md
 python -m pytest tests/test_twin_*.py tests/test_scada_sim.py
@@ -55,7 +60,8 @@ python -m pytest tests/test_twin_*.py tests/test_scada_sim.py
 synthetic run. It is not in git; create it once with `python -m analysis.demo_synth`
 (about 10 minutes). Without it, `twin.compare` stops with that instruction.
 
-Results go to `out/twin/` (not in git): `validation_demo/`, `compare/report.md`.
+Results go to `out/twin/` (not in git): `validation_demo/`, `compare/report.md`,
+`rank/report.md`. `twin.rank` does not need the NASIM model.
 
 ## When real data exists
 

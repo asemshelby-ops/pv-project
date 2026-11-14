@@ -117,12 +117,17 @@ From the wetted glass, with the Chilton-Colburn analogy between heat and mass tr
 
 ```
 T_film = T - (T - T_w) eps / NTU                         mean film temperature
-h_c    = hc0 + hc1 v                                     McAdams: 5.7 + 3.8 v, W/(m2 K)
+h_c    = hc0 + hc1 v                                     McAdams: 5.7 + 3.8 v, W/(m2 K) (*)
 h_m    = h_c / (rho_air c_air Le^(2/3))                  m/s
 m_evap = f_wet A h_m max(0, rho_sat(T_film) - RH rho_sat(Ta))      kg/s
 q_evap = m_evap h_fg
 rho_sat(t) = 610.94 exp(17.625 t / (t + 243.04)) / (R_v (t + 273.15))     Magnus formula
 ```
+
+(*) The McAdams coefficient includes radiation and free convection, not forced convection
+alone; Watmuff et al. (1977) revised it to 2.8 + 3.0 v without them (Palyvos 2008). Used
+here as a convection coefficient it overstates the evaporation by about 1.5 times at
+1.5 m/s: an upper bound. See [refs.md](refs.md); `python -m twin.rank` runs both forms.
 
 All the latent heat is taken from the module. Evaporation acts only while the zone is
 sprayed. In the table above it is of the same size as the heat carried by the water: the
@@ -229,18 +234,21 @@ usable I-V sweep.
 
 ## References
 
-- De Soto, W., Klein, S. A., Beckman, W. A., Solar Energy 80 (2006) 78-88.
+- De Soto, W., Klein, S. A., Beckman, W. A., Solar Energy 80(1) (2006) 78-88,
+  doi:10.1016/j.solener.2005.06.010; erratum (sign of Eq. 6a) Solar Energy 81(1) (2007) 150.
 - Faiman, D., Prog. Photovolt. 16 (2008) 307-315.
 - King, D. L., Boyson, W. E., Kratochvil, J. A., Sandia report SAND2004-3535 (2004).
 - Herteleer, B. et al., Solar Energy 263 (2023) 111889.
 - Moharram, K. A. et al., Ain Shams Engineering Journal 4 (2013) 869-877.
-- McAdams, W. H., Heat Transmission, 3rd ed. (1954), as quoted in Duffie and Beckman,
-  Solar Engineering of Thermal Processes (wind convection coefficient).
-- Incropera, F. P. et al., Fundamentals of Heat and Mass Transfer (Chilton-Colburn
-  analogy, effectiveness-NTU relations).
-- Alduchov, O. A., Eskridge, R. E., J. Appl. Meteorol. 35 (1996) 601-609 (Magnus formula).
+- McAdams, W. H., Heat Transmission, 3rd ed., McGraw-Hill (1954), as quoted in Duffie, J. A.,
+  Beckman, W. A., Solar Engineering of Thermal Processes, 4th ed., Wiley (2013) (wind
+  coefficient, includes radiation and free convection); revision without them: Watmuff
+  et al. (1977), as tabulated by Palyvos, Appl. Therm. Eng. 28 (2008) 801-808.
+- Bergman, T. L., Lavine, A. S., Incropera, F. P., DeWitt, D. P., Fundamentals of Heat and
+  Mass Transfer, 7th ed., Wiley (2011), section 6.7 (heat and mass transfer analogy,
+  evaporative cooling) and the effectiveness-NTU relations.
+- Alduchov, O. A., Eskridge, R. E., J. Appl. Meteorol. 35(4) (1996) 601-609, Eq. (21).
 
-Faiman, King, Herteleer and Moharram are in `paper/refs.bib`. De Soto and the last three
-(textbook or standard relations) are quoted from memory and are not in the project's
-bibliography: check volume, pages, edition and equation numbers before any of them is
-cited in the thesis.
+Faiman, King, Herteleer and Moharram are in `paper/refs.bib`; the others are in
+[refs.bib](refs.bib), checked on 2026-11-14 ([refs.md](refs.md) says what each check
+covered and what must still be opened before an equation or page number is quoted).

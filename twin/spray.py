@@ -35,7 +35,7 @@ R_VAPOUR = 461.5        # J/(kg K), gas constant of water vapour
 
 def sat_vapour_density(t_c):
     """Saturation density of water vapour, kg/m3. Magnus formula with the coefficients of
-    Alduchov & Eskridge (J. Appl. Meteorol. 35, 1996): e_s = 610.94 exp(17.625 t /
+    Alduchov & Eskridge (J. Appl. Meteorol. 35, 1996, Eq. 21, AERK): e_s = 610.94 exp(17.625 t /
     (t + 243.04)) Pa."""
     t = np.asarray(t_c, dtype=float)
     return 610.94 * np.exp(17.625 * t / (t + 243.04)) / (R_VAPOUR * (t + 273.15))

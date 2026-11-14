@@ -251,6 +251,35 @@ Phase 4: evaluation and thesis.
 Strategies compared: no control / temperature-rise rule / AI with the net-power rule /
 fixed threshold 45-35 degC (Moharram et al. 2013; also report the best setpoint).
 
+## Digital twin — branch twin-sim (post-paper work, SIMULATION only)
+
+What exists (2026-11-13/14): `twin/` = single-diode model of our module (De Soto, fitted to
+the seller listing) + lumped Faiman thermal model with spray, evaporation, pump and tank;
+120 copies form a simulated rooftop (6 strings x 20, a spray zone and valve per string,
+shared pump and tank); five controllers (none, continuous, fixed 45/35, NASIM spike-
+triggered, predictive); fit + validation hooks for real logger files; the SCADA rooftop
+page as a SIMULATION source. All 34 physical parameters are [LIT-PLACEHOLDER] in ONE file,
+`twin/params.py`; measured values enter via `twin/params_measured.json` (written by
+`twin.fit --real`, tag [MEASURED]) and `twin/data/pump_curve_R385_measured.csv` — no code
+edits. Docs: docs/twin/README.md (run commands), simulation-results.md, ranking.md,
+refs.md (references checked 2026-11-14), WHAT-DECIDES-AR.md (team note).
+Run: `python -m twin.validate --demo`; `python -m twin.compare` (needs the NASIM model
+from `python -m analysis.demo_synth`); `python -m twin.rank` (one-at-a-time ranking).
+What it revealed (inside the model, placeholders; docs/twin/ranking.md): the SIGN of the
+net-energy result is set mainly by two quantities nobody has measured — evaporation (up to 9.2
+points of net energy; fixed 45/35 goes +0.81 % -> -8.37 % without it) and the pump's
+electrical power (x3 = a typical spray pump: fixed 45/35 -> -4.4 %, predictive -> 0).
+Next, ~2 points each: water flow / glass coverage of our nozzles, Faiman u0/u1, gamma.
+Wind ~0.9 points on energy, but it is the likely spike driver and, without an
+anemometer, the twin's temperature error stays 1.2-2.5 degC. Heat capacity and tank loss
+hardly matter (< 0.05). Measuring order: (1) pump curve with the real nozzles — power AND
+flow vs duty, minimum duty (bucket test, no module needed); (2) cooling per second of
+spraying and evaporation on the module in sun (post-burst decay + tank weight loss; the
+placeholder uses McAdams' coefficient, which includes radiation and free convection -> an
+upper bound; Watmuff's form alone costs 1.4 points); (3) wind at the module (anemometer).
+gamma and u0 come free with the paper's sweeps and logged days. Never quote a twin
+number without "simulation"; never write "the system saves x %".
+
 ## Working rules
 
 - Graduation project defended orally. Explain what you write; small reviewed steps.

@@ -147,16 +147,19 @@ _add("spray cooling",
                    "reproduce the no-evaporation estimates of CLAUDE.md",
                    "post-spray temperature decay and tank weight loss"),
      evap_hc0=(5.7, "W/(m2 K)", LIT,
-               "wind convection on a flat plate, h = 5.7 + 3.8 v (McAdams, Heat "
-               "Transmission, 1954; quoted in Duffie & Beckman, Solar Engineering of "
-               "Thermal Processes). Turned into a mass-transfer coefficient with the "
-               "Chilton-Colburn analogy (Incropera et al., Fundamentals of Heat and Mass "
-               "Transfer)",
+               "wind coefficient of a flat plate, h = 5.7 + 3.8 v (McAdams, Heat "
+               "Transmission, 3rd ed., 1954; quoted in Duffie & Beckman, Solar Engineering "
+               "of Thermal Processes, 4th ed., 2013). It includes radiation and free "
+               "convection (Palyvos 2008), so as a convection coefficient it is an upper "
+               "bound; Watmuff et al. 1977: 2.8 + 3.0 v without them. Turned into a "
+               "mass-transfer coefficient with the Chilton-Colburn analogy (Bergman, "
+               "Lavine, Incropera & DeWitt, Fundamentals of Heat and Mass Transfer, 7th "
+               "ed., 2011, section 6.7). See docs/twin/refs.md",
                "calibrate the evaporation term from the decay after a spray burst and from "
                "the measured water loss"),
      evap_hc1=(3.8, "W s/(m3 K)", LIT,
                "wind term of the same correlation, h = 5.7 + 3.8 v (McAdams 1954, quoted in "
-               "Duffie & Beckman)", "calibrated together with evap_hc0"),
+               "Duffie & Beckman 2013); Watmuff et al. 1977: 3.0", "calibrated together with evap_hc0"),
      spray_loss_fraction=(0.05, "-", LIT,
                           NO_SOURCE + ": share of the sprayed water that does not return "
                           "to the tank (drift, splash)",
@@ -285,7 +288,7 @@ _add("constants",
      water_h_fg=(2.43e6, "J/kg", CONST, "latent heat of evaporation near 30 degC", ""),
      air_rho=(1.15, "kg/m3", CONST, "air near 35 degC, 1 atm", ""),
      air_cp=(1007.0, "J/(kg K)", CONST, "air", ""),
-     lewis_number=(0.87, "-", CONST, "water vapour in air (Incropera et al.)", ""),
+     lewis_number=(0.87, "-", CONST, "water vapour in air near 300 K, alpha_air / D_AB (property tables of Bergman et al. 2011, 7th ed.; table values not re-checked)", ""),
      )
 
 PARAMS = dict(_G)

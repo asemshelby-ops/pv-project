@@ -144,7 +144,9 @@ Scored on the same five days they would be chosen on, so the best row is optimis
   and compared in ten minutes on the same weather, rooftop and sensor noise.
 - They point at what to measure first: the pump curve at low duty and the evaporation
   (see [placeholders.md](placeholders.md)). Until then even the sign of the net result is
-  open.
+  open. The one-at-a-time ranking of 2026-11-14 ([ranking.md](ranking.md)) confirms it:
+  evaporation and pump power are by far the largest effects (9.2 and 5.2 points) and
+  the only ones that turn both fixed-threshold settings into a loss.
 - They give development leads, each to be re-checked after the placeholders are replaced:
   a margin in the predictive rule; the tank temperature as a state the controller should
   plan with; a limit on valve operations.

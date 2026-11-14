@@ -47,8 +47,8 @@ overrides this table without a code change (see `placeholders.md`).
 | `spray_u_module_water` | 62 | W/(m2 K) | `[LIT-PLACEHOLDER]` | NOT from literature. Chosen so that the model reproduces the team's working estimate [EST] (CLAUDE.md): 2 L/min on one module warms by 5 degC (0.70 kW) when the module is 20 degC above the water. Overall conductance module -> water film, per m2 of module, at full wetting | cooling per second of spraying on the 100 W module: module temperature drop and water in/out temperature at known flow |
 | `spray_full_wetting_lpm` | 1 | L/min per module | `[LIT-PLACEHOLDER]` | assumption, no literature source: flow per module at which the whole glass is wetted; below it the wetted fraction falls linearly | photos / water-sensitive paper at 30-100 % duty with the real nozzles |
 | `evap_enabled` | 1 | 0/1 | `[LIT-PLACEHOLDER]` | evaporation from the wetted glass is included (1). The project notes that the energy case rests on cooling WITH evaporation; set 0 to reproduce the no-evaporation estimates of CLAUDE.md | post-spray temperature decay and tank weight loss |
-| `evap_hc0` | 5.7 | W/(m2 K) | `[LIT-PLACEHOLDER]` | wind convection on a flat plate, h = 5.7 + 3.8 v (McAdams, Heat Transmission, 1954; quoted in Duffie & Beckman, Solar Engineering of Thermal Processes). Turned into a mass-transfer coefficient with the Chilton-Colburn analogy (Incropera et al., Fundamentals of Heat and Mass Transfer) | calibrate the evaporation term from the decay after a spray burst and from the measured water loss |
-| `evap_hc1` | 3.8 | W s/(m3 K) | `[LIT-PLACEHOLDER]` | wind term of the same correlation, h = 5.7 + 3.8 v (McAdams 1954, quoted in Duffie & Beckman) | calibrated together with evap_hc0 |
+| `evap_hc0` | 5.7 | W/(m2 K) | `[LIT-PLACEHOLDER]` | wind coefficient of a flat plate, h = 5.7 + 3.8 v (McAdams, Heat Transmission, 3rd ed., 1954; quoted in Duffie & Beckman, Solar Engineering of Thermal Processes, 4th ed., 2013). It includes radiation and free convection (Palyvos 2008), so as a convection coefficient it is an upper bound; Watmuff et al. 1977: 2.8 + 3.0 v without them. Turned into a mass-transfer coefficient with the Chilton-Colburn analogy (Bergman, Lavine, Incropera & DeWitt, Fundamentals of Heat and Mass Transfer, 7th ed., 2011, section 6.7). See docs/twin/refs.md | calibrate the evaporation term from the decay after a spray burst and from the measured water loss |
+| `evap_hc1` | 3.8 | W s/(m3 K) | `[LIT-PLACEHOLDER]` | wind term of the same correlation, h = 5.7 + 3.8 v (McAdams 1954, quoted in Duffie & Beckman 2013); Watmuff et al. 1977: 3.0 | calibrated together with evap_hc0 |
 | `spray_loss_fraction` | 0.05 | - | `[LIT-PLACEHOLDER]` | assumption, no literature source: share of the sprayed water that does not return to the tank (drift, splash) | weigh the tank before and after a known sprayed volume |
 | `tank_ua_w_per_k_per_module` | 0.5 | W/K per module | `[LIT-PLACEHOLDER]` | assumption, no literature source: heat loss of the shaded tank to the air, scaled with the number of modules | cooling curve of the warm tank over a night |
 
@@ -109,6 +109,6 @@ overrides this table without a code change (see `placeholders.md`).
 | `water_h_fg` | 2.43e+06 | J/kg | `[CONST]` | latent heat of evaporation near 30 degC | - |
 | `air_rho` | 1.15 | kg/m3 | `[CONST]` | air near 35 degC, 1 atm | - |
 | `air_cp` | 1007 | J/(kg K) | `[CONST]` | air | - |
-| `lewis_number` | 0.87 | - | `[CONST]` | water vapour in air (Incropera et al.) | - |
+| `lewis_number` | 0.87 | - | `[CONST]` | water vapour in air near 300 K, alpha_air / D_AB (property tables of Bergman et al. 2011, 7th ed.; table values not re-checked) | - |
 
 62 parameters, 34 of them `[LIT-PLACEHOLDER]`.
