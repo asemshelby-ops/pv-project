@@ -23,6 +23,10 @@ python -m venv .venv && .venv/Scripts/python -m pip install -r requirements.txt
 .venv/Scripts/python -m eval.run --seeds 5 6 7 8 9 --hard   # hard synthetic variant
 ```
 
+Power BI tables (daily summary, spikes, sweeps, alarms) from the SD-card files:
+`python -m analysis.powerbi --data <folder>` -> `out/powerbi/`; see
+[docs/powerbi.md](docs/powerbi.md).
+
 Seeds 0-4 are **burned**: their test results were seen while designing the
 current NASIM-GBT, so the current version is judged on seeds 5-9 only.
 
