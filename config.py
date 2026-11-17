@@ -6,6 +6,9 @@ Every value carries its source tag:
   [DS]         datasheet / seller listing
   [EST]        first-pass engineering estimate, to be replaced by measurement
   [ASSUMPTION] chosen for the synthetic data only; not a property of our hardware
+  [PLACEHOLDER] NOT KNOWN YET (no part chosen, nothing measured): a stand-in so that the
+               code compiles and the synthetic tests run. Only in the Phase B block at the
+               end of this file. Replace it there, nowhere else.
 
 Nothing here is a measured property of the BANINUAN 100 W module.
 """
@@ -224,3 +227,108 @@ CELL_BACK_DT_C = CELL_MINUS_BACK_C   # same Sandia offset, used by the gamma ana
 # further off (0.55 % at 100 W/m2) without the NOT_SETTLED flag being set, and at <= 90
 # W/m2 the sweep is flagged. [ASSUMPTION] until bench B4 gives the real time constant.
 SWEEP_MIN_G_WM2 = 200.0
+
+# ==============================================================================================
+# PHASE B PREPARATION (2026-11-17). SOFTWARE ONLY: no pump, flow sensor or tank exists yet.
+#
+# Phase B = the randomized spray trial that follows the paper: on a NASIM alarm the logger
+# opens a "spike event" and draws spray / no-spray; the analysis compares the two arms.
+# Nothing here is adopted: the supervisor approves the design first (docs/phase-b/).
+#
+# EVERY SWITCH IS OFF. With all of them off, the logger's rows and every analysis result
+# are byte-identical to the project before this block existed
+# (tests/test_phase_b_flags.py against tests/golden/phase_b_off.json).
+#
+# This block is the ONE place for values that are not known yet. The firmware gets them
+# through a generated header, export/c/generated/phase_b_config.h:
+#       python -m export.phase_b_header
+# (tests/test_phase_b_flags.py fails if the committed header is not current.) After every
+# [PLACEHOLDER] below has been replaced by a measured or chosen value, set
+# PHASE_B_PLACEHOLDERS_CONFIRMED = True and regenerate. Until then the firmware refuses to
+# build a version that could switch the pump on.
+# ==============================================================================================
+
+# --- Analysis switches (the firmware's own switches are in PvDaq/src/pv_config.h) -------------
+PHASE_B_ENABLED = False         # pipeline: spray-trial tables (events, arms, cleaning check)
+LOADOFF_CLASS_ENABLED = False   # load-off spikes as their own class; verdict with and without
+ECT_ENABLED = False             # equivalent cell temperature from the sweeps' V_oc
+
+# --- Trial design (shared by firmware and analysis) --------------------------------------------
+PHASE_B_BLOCK_SIZE = 4          # [USER 2026-11-16] permuted blocks of 4: 2 spray + 2 no-spray
+PHASE_B_SEED = 20261117         # [PLACEHOLDER] seed of the allocation sequence. Choose it ONCE,
+                                # before the first event, write it in the protocol, never change
+                                # it during the trial. The logger prints it at every boot.
+PHASE_B_EVENT_WINDOW_MIN = 30   # [ASSUMPTION] the spike window: from the alarm row, the same
+                                # for both arms. ~4.8 thermal time constants (6.3 min [LIT]), so
+                                # a sprayed module is back within ~1 % of its uncooled path.
+PHASE_B_LOCKOUT_MIN = 10        # [ASSUMPTION] after a window closes, no new event for this
+                                # long: the next event's baseline must lie outside the window
+PHASE_B_BASELINE_MIN = 10       # [ASSUMPTION] minutes before the alarm used as the event's own
+                                # baseline (analysis only; must not exceed the lock-out)
+PHASE_B_DRY_RUN = True          # events, randomization and logging run; the pump NEVER does.
+                                # For commissioning, and an A/A check of the analysis on the rig.
+PHASE_B_PLACEHOLDERS_CONFIRMED = False   # set True only when no [PLACEHOLDER] is left below
+
+# --- Pump and spray [PLACEHOLDER: no pump or nozzle is chosen] ---------------------------------
+PUMP_DUTY = 0.60                # [PLACEHOLDER] PWM duty while spraying, 0-1. From the pump
+                                # curve (bucket test): lowest duty that gives a full spray cone
+SPRAY_MAX_S = 60                # [PLACEHOLDER] longest spray of one event, s ("max spray time")
+SPRAY_STOP_DROP_C = 0.0         # [PLACEHOLDER] stop when the module has cooled by this much
+                                # since the alarm; 0 = not used (every spray runs SPRAY_MAX_S)
+SPRAY_MIN_DT_WATER_C = 2.0      # [PLACEHOLDER] spray only while T_module - T_water >= this:
+                                # warm water cannot cool (decision 2026-11-06, T_water measured)
+SPRAY_MAX_DT_WATER_C = 40.0     # [PLACEHOLDER] thermal-shock guard: no spray when the glass is
+                                # hotter than the water by more than this. No manufacturer
+                                # guidance exists for this module; needs a stated basis
+SPRAY_MIN_G_WM2 = 200.0         # [ASSUMPTION] no event below this irradiance (= SWEEP_MIN_G_WM2)
+SPRAY_NEED_T_WATER = True       # an event needs a valid tank temperature (TANK_ROM filled in)
+PUMP_I_MAX_A = 5.0              # [PLACEHOLDER] over-current stop (stalled pump): pump datasheet
+PUMP_NO_FLOW_S = 5              # [PLACEHOLDER] pump on this long without a flow pulse -> stop
+                                # (dry tank, blocked line): priming time of the real loop
+PUMP_SAMPLE_MS = 250            # [ASSUMPTION] period of the pump-power readings (64-average)
+
+# --- Sensors and pins [PLACEHOLDER: nothing is bought or wired] --------------------------------
+FLOW_PULSES_PER_L = 450.0       # [PLACEHOLDER] flow-sensor pulses per litre: no sensor chosen.
+                                # Calibrate by volume / time in the bucket test
+FLOW_PIN = 35                   # [PLACEHOLDER] GPIO of the flow pulses. 35/36/39 are the spare
+                                # pins (PINMAP.md): input-only, no pull-up; a 5 V Hall sensor
+                                # needs a divider or level shifter
+PUMP_INA226_ADDR = 0x41         # [PLACEHOLDER] I2C address of the pump-rail INA226. The two M5
+                                # units bought are FIXED at 0x41 (M5 docs), so "its own address"
+                                # is only possible behind its own PaHub channel (below) or with
+                                # a different breakout
+PUMP_INA226_PAHUB_CH = 1        # PaHub port "1" (bench check 2026-11-05); -1 = wired directly
+                                # to the bus (only with an address that is not 0x41)
+PUMP_INA226_SHUNT_OHM = 0.005   # [PLACEHOLDER] M5 unit: 5 mOhm [DS]; another board: its shunt
+PUMP_INA226_MAX_A = 10.0        # [PLACEHOLDER] M5 unit: +/-10 A [DS]
+TANK_ROM = (0, 0, 0, 0, 0, 0, 0, 0)   # [PLACEHOLDER] ROM of the DS18B20 in the tank (T_water).
+                                # All zero = not fitted: with SPRAY_NEED_T_WATER no event opens
+
+# --- Per-event analysis (analysis/phase_b.py), all [ASSUMPTION] --------------------------------
+PHASE_B_MIN_ROWS_FRAC = 0.95    # an event counts only if this share of its window rows and of
+                                # its baseline rows has power and irradiance
+CLEAN_SWEEP_WINDOW_MIN = 10     # cleaning check: a sweep is "before" / "after" within this span
+CLEAN_AFTER_DELAY_MIN = 0       # "after" = nearest sweep this long after the spray's latest
+                                # end (alarm + SPRAY_MAX_S); raise it to wait for dry glass
+MDE_ALPHA = 0.05                # two-sided significance of the arm comparison
+MDE_POWER = 0.80                # chance of detecting an effect of the stated size
+
+# --- Equivalent cell temperature from V_oc (analysis/ect.py; docs/phase-b/03) ------------------
+# IEC 60904-5:2011, Eq. (4): ECT = T_ref + (1/beta) * [V_oc / V_oc,ref - 1 - a * ln(G / G_ref)].
+# The standard requires these three numbers to come from a calibration of THIS module.
+# We have none: they are placeholders, replaceable by fitted values (ect.fit_parameters).
+ECT_VOC_REF_V = 21.5            # [PLACEHOLDER] V_oc at the reference condition: seller listing
+ECT_G_REF_WM2 = 1000.0          # [PLACEHOLDER] the listing does not state its conditions;
+ECT_T_REF_C = 25.0              # [PLACEHOLDER] STC is assumed
+ECT_BETA_VOC_REL = -0.0030      # [PLACEHOLDER] relative temperature coefficient of V_oc, 1/degC.
+                                # NOT in the listing and NOT this module's value: an
+                                # illustrative crystalline-silicon figure, like GAMMA_P above
+ECT_A_IRR = 0.05                # [PLACEHOLDER] irradiance constant "a" of the standard. [EST]
+                                # n * N_s * kT/q / V_oc with 36 cells [ASSUMPTION], n = 1.2
+ECT_ISC_REF_A = 5.88            # [PLACEHOLDER] listing I_sc, for the self-reference form
+ECT_USE_ISC = False             # True: ln(I_sc / I_sc,ref) instead of ln(G / G_ref)
+ECT_MIN_G_WM2 = 400.0           # [LIT] IEC 60904-5:2011+AMD1:2022: only above 400 W/m2 (the
+                                # 2011 edition said 200)
+ECT_LAG_MAX_S = 300             # [ASSUMPTION] search range of the cross-correlation
+ECT_SPIKE_PAD_MIN = 10          # [ASSUMPTION] minutes before onset and after the peak that
+                                # belong to a spike's lag window
