@@ -260,9 +260,11 @@ PER_STRING = ["p_string", "v_string", "i_string", "bypassed", "t_string", "t_str
               "t_zone", "valve", "alarm"]
 
 
-def simulate_day(roof, w, controller, noise_seed=0, plant=None):
+def simulate_day(roof, w, controller, noise_seed=0, plant=None, on_step=None):
     """Run one controller over one day of weather. Returns (table, summary): the table has
-    one row per sample with the scalar columns and <name>_<string number> columns."""
+    one row per sample with the scalar columns and <name>_<string number> columns.
+    on_step(k, plant, rec), when given, is called after every sample with the plant's
+    state BEFORE the step (rec["t_modules"]); it only reads (twin/showcase.py)."""
     plant = plant or Plant(roof, noise_seed)
     plant.reset(w.ta[0])
     controller.reset(roof)
@@ -271,7 +273,10 @@ def simulate_day(roof, w, controller, noise_seed=0, plant=None):
     ps = {c: np.zeros((n, s)) for c in PER_STRING}
     for k in range(n):
         obs = plant.observe(w, k)
+        t_modules = plant.t if on_step is None else plant.t.copy()
         rec = plant.apply(w, k, controller.step(obs), obs.t_zone)
+        if on_step is not None:
+            on_step(k, plant, {**rec, "t_modules": t_modules})
         for c in SCALARS:
             sc[c][k] = rec[c]
         for c in PER_STRING:

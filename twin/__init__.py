@@ -13,6 +13,9 @@ and the detectors (detect/) are not changed by it; it only imports from them.
   compare.py      all strategies on the same weather and rooftop -> report
   fit.py          replaces placeholders by fitted values (params_measured.json)
   validate.py     replay of logger files: twin against measured temperature and power
+  showcase.py     one simulated day for the presentation views of /rooftop (story mode,
+                  controller comparison) and their export for slides
+  refresh.py      one command: refit from real logger files and regenerate those views
 
 Documentation: docs/twin/.
 """
@@ -20,3 +23,6 @@ Documentation: docs/twin/.
 SIM_LABEL = "SIMULATION"
 SIM_NOTICE = ("SIMULATION - digital twin with placeholder parameters. "
               "Not a measurement; no claim about a real plant.")
+# The label that stays on the 3D view and is part of every exported image and video
+# (scada/web/rooftop.html shows the same text; tests/test_twin_showcase.py compares them).
+VIEW_LABEL = "SIMULATION \u2014 placeholder parameters, not measured"
