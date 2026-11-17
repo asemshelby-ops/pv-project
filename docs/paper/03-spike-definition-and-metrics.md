@@ -366,3 +366,155 @@ physical cause.
 - Needs before a trial: the load and its firmware (`07`), a `load off` / `load on` event
   pair and the `ctl_load` origin in `analysis/ingest.py` and `analysis/events.py` (a
   small change, not made), and γ from the first sweeps to replace the assumed P_el.
+
+**Status note, 2026-11-17 (Phase B preparation; the proposal itself is still not decided).**
+The software side of the last point now exists behind a switch that is off:
+`LOADOFF_CLASS_ENABLED` in `config.py`. With it on, a `load off` / `load on` pair (marker
+codes 30 / 31, or the log sheet) gives the rise the origin `ctl_load` and the cause label
+`load_off`, a class of its own beside `irradiance`, `mixed` and `non_irradiance`; the
+label the rule of §3 would have given is kept in `cause_rule`. The verdict of §10 is then
+printed twice, **with and without** the load-off spikes, precondition (20 / 8) included,
+so the open question above can be answered with both results on the table. With the
+switch off nothing changes (`tests/test_phase_b_flags.py`). Tested on synthetic rises
+only: `tests/test_loadoff.py`.
+
+## 12. `[PROPOSAL]` Spray trial: smallest detectable difference, and one held-out week (for the supervisor)
+
+Status: a proposal written 2026-11-17 with the Phase B preparation (`docs/phase-b/`).
+**Not adopted: nothing here is decided until the supervisor approves.** It is not part of
+the paper (the spray trial comes after it) and it changes nothing in §10. Every number
+below is **SYNTHETIC** or an estimate, and is labelled.
+
+**Why.** The spray trial compares two arms: spike events that were sprayed and spike
+events that were not, drawn at random by the logger in blocks of four
+(`docs/phase-b/01-randomized-spray.md`). With few events a difference between the arms
+can be chance, and a real effect can be missed. Before the first drop of water we should
+know how small a difference the trial can show, so that its length is chosen and not
+discovered afterwards.
+
+**The calculation** (`analysis/mde.py`). Two arms of n events each. The outcome scatters
+from event to event with a standard deviation sd (among events of the same arm). The
+test is two-sided at α = 0.05 (`MDE_ALPHA`). The minimum detectable effect (MDE) is the
+true difference that this test finds in 80 % of repeated trials (`MDE_POWER`):
+
+```
+MDE ≈ (t[1 − α/2] + t[power]) · sd · √(2 / n)      with 2n − 2 degrees of freedom
+    ≈ 2.8 · sd · √(2 / n)                           for large n
+```
+
+Halving the MDE needs four times the events. The script uses the exact form (non-central
+t distribution); it is checked against the textbook sample sizes (64 events per arm for a
+difference of half a standard deviation), against a direct numerical integration and
+against a simulation of the test itself (`tests/test_mde.py`).
+
+**The spread used here is SYNTHETIC.** A 60-day synthetic dry-run campaign (seed 5): the
+generator's "hard" days, events opened and arms drawn exactly as the firmware does it,
+**nothing sprayed**, so the arms differ by chance only. 256 events, 128 per arm; the
+check that the arms do not differ came out as it should (energy outcome: difference
+−0.12 %, 95 % interval −0.40 to +0.16 %). The spread is the generator's, not the
+module's, and the 4.3 events per day are the generator's rate, not a forecast.
+
+| Outcome of one event (same 30-min window in both arms) | sd among events, SYNTHETIC |
+|---|---|
+| Energy gain: module energy per irradiation over the window, relative to the same event's 10 min before the alarm (`gain_rel`) | 1.14 % of the window's energy |
+| The same without the baseline (`yield_W_per_kWm2`) | 2.38 Wh per kWh/m² = 2.6 % of its mean |
+| Temperature: back sheet 30 s after the longest spray minus at the alarm (`dT_after_spray_C`) | 0.47 °C |
+
+Smallest difference between the arms that is found in 80 % of trials, **SYNTHETIC
+spread**:
+
+| Events per arm | Events in all | Energy gain, % of the window's energy | the same in Wh per event | Without baseline, Wh per kWh/m² | Temperature, °C |
+|---|---|---|---|---|---|
+| 5 | 10 | 2.30 | 0.70 | 4.82 | 0.95 |
+| 10 | 20 | 1.51 | 0.46 | 3.16 | 0.62 |
+| 20 | 40 | 1.03 | 0.32 | 2.17 | 0.43 |
+| 40 | 80 | 0.72 | 0.22 | 1.51 | 0.30 |
+| 80 | 160 | 0.51 | 0.15 | 1.06 | 0.21 |
+| 160 | 320 | 0.36 | 0.11 | 0.75 | 0.15 |
+
+(Wh per event = fraction × 30.5 Wh, the mean energy of a window in this synthetic
+campaign.)
+
+**What to compare it with `[EST]`.** One spray of 60 s with the project's own estimates
+(cooling 0.0805 °C per second of spraying = 0.70 kW / 8.7 kJ/K, no evaporation; the
+cooling then decays with τ = 6.3 min `[LIT]`; γ = −0.4 %/°C, **illustrative, not this
+module's**):
+
+| | Expected `[EST]` | Events per arm needed, SYNTHETIC spread |
+|---|---|---|
+| Temperature 30 s after the spray | ≈ 4 °C lower | 2 |
+| Energy gain over the 30-min window | the cooling averaged over the window is ≈ 1.1 °C → ≈ 0.43 % ≈ 0.13 Wh per event | ≈ 110 |
+| Pump energy of the same spray | 0.33 Wh at 20 W `[PLACEHOLDER]` | measured directly, no test needed |
+
+**What this means.**
+1. *Does the spray cool the module?* A handful of events answers it.
+2. *Does a short spray gain energy over the event window?* The expected gain is less than
+   half of the scatter between events. Twenty events per arm would only find a gain more
+   than twice the expected one. A trial of that size will most likely end with an
+   interval that includes zero. It should then be planned, and written, as **an estimate
+   with its interval**, not as a yes-or-no test.
+3. The baseline is worth keeping: relative to each event's own 10 min before the alarm,
+   the spread is less than half of the unadjusted one (1.14 % against 2.6 %).
+4. All of this stands on a synthetic spread. **The real one has to be measured first**:
+   two weeks or more of dry run on the rig (`PHASE_B_DRY_RUN 1`: events and arms are
+   logged, the pump stays off) give the spread and the number of events per day; then
+   `python -m analysis.mde --results <result folder>` gives the table for this module.
+   In a wet run the sprayed arm may also scatter more than the other (in the synthetic
+   rig it does, in temperature), which the calculation does not know.
+
+**Proposed rule for the length of the trial.**
+- Choose the primary outcome and the smallest effect worth showing **before** the wet
+  run; take n per arm from the table made with the dry-run spread; the length in weeks is
+  2n / (7 × events per day).
+- The number of events is fixed in advance. The trial is not stopped early because a
+  result looks significant, and not prolonged because it does not: looking repeatedly
+  and stopping at p < 0.05 produces "effects" from chance.
+- Whatever comes out is reported as the difference with its 95 % interval, next to the
+  MDE. A result that does not reach significance is written as "the trial could not
+  show a difference larger than [MDE]", never as "no effect"; and never as "the system
+  saves x %".
+
+**One held-out week, never used for tuning.**
+- *Which.* The last 7 consecutive local days of the wet trial. They begin after the
+  freeze.
+- *Freeze, before the week begins:* the firmware build and every Phase B value of
+  `config.py` (pump duty, longest spray, stop conditions, window, lock-out, baseline),
+  the NASIM model and its threshold, the analysis code and the choice of the primary
+  outcome. The commit is tagged in git (`phase-b-freeze`) and the week's two dates are
+  written into `config.PHASE_B_HELDOUT_WEEK`. The boot lines of `/spray_log.csv` show
+  the settings the board really used; they must be the same in every boot of the week.
+- *"Never used for tuning" means:* not for choosing any of the settings above; not in
+  the spread that sizes the trial; not in the training, the validation or the threshold
+  choice of the detector; and no table or figure of its outcomes is made before the
+  unlock.
+- *What the code enforces.* While `PHASE_B_HELDOUT_UNLOCKED` is `False`,
+  `analysis/phase_b.py` counts the week's events in the audit and leaves them out of
+  every table (events, arms, energy balance, cleaning check); a function that is asked
+  for them raises an error; `analysis/mde.py` leaves them out of the spread
+  (`tests/test_phase_b_analysis.py`, `tests/test_mde.py`). *What it does not enforce:*
+  the detector side (the frozen model was trained before the week began, so by its date
+  it cannot contain it), and anyone opening the CSV files by hand.
+- *Unlock.* Once, after the week's last day: set the switch, run the pipeline once. The
+  week gets its own table (`phase_b_arms_heldout.csv`) beside the table of the other
+  weeks, and is reported whatever it shows.
+- *What one week can show.* With r events per day it holds 3.5 · r events per arm. At
+  r = 2 that is 7 per arm, an MDE of 1.6 sd: enough for the temperature outcome (0.8 °C
+  with the SYNTHETIC spread), not for the energy outcome (1.9 %). For energy the week is
+  therefore a check on the other weeks (same sign, and their estimate inside the week's
+  95 % interval), not a second proof. This is said now so that it is not discovered
+  later.
+
+**Open questions for the supervisor.**
+- Whether the spray trial is run as a randomized two-arm comparison sized in this way.
+- The primary outcome: the temperature response, the energy gain relative to the
+  baseline, or the net energy (gain minus pump). And the smallest effect worth showing.
+- α = 0.05 two-sided and 80 % power, or other values.
+- Whether a dry run of at least two weeks is required before any water.
+- Whether to keep one held-out week, whether it is the last week, and the reading rule
+  above.
+
+```bash
+.venv/Scripts/python -m analysis.mde --per-arm 5 10 20 40 80 160          # SYNTHETIC spread
+.venv/Scripts/python -m analysis.mde --results <result folder>            # spread of a dry run
+.venv/Scripts/python -m analysis.mde --effect 0.004                       # events needed for an effect
+```

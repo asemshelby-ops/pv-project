@@ -97,7 +97,18 @@ EVENT_COLUMNS = [
     "spike_id", "date_local", "t_alarm", "assign", "dry_run", "assign_expected", "assign_ok",
     "n_rows", "rows_frac", "baseline_frac", "G_mean", "T_alarm_C", "dT_after_spray_C",
     "dT_mean_C", "spray_s", "litres", "pump_Wh", "pump_rows_missing", "E_module_Wh",
-    "H_kWh_m2", "yield_W_per_kWm2", "yield0_W_per_kWm2", "gain_rel", "delivered", "valid", "note"]
+    "H_kWh_m2", "yield_W_per_kWm2", "yield0_W_per_kWm2", "gain_rel", "delivered", "valid",
+    "heldout", "note"]
+
+
+def in_heldout_week(dates):
+    """True for the local dates ("YYYY-MM-DD") inside the one week that is never used for
+    tuning (config.PHASE_B_HELDOUT_WEEK; all False while no week is named)."""
+    dates = pd.Series(dates, dtype="object")
+    if config.PHASE_B_HELDOUT_WEEK is None:
+        return pd.Series(False, index=dates.index)
+    first, last = config.PHASE_B_HELDOUT_WEEK
+    return (dates >= first) & (dates <= last)
 
 
 def has_columns(df):
@@ -215,7 +226,9 @@ def event_table(df, log=None, excluded=None, seed=None, block=None):
         row["valid"] = bool(complete and not note)
         row["note"] = "; ".join(note)
         rows.append(row)
-    return pd.DataFrame(rows, columns=EVENT_COLUMNS)
+    events = pd.DataFrame(rows, columns=EVENT_COLUMNS)
+    events["heldout"] = in_heldout_week(events["date_local"]).to_numpy(dtype=bool)
+    return events
 
 
 def spray_windows(events):
@@ -283,19 +296,32 @@ def permutation_p(values, assign, blocks, n=20000, seed=0):
     return float(((diff >= observed - 1e-12).sum() + 1) / (n + 1))
 
 
-def analysis_set(events, which="as assigned"):
+def analysis_set(events, which="as assigned", part="tuning"):
     """The events that enter the comparison. Wet runs only (a dry run is reported apart).
       "as assigned"  every valid event, in the arm the logger drew for it (the main result)
       "as delivered" the same without the events whose arm was not followed (a spray that
-                     gave no water, water in a no-spray event)"""
+                     gave no water, water in a no-spray event)
+    part: "tuning" (default) leaves out the held-out week, so nothing that is looked at
+    while settings are still being chosen contains it; "heldout" is that week alone and
+    raises PermissionError while config.PHASE_B_HELDOUT_UNLOCKED is False; "all" is both
+    and is locked in the same way once a week is named."""
     e = events[events["valid"] & ~events["dry_run"] & events["assign"].isin([0, 1])]
-    return e[e["delivered"]] if which == "as delivered" else e
+    if which == "as delivered":
+        e = e[e["delivered"]]
+    held = e["heldout"].astype(bool) if "heldout" in e else pd.Series(False, index=e.index)
+    if part == "tuning":
+        return e[~held]
+    if config.PHASE_B_HELDOUT_WEEK is not None and not config.PHASE_B_HELDOUT_UNLOCKED:
+        raise PermissionError("the held-out week is locked: set config.PHASE_B_HELDOUT_UNLOCKED "
+                              "only when every setting and the analysis code are frozen")
+    return e[held] if part == "heldout" else e
 
 
-def arm_comparison(events, which="as assigned", n_perm=20000, seed=0, block=config.PHASE_B_BLOCK_SIZE):
+def arm_comparison(events, which="as assigned", n_perm=20000, seed=0, block=config.PHASE_B_BLOCK_SIZE,
+                   part="tuning"):
     """Spray against no-spray, one row per quantity: mean and spread per arm, the
     difference (spray minus no-spray) with its 95 % interval and the permutation p-value."""
-    e = analysis_set(events, which)
+    e = analysis_set(events, which, part)
     s, c = e[e["assign"] == 1], e[e["assign"] == 0]
     blocks = ((e["spike_id"].abs() - 1) // block).to_numpy()
     rows = []
@@ -321,13 +347,13 @@ def _balance(s, c, adjusted):
     return float(gain), float(pump), float(gain - pump), float(s["litres"].mean() - c["litres"].mean())
 
 
-def energy_balance(events, which="as assigned", n_boot=2000, seed=0):
+def energy_balance(events, which="as assigned", n_boot=2000, seed=0, part="tuning"):
     """Net energy of a spray event and water per kWh, twice: from the normalized energy
     itself and from its baseline-relative form (same expectation, less spread, because
     each event is compared with its own minutes before the alarm). Intervals: bootstrap
     over events inside each arm, 95 % percentile. L/kWh is given only where the net (or
     gross) energy is above zero: below zero there is nothing to divide by."""
-    e = analysis_set(events, which)
+    e = analysis_set(events, which, part)
     s, c = e[e["assign"] == 1], e[e["assign"] == 0]
     rows, rng = [], np.random.default_rng(seed)
     for adjusted in (False, True):
@@ -430,7 +456,12 @@ def audit(events, block=config.PHASE_B_BLOCK_SIZE):
     ids = sorted(wet["spike_id"])
     missing = sorted(set(range(1, max(ids) + 1)) - set(ids)) if ids else []
     v = analysis_set(events)
+    held = events["heldout"].astype(bool) if "heldout" in events else pd.Series(False, index=events.index)
     return {"events": len(events), "wet": len(wet), "dry_run": int(events["dry_run"].sum()),
+            "heldout_week": list(config.PHASE_B_HELDOUT_WEEK) if config.PHASE_B_HELDOUT_WEEK else None,
+            "heldout_events": int(held.sum()),
+            "heldout_locked": bool(config.PHASE_B_HELDOUT_WEEK is not None
+                                   and not config.PHASE_B_HELDOUT_UNLOCKED),
             "arms_wet": {"spray": int((wet["assign"] == 1).sum()), "no_spray": int((wet["assign"] == 0).sum())},
             "valid": {"spray": int((v["assign"] == 1).sum()), "no_spray": int((v["assign"] == 0).sum())},
             "not_valid": int((~wet["valid"]).sum()),
@@ -444,6 +475,17 @@ def _fmt(v, f=".3g"):
     return "-" if v is None or (isinstance(v, float) and math.isnan(v)) else format(v, f)
 
 
+def _arm_lines(arms):
+    lines = ["| quantity | unit | no-spray: n, mean (sd) | spray: n, mean (sd) | spray minus no-spray (95 %) | p (permutation) |",
+             "|---|---|---|---|---|---|"]
+    for _, r in arms.iterrows():
+        lines.append(f"| {r['what']} | {r['unit']} | {r['no_spray_n']}, {_fmt(r['no_spray_mean'], '.4g')} "
+                     f"({_fmt(r['no_spray_sd'], '.3g')}) | {r['spray_n']}, {_fmt(r['spray_mean'], '.4g')} "
+                     f"({_fmt(r['spray_sd'], '.3g')}) | {_fmt(r['difference'], '+.3g')} "
+                     f"({_fmt(r['lo'], '+.3g')} to {_fmt(r['hi'], '+.3g')}) | {_fmt(r['p_permutation'], '.3f')} |")
+    return lines
+
+
 def markdown(result, synthetic=False):
     """The Phase B section of summary.md."""
     a, arms, bal, cs = result["audit"], result["arms"], result["balance"], result["cleaning_summary"]
@@ -452,6 +494,13 @@ def markdown(result, synthetic=False):
         lines += ["**SYNTHETIC DATA: the spray's cooling, the pump's power, the flow and the "
                   "cleaning step are invented numbers put in by the generator. This shows that "
                   "the analysis runs and finds them again; it says nothing about a real spray.**", ""]
+    if a.get("heldout_week"):
+        lines += [f"Held-out week {a['heldout_week'][0]} to {a['heldout_week'][1]}: {a['heldout_events']} "
+                  "events. " + ("**LOCKED: they are in none of the tables below** and are looked at "
+                                "once, when every setting and the analysis code are frozen."
+                                if a["heldout_locked"] else
+                                "UNLOCKED: the first table below is the other weeks, the second "
+                                "the held-out week alone."), ""]
     lines += [f"Events: {a['events']} ({a['wet']} wet, {a['dry_run']} dry run). Wet arms as drawn: "
               f"{a['arms_wet']['spray']} spray, {a['arms_wet']['no_spray']} no-spray; valid for the "
               f"comparison: {a['valid']['spray']} and {a['valid']['no_spray']}.",
@@ -459,14 +508,11 @@ def markdown(result, synthetic=False):
               f"events; event numbers never logged: {a['numbers_never_logged'] or 'none'}; arm not "
               f"followed (no water in a spray event, or water in a no-spray event): "
               f"{a['not_delivered'] or 'none'}.", "",
-              "### Arms side by side (every valid event in the arm it was drawn for)", "",
-              "| quantity | unit | no-spray: n, mean (sd) | spray: n, mean (sd) | spray minus no-spray (95 %) | p (permutation) |",
-              "|---|---|---|---|---|---|"]
-    for _, r in arms.iterrows():
-        lines.append(f"| {r['what']} | {r['unit']} | {r['no_spray_n']}, {_fmt(r['no_spray_mean'], '.4g')} "
-                     f"({_fmt(r['no_spray_sd'], '.3g')}) | {r['spray_n']}, {_fmt(r['spray_mean'], '.4g')} "
-                     f"({_fmt(r['spray_sd'], '.3g')}) | {_fmt(r['difference'], '+.3g')} "
-                     f"({_fmt(r['lo'], '+.3g')} to {_fmt(r['hi'], '+.3g')}) | {_fmt(r['p_permutation'], '.3f')} |")
+              "### Arms side by side (every valid event in the arm it was drawn for)", ""]
+    lines += _arm_lines(arms)
+    if "arms_heldout" in result:
+        lines += ["", "### The held-out week alone (settings and code frozen before it began)", ""]
+        lines += _arm_lines(result["arms_heldout"])
     lines += ["", "### Energy of one spray event: gain, pump, net; water per kWh", "",
               "| estimate | gain Wh (95 %) | pump Wh | net Wh (95 %) | litres | L/kWh gross | L/kWh net |",
               "|---|---|---|---|---|---|---|"]
@@ -492,20 +538,33 @@ def markdown(result, synthetic=False):
 
 
 def run(df, out=None, log=None, sweeps=None, excluded=None, n_boot=2000, n_perm=20000, seed=0):
-    """The whole Phase B step on an ingested table. Writes phase_b_*.csv to `out`."""
+    """The whole Phase B step on an ingested table. Writes phase_b_*.csv to `out`.
+
+    Held-out week (config.PHASE_B_HELDOUT_WEEK): while it is locked, its events are counted
+    in the audit and appear in no table at all, neither in the event table nor in the
+    cleaning table. Once unlocked, `arms` and `balance` stay what they were (the other
+    weeks) and the week gets its own two tables, arms_heldout and balance_heldout."""
     events = event_table(df, log, excluded)
+    info = audit(events)
+    if info["heldout_locked"]:
+        events = events[~events["heldout"]].reset_index(drop=True)
     clean = cleaning_check(events, sweeps if sweeps is not None else pd.DataFrame())
     result = {"events": events, "arms": arm_comparison(events, n_perm=n_perm, seed=seed),
               "arms_delivered": arm_comparison(events, "as delivered", n_perm=n_perm, seed=seed),
               "balance": energy_balance(events, n_boot=n_boot, seed=seed),
               "cleaning": clean, "cleaning_summary": cleaning_summary(clean, events),
-              "audit": audit(events)}
+              "audit": info}
+    names = ["events", "arms", "arms_delivered", "balance", "cleaning", "cleaning_summary"]
+    if config.PHASE_B_HELDOUT_WEEK is not None and config.PHASE_B_HELDOUT_UNLOCKED:
+        result["arms_heldout"] = arm_comparison(events, n_perm=n_perm, seed=seed, part="heldout")
+        result["balance_heldout"] = energy_balance(events, n_boot=n_boot, seed=seed, part="heldout")
+        names += ["arms_heldout", "balance_heldout"]
     if out is not None:
         out = pathlib.Path(out)
         out.mkdir(parents=True, exist_ok=True)
-        for name in ("events", "arms", "arms_delivered", "balance", "cleaning", "cleaning_summary"):
+        for name in names:
             result[name].to_csv(out / f"phase_b_{name}.csv", index=False)
-        (out / "phase_b_audit.json").write_text(json.dumps(result["audit"], indent=2), encoding="utf-8")
+        (out / "phase_b_audit.json").write_text(json.dumps(info, indent=2), encoding="utf-8")
     return result
 
 

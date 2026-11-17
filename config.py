@@ -312,6 +312,13 @@ CLEAN_AFTER_DELAY_MIN = 0       # "after" = nearest sweep this long after the sp
                                 # end (alarm + SPRAY_MAX_S); raise it to wait for dry glass
 MDE_ALPHA = 0.05                # two-sided significance of the arm comparison
 MDE_POWER = 0.80                # chance of detecting an effect of the stated size
+# One week of the trial that is never used for tuning [PROPOSAL, docs/paper/03 sec. 12; not
+# adopted]. Name it by its dates BEFORE the first wet event. Its events stay out of every
+# table, of the spread used for the minimum detectable effect and of any choice of a
+# setting, until PHASE_B_HELDOUT_UNLOCKED is set: once, when settings and code are frozen.
+PHASE_B_HELDOUT_WEEK = None     # [PLACEHOLDER] ("YYYY-MM-DD", "YYYY-MM-DD"), first and last
+                                # local day; None = no week named
+PHASE_B_HELDOUT_UNLOCKED = False
 
 # --- Equivalent cell temperature from V_oc (analysis/ect.py; docs/phase-b/03) ------------------
 # IEC 60904-5:2011, Eq. (4): ECT = T_ref + (1/beta) * [V_oc / V_oc,ref - 1 - a * ln(G / G_ref)].

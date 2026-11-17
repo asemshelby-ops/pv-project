@@ -264,7 +264,7 @@ def test_cleaning_check_separates_cleaner_glass_from_cooling(tmp_path):
     after = s.loc[ok["sweep_after"].astype("int64")].to_numpy()
     late_t = s.loc[ok["sweep_late"].astype("int64")].to_numpy()
     t0 = ok["t_alarm"].to_numpy()
-    assert ((t0 - before) >= np.timedelta64(0)).all() and ((t0 - before) <= span.to_timedelta64()).all()
+    assert ((t0 - before) >= np.timedelta64(0, "s")).all() and ((t0 - before) <= span.to_timedelta64()).all()
     assert ((after - t0) >= np.timedelta64(config.SPRAY_MAX_S, "s")).all()
     end = t0 + np.timedelta64(config.PHASE_B_EVENT_WINDOW_MIN * 60, "s")
     assert (late_t < end).all() and (late_t > after).all()
@@ -301,3 +301,69 @@ def test_pipeline_runs_the_trial_only_when_its_switch_is_on(rig, tmp_path, monke
     assert (ev_on["note"] == "excluded: spray event").sum() >= n_sprays // 2
     assert (ev_off["note"] == "excluded: spray event").sum() == 0
     assert len(pd.read_csv(tmp_path / "on" / "phase_b_events.csv")) == len(rig["truth"])
+
+
+# --- the held-out week [PROPOSAL, docs/paper/03 sec. 12] ------------------------------------------
+
+def test_no_week_is_named_by_default_and_then_nothing_is_held_out(rig):
+    assert config.PHASE_B_HELDOUT_WEEK is None and config.PHASE_B_HELDOUT_UNLOCKED is False
+    r = rig["result"]
+    assert not r["events"]["heldout"].any() and "arms_heldout" not in r
+    assert r["audit"]["heldout_week"] is None and r["audit"]["heldout_locked"] is False
+    assert len(phase_b.analysis_set(r["events"], part="all")) == len(phase_b.analysis_set(r["events"]))
+
+
+def test_a_locked_week_is_counted_and_shown_in_no_table(rig, monkeypatch, tmp_path):
+    days = sorted(rig["result"]["events"]["date_local"].unique())
+    week = (days[-3], days[-1])
+    open_run = rig["result"]
+    monkeypatch.setattr(config, "PHASE_B_HELDOUT_WEEK", week)
+    r = phase_b.run(rig["df"], tmp_path, rig["log"], rig["sweeps"], rig["excluded"],
+                    n_boot=500, n_perm=4000, seed=1)
+    inside = open_run["events"]["date_local"].between(*week)
+    assert 0 < inside.sum() < len(inside)
+    assert r["audit"]["heldout_week"] == list(week) and r["audit"]["heldout_locked"] is True
+    assert r["audit"]["heldout_events"] == int(inside.sum())
+    assert r["audit"]["events"] == len(open_run["events"])                # counted ...
+    kept = set(open_run["events"].loc[~inside, "spike_id"])
+    assert set(r["events"]["spike_id"]) == kept                           # ... and shown nowhere
+    assert set(r["cleaning"]["spike_id"]) == kept
+    assert set(pd.read_csv(tmp_path / "phase_b_events.csv")["spike_id"]) == kept
+    assert set(pd.read_csv(tmp_path / "phase_b_cleaning.csv")["spike_id"]) == kept
+    assert not list(tmp_path.glob("*heldout*"))
+    valid = open_run["events"][open_run["events"]["valid"] & ~inside]
+    row = r["arms"].set_index("quantity").loc["gain_rel"]
+    assert row["spray_n"] == (valid["assign"] == 1).sum() and row["no_spray_n"] == (valid["assign"] == 0).sum()
+    assert row["spray_n"] < open_run["arms"].set_index("quantity").loc["gain_rel", "spray_n"]
+    text = "\n".join(phase_b.markdown(r, synthetic=True))
+    assert "LOCKED" in text and "held-out week alone" not in text
+    # the functions refuse too, also on a table that still holds the rows
+    full = phase_b.event_table(rig["df"], rig["log"], rig["excluded"])
+    assert full["heldout"].sum() == inside.sum()
+    for part in ("heldout", "all"):
+        with pytest.raises(PermissionError):
+            phase_b.analysis_set(full, part=part)
+        with pytest.raises(PermissionError):
+            phase_b.arm_comparison(full, n_perm=200, part=part)
+    assert set(phase_b.analysis_set(full)["spike_id"]) <= kept
+
+
+def test_unlocking_adds_the_week_as_its_own_table_and_changes_nothing_else(rig, monkeypatch, tmp_path):
+    days = sorted(rig["result"]["events"]["date_local"].unique())
+    monkeypatch.setattr(config, "PHASE_B_HELDOUT_WEEK", (days[-3], days[-1]))
+    args = (rig["df"], None, rig["log"], rig["sweeps"], rig["excluded"])
+    locked = phase_b.run(*args, n_boot=500, n_perm=4000, seed=1)
+    monkeypatch.setattr(config, "PHASE_B_HELDOUT_UNLOCKED", True)
+    r = phase_b.run(rig["df"], tmp_path, *args[2:], n_boot=500, n_perm=4000, seed=1)
+    pd.testing.assert_frame_equal(r["arms"], locked["arms"])              # the other weeks: as before
+    pd.testing.assert_frame_equal(r["balance"], locked["balance"])
+    held = r["events"][r["events"]["heldout"] & r["events"]["valid"]]
+    assert len(r["events"]) == r["audit"]["events"] and r["audit"]["heldout_locked"] is False
+    row = r["arms_heldout"].set_index("quantity").loc["gain_rel"]
+    assert row["spray_n"] == (held["assign"] == 1).sum() and row["no_spray_n"] == (held["assign"] == 0).sum()
+    assert row["spray_n"] + row["no_spray_n"] == len(held) > 0
+    assert (tmp_path / "phase_b_arms_heldout.csv").exists() and (tmp_path / "phase_b_balance_heldout.csv").exists()
+    both = phase_b.analysis_set(r["events"], part="all")
+    assert len(both) == len(held) + len(phase_b.analysis_set(r["events"]))
+    text = "\n".join(phase_b.markdown(r, synthetic=True))
+    assert "UNLOCKED" in text and "held-out week alone" in text
