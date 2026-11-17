@@ -62,7 +62,15 @@ static const uint8_t DET_RESET_AFTER_FAILS = NASIM_DET_RESET_AFTER_FAILS;
 // e.g. 28-FF-64-1E-0F-00-00-A1 -> {0x28, 0xFF, 0x64, 0x1E, 0x0F, 0x00, 0x00, 0xA1}.
 // Until ALL five rows are filled, T1..T5 take the sensors in bus-scan order (not tied to a
 // position on the module) and every row carries the ST_TROM_UNMAPPED status bit.
-static const uint8_t T_ROM[5][8] = {{0}, {0}, {0}, {0}, {0}};
+// Filled 2026-11-18 (bench bring-up, hand-warming test; labels on the cables T1..T5).
+// Bench mapping only: the positions on the back sheet are set when the sensors are mounted.
+static const uint8_t T_ROM[5][8] = {
+    {0x28, 0x89, 0x59, 0xD5, 0x00, 0x00, 0x00, 0x84},  // T1
+    {0x28, 0xE7, 0x85, 0xD2, 0x00, 0x00, 0x00, 0xAD},  // T2
+    {0x28, 0x7C, 0x4D, 0xD6, 0x00, 0x00, 0x00, 0xF6},  // T3
+    {0x28, 0x0F, 0xA6, 0xD2, 0x00, 0x00, 0x00, 0x93},  // T4
+    {0x28, 0x3F, 0x12, 0xD3, 0x00, 0x00, 0x00, 0xA1},  // T5
+};
 
 // Measurement load (used only with HAS_LOAD 1). DS18B20 on the resistor heatsink, by ROM,
 // same notation as T_ROM. TODO(user): fill in when the sensor is mounted (bench B5 prints
