@@ -173,6 +173,7 @@ function enter(play = false) {
   $("stBar").hidden = $("stCounters").hidden = false;
   R.setScale(S.scale[0], S.scale[1]);
   stage.setDriver(DRIVER);
+  stage.theater(true);
   S.shown = ""; show(S.tau, true);
   setPlaying(play);
   window.dispatchEvent(new Event("resize"));
@@ -183,7 +184,8 @@ function exit() {
   document.body.classList.remove("theater", "export");
   $("stBar").hidden = $("stCounters").hidden = true;
   R.setScale(R.SCALE_LIVE.lo, R.SCALE_LIVE.hi);
-  stage.setDriver(null); stage.cloudLive(); stage.look(S.lookBefore);
+  stage.setDriver(null); stage.cloudLive(); stage.look(S.lookBefore); stage.theater(false);
+  window.dispatchEvent(new Event("resize"));               // the charts below are drawn again
   if (R.last && R.live) window.dispatchEvent(new CustomEvent("roof:state", { detail: R.last }));
   stage.flyTo("overview", 900);
 }

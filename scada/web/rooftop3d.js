@@ -1135,6 +1135,14 @@ window.roof3dStage = {
   cloud(c, dir, loss) { V.cloud.direct = true; V.cloud.c = c; V.cloud.dir = dir; V.cloud.loss = loss; setCloudUniforms(c, dir, loss); },
   cloudLive() { V.cloud.direct = false; V.cloud.target = 0; },
   pose: blendPose, flyTo, drawFrame, requestRender,
+  theater(on) {
+    // Story mode fills the window. With quality "auto" the tier chosen for the small view
+    // says nothing about the large one: start again from "low" (never slower than before)
+    // and let the frame-time watch step up once if nearly all frames are fast.
+    if (V.choice !== "auto" || EXPORT) { resize(); return; }
+    V.decided = false;
+    setTier(on ? "low" : "medium");
+  },
   look(mode) { if (mode !== V.mode && (mode === "heat" || mode === "realistic")) { V.mode = mode; applyMode(); } },   // not stored
   get mode() { return V.mode; },
   onUserCamera(fn) { controls.addEventListener("start", fn); },

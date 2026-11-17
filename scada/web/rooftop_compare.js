@@ -80,7 +80,18 @@
       }
     }
   }
-  function drawAll() { if (S.data) for (const c of CHARTS) draw(...c); }
+  function drawAll() {
+    if (!S.data) return;
+    for (const c of CHARTS) {
+      // a chart that has no width yet (hidden, or behind the story mode) is drawn when it gets one
+      try { if ($(c[0]).clientWidth > 0) draw(...c); } catch (e) { fail("chart " + c[0] + ": " + e.message); }
+    }
+  }
+  function fail(text) {
+    S.error = text;
+    $("cmpNote").textContent = "The comparison could not be drawn (" + text + "). Recreate its data with: python -m twin.showcase";
+    console.error("rooftop_compare:", text);
+  }
 
   function tip(ev) {
     const d = S.data, box = $("tip"), i = S.hover;
@@ -147,12 +158,14 @@
       const d = await R.getJson("/api/sim/compare");
       if (!d || d.available === false) { $("cmpNote").textContent = (d && d.hint) || "No comparison data."; $("cmpCharts").hidden = true; return; }
       S.data = d;
-    } catch (e) { $("cmpNote").textContent = "The comparison could not be loaded."; $("cmpCharts").hidden = true; return; }
+    } catch (e) { fail("loading /api/sim/compare: " + (e.message || e)); $("cmpCharts").hidden = true; return; }
     for (const [id] of CHARTS) { $(id).addEventListener("mousemove", onMove); $(id).addEventListener("mouseleave", onLeave); }
     window.addEventListener("resize", drawAll);
+    new ResizeObserver(drawAll).observe($("cmpCharts"));
+    new IntersectionObserver((es) => { if (es[0].isIntersecting) drawAll(); }).observe($("cmpCharts"));
     window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
-    render();
+    try { render(); } catch (e) { fail(e.message); }
   }
-  window.roofCompare = { get info() { return { ready: !!S.data, n: S.data ? S.data.controllers.length : 0, keys: S.data ? S.data.controllers.map((c) => c.key) : [] }; } };
+  window.roofCompare = { get info() { return { ready: !!S.data && !S.error, n: S.data ? S.data.controllers.length : 0, keys: S.data ? S.data.controllers.map((c) => c.key) : [] }; } };
   init();
 })();

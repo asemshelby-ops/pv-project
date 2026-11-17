@@ -180,7 +180,7 @@ def main():
         sim_db = sim_source.SIM_DB                                         # NASIM's model is missing
         sim_info = {"speed": a.sim_speed}
         threads.append(threading.Thread(target=feeder.run, args=(stop, a.sim_speed)))
-    if a.sim or a.showcase:
+    if a.showcase:
         ensure_showcase()
     notifier = start_notifier(a, db, stop, threads) if not a.replay else None
     for t in threads:
@@ -198,6 +198,10 @@ def main():
     if a.sim or a.showcase:
         print(f"Story mode and controller comparison (SIMULATION) on "
               f"http://127.0.0.1:{port}/rooftop?story=1", flush=True)
+    if a.sim and not a.showcase:
+        # with --sim the start does not wait for it: the data is created beside the running
+        # simulation; reload the page when the line "wrote ..." has appeared
+        threading.Thread(target=ensure_showcase, daemon=True).start()
     if a.lan:
         print(LAN_WARNING, flush=True)
         ip = lan_address()

@@ -501,6 +501,19 @@ def figure(cmp, path):
 
 # --- the command ------------------------------------------------------------------------------
 
+def _json(obj):
+    """JSON a browser can read: a value that is not a number (NaN, inf) is written as null."""
+    def clean(x):
+        if isinstance(x, dict):
+            return {k: clean(v) for k, v in x.items()}
+        if isinstance(x, (list, tuple)):
+            return [clean(v) for v in x]
+        if isinstance(x, float) and not np.isfinite(x):
+            return None
+        return x
+    return json.dumps(clean(obj), separators=(",", ":"), allow_nan=False)
+
+
 def build(out=OUT, data=None, date=None, detector="auto", story_detector="threshold",
           params_file=None, log=print):
     """Run the day, write the files. Returns {"story": dict | None, "compare": dict}."""
@@ -528,11 +541,11 @@ def build(out=OUT, data=None, date=None, detector="auto", story_detector="thresh
         run = run_story(roof, w, story_detector, keep)
         window = story_window(w, dip, run[2], p)
         st = story(p, w, roof, run, runs["none"][2], dip, window, g_clear, note, kind)
-        (out / "story.json").write_text(json.dumps(st, separators=(",", ":")), encoding="utf-8")
+        (out / "story.json").write_text(_json(st), encoding="utf-8")
         log(f"story ({run[0].name}): {st['seconds']:.0f} s, chapters "
             + " > ".join(c["id"] for c in st["chapters"]))
     cmp = comparison(p, w, runs, note, kind, window)
-    (out / "compare.json").write_text(json.dumps(cmp, separators=(",", ":")), encoding="utf-8")
+    (out / "compare.json").write_text(_json(cmp), encoding="utf-8")
     figure(cmp, out / "compare.png")
     log(f"wrote {out / 'compare.json'}, {out / 'compare.png'}"
         + (f", {out / 'story.json'}" if st else ""))

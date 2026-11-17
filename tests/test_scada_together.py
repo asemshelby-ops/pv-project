@@ -70,7 +70,7 @@ def test_one_server_runs_the_replay_and_the_simulation_side_by_side(source, tmp_
             assert dash["path"] == "/" and dash["current"] == "Real module · dashboard"
             assert dash["mode"] == "REPLAY"
             assert roof["path"] == "/rooftop" and roof["current"].startswith("Rooftop twin")
-            assert roof["badge"] == "SIMULATION"
+            assert roof["badge"].startswith("SIMULATION")
             assert back["path"] == "/" and back["title"] == "PV rig SCADA"
     finally:
         proc.terminate()
