@@ -9,13 +9,17 @@ const TZ_S = 3 * 3600;                       // Makkah = UTC+3
 const RANGES = [["1 h", 3600], ["3 h", 10800], ["12 h", 43200], ["24 h", 86400]];
 const M = { L: 72, R: 14, T: 8, B: 22 };     // the same margins in every chart: time axes line up
 const SCALE = { lo: 20, hi: 70 };            // degC, fixed so that a colour always means the same
+const SCALE_LIVE = { lo: 20, hi: 70 };       // (the story mode narrows it to its own range and says so)
 // one hue, light to dark (sequential): the module temperature
 const RAMP = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7", "#3987e5",
               "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#104281", "#0d366b"];
 const S = { span: 10800, data: null, state: null, hover: -1, key: "", tab: "open", alarmKey: "", open: [] };
 
 const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-const dark = () => window.matchMedia("(prefers-color-scheme: dark)").matches;
+const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
+let isDark = darkQuery.matches;
+darkQuery.addEventListener("change", (e) => { isDark = e.matches; });
+const dark = () => isDark;
 const pad = (n) => String(n).padStart(2, "0");
 function local(t, withDate = true) {
   if (t === null || t === undefined) return "–";
@@ -35,11 +39,38 @@ async function getJson(url) {
   if (!r.ok) throw new Error(`${url}: ${r.status}`);
   return r.json();
 }
+const RAMP_RGB = RAMP.map((h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)));
 function tempColor(t) {
-  // light = cool on a light page; on a dark page the ramp is reversed so that cool recedes
-  const x = Math.min(1, Math.max(0, (t - SCALE.lo) / (SCALE.hi - SCALE.lo)));
-  const i = Math.round(x * (RAMP.length - 1));
-  return RAMP[dark() ? RAMP.length - 1 - i : i];
+  // light = cool on a light page; on a dark page the ramp is reversed so that cool recedes.
+  // Continuous between the ramp's steps: a change of 1 degC is a visible change of colour.
+  const x = Math.min(1, Math.max(0, (t - SCALE.lo) / (SCALE.hi - SCALE.lo))) * (RAMP.length - 1);
+  const y = dark() ? RAMP.length - 1 - x : x, i = Math.min(RAMP.length - 2, Math.floor(y)), f = y - i;
+  const a = RAMP_RGB[i], b = RAMP_RGB[i + 1];
+  return "#" + [0, 1, 2].map((k) => Math.round(a[k] + (b[k] - a[k]) * f).toString(16).padStart(2, "0")).join("");
+}
+function paintScales() {
+  // every scale bar of the page (table, 3D view, legend inside the 3D view): the same scale
+  document.querySelectorAll(".scaleLo").forEach((e) => { e.textContent = SCALE.lo; });
+  document.querySelectorAll(".scaleHi").forEach((e) => { e.textContent = SCALE.hi; });
+  const ramp = dark() ? [...RAMP].reverse() : RAMP;
+  document.querySelectorAll(".scalebar").forEach((e) => { e.style.background = `linear-gradient(90deg, ${ramp.join(",")})`; });
+  const leg = $("v3legend");
+  if (!leg) return;
+  const bar = el("div", null, "bar"), ticks = el("div", null, "ticks");
+  bar.style.background = `linear-gradient(0deg, ${ramp.join(",")})`;
+  const step = SCALE.hi - SCALE.lo > 30 ? 10 : 5;
+  for (let v = Math.ceil(SCALE.lo / step) * step; v <= SCALE.hi; v += step) {
+    const t = el("span", String(v));
+    t.style.bottom = `${((v - SCALE.lo) / (SCALE.hi - SCALE.lo)) * 100}%`;
+    ticks.append(t);
+  }
+  const body = el("div", null, "body"); body.append(bar, ticks);
+  leg.replaceChildren(el("div", "Module temperature", "t"), el("div", "°C · simulated", "u"), body);
+}
+function setScale(lo, hi) {
+  SCALE.lo = lo; SCALE.hi = hi;
+  paintScales();
+  if (S.state && S.state.latest && S.state.modules) renderRoof();
 }
 
 // ---- tiles and the overview ----------------------------------------------------------------
@@ -106,11 +137,7 @@ function renderRoof() {
   });
   $("roof").tHead.replaceChildren(head);
   $("roof").tBodies[0].replaceChildren(...rows);
-  // every scale bar of the page (table and 3D view) shows the same scale
-  document.querySelectorAll(".scaleLo").forEach((e) => { e.textContent = SCALE.lo; });
-  document.querySelectorAll(".scaleHi").forEach((e) => { e.textContent = SCALE.hi; });
-  const ramp = dark() ? [...RAMP].reverse() : RAMP;
-  document.querySelectorAll(".scalebar").forEach((e) => { e.style.background = `linear-gradient(90deg, ${ramp.join(",")})`; });
+  paintScales();
 }
 
 // ---- charts ----------------------------------------------------------------------------------
@@ -322,12 +349,16 @@ async function tick() {
   try {
     S.state = await getJson("/api/sim/state");
     const on = S.state.available;
-    $("off").hidden = on; $("content").hidden = !on;
-    if (!on) { $("offHint").textContent = S.state.hint; return; }
+    // without the running simulation the page still shows what twin/showcase.py wrote:
+    // the story mode and the controller comparison
+    $("off").hidden = on; document.body.classList.toggle("nolive", !on);
+    RoofShared.live = on;
+    if (!on) { $("offHint").textContent = S.state.hint + "  The story mode and the controller comparison below do not need it."; return; }
     await renderAlarms();
     renderState();
     RoofShared.last = { state: S.state, open: S.open };
-    window.dispatchEvent(new CustomEvent("roof:state", { detail: RoofShared.last }));
+    // while the story mode plays, the 3D view shows the story's own data, not the live step
+    if (!RoofShared.hold) window.dispatchEvent(new CustomEvent("roof:state", { detail: RoofShared.last }));
     const newest = S.state.latest ? S.state.latest.t_utc : 0, key = `${newest}|${S.span}`;
     if (key !== S.key) {
       const at = S.hover >= 0 && S.data ? S.data.t[S.hover] : null;
@@ -341,7 +372,8 @@ async function tick() {
   } finally { setTimeout(tick, 1000); }
 }
 // shared with the 3D view (a module script): one colour scale, one way to write values
-const RoofShared = { SCALE, tempColor, css, dark, el, num, local, last: null };
+const RoofShared = { SCALE, SCALE_LIVE, setScale, tempColor, css, dark, el, num, local, pad, getJson, niceStep, TZ_S,
+  last: null, live: null, hold: false };
 window.RoofShared = RoofShared;
 
 function init() {
@@ -355,7 +387,8 @@ function init() {
   try { $("operator").value = localStorage.getItem("scada.operator") || ""; } catch (e) { /* no storage */ }
   for (const id of ["cTemp", "cPow", "cZones"]) { $(id).addEventListener("mousemove", onMove); $(id).addEventListener("mouseleave", onLeave); }
   window.addEventListener("resize", drawAll);
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { drawAll(); if (S.state && S.state.latest) renderRoof(); });
+  darkQuery.addEventListener("change", () => { drawAll(); paintScales(); if (S.state && S.state.latest) renderRoof(); });
+  paintScales();
   tick();
 }
 init();

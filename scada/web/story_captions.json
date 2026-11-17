@@ -1,0 +1,137 @@
+{
+ "_about": [
+  "Caption text of the story mode of /rooftop (SIMULATION). The one place to edit or translate it.",
+  "Keys under 'chapters' are the chapter ids written by twin/showcase.py; a chapter without text here shows its id.",
+  "{name} is replaced by a number of story.json 'facts' (all SIMULATED). Keep the units next to them.",
+  "Arabic: wrap every English term, number and unit in <bdi dir=\"ltr\">...</bdi> so it keeps its left-to-right order. No other markup is accepted.",
+  "Do not write claims about a real plant, efficiency or payback: every number here comes from placeholder parameters."
+ ],
+ "en": {
+  "dir": "ltr",
+  "ui": {
+   "story": "▶ Story",
+   "exit": "✕ Exit",
+   "sim": "SIMULATED",
+   "pv": "PV power",
+   "pump": "Pump power",
+   "net": "Net power",
+   "water": "Water used",
+   "ref": "without cooling",
+   "pumpsub": "pump + valves",
+   "netsub": "PV − pump − valves",
+   "watersub": "circulated",
+   "g": "Irradiance",
+   "tmean": "Mean module temperature",
+   "time": "Simulated time",
+   "valves": "Open valves",
+   "foot": "Every value is simulated. Twin parameters:",
+   "none": "none"
+  },
+  "chapters": {
+   "intro": {
+    "title": "A simulated rooftop",
+    "text": "{n_modules} simulated modules in {n_strings} strings, each coloured by its temperature. Clear sky: {g_before} W/m², modules near {t_before} °C."
+   },
+   "cloud": {
+    "title": "A cloud shadow crosses the roof",
+    "text": "Irradiance falls from {g_before} to {g_cloud} W/m² within a minute."
+   },
+   "cool": {
+    "title": "The modules cool",
+    "text": "Under the cloud they lose {cool_c} °C in {cloud_min} min: from {t_before} to {t_cool} °C."
+   },
+   "sun": {
+    "title": "The sun returns",
+    "text": "Irradiance is back at {g_back} W/m². The rise that follows counts as a thermal spike."
+   },
+   "spike": {
+    "title": "Thermal spike",
+    "text": "Temperatures climb fast: +{rise_c} °C in {rise_min} min on string {first_string}."
+   },
+   "alarm": {
+    "title": "Detector alarm",
+    "text": "The {detector} raises an alarm on string {first_string}. All {n_alarm} strings follow within {alarm_span_s} s: they saw the same cloud. The net-power rule allows a burst."
+   },
+   "spray": {
+    "title": "Valves open, spray",
+    "text": "A {burst_s} s burst on {n_spray} zones. The sprayed modules cool by {spray_drop_c} °C."
+   },
+   "result": {
+    "title": "What it cost, what it gave",
+    "text": "Pump {e_pump_wh} Wh, water used {water_used_l} L. Net energy against no cooling, {after_min} min after the burst: {net_vs_ref_wh} Wh. Placeholder parameters: the sign depends on evaporation and pump power, not measured yet."
+   },
+   "noalarm": {
+    "title": "No alarm",
+    "text": "The detector raised no alarm in this window: nothing was sprayed."
+   },
+   "refused": {
+    "title": "No burst",
+    "text": "The alarm came, but the net-power rule refused the burst: the expected gain was below the pump energy."
+   }
+  }
+ },
+ "ar": {
+  "dir": "rtl",
+  "ui": {
+   "story": "▶ العرض",
+   "exit": "✕ خروج",
+   "sim": "محاكاة",
+   "pv": "قدرة الألواح",
+   "pump": "قدرة المضخة",
+   "net": "القدرة الصافية",
+   "water": "الماء المستهلك",
+   "ref": "بدون تبريد",
+   "pumpsub": "المضخة + الصمامات",
+   "netsub": "الألواح − المضخة − الصمامات",
+   "watersub": "الماء المُدار",
+   "g": "الإشعاع",
+   "tmean": "متوسط حرارة الألواح",
+   "time": "وقت المحاكاة",
+   "valves": "الصمامات المفتوحة",
+   "foot": "كل القيم ناتجة عن المحاكاة. معاملات التوأم:",
+   "none": "لا يوجد"
+  },
+  "chapters": {
+   "intro": {
+    "title": "سطح مُحاكى",
+    "text": "<bdi dir=\"ltr\">{n_modules}</bdi> لوحًا مُحاكى في <bdi dir=\"ltr\">{n_strings}</bdi> سلاسل، ولون كل لوح يدل على حرارته. السماء صافية: <bdi dir=\"ltr\">{g_before} W/m²</bdi>، وحرارة الألواح قرابة <bdi dir=\"ltr\">{t_before} °C</bdi>."
+   },
+   "cloud": {
+    "title": "ظل سحابة يعبر السطح",
+    "text": "ينخفض الإشعاع من <bdi dir=\"ltr\">{g_before}</bdi> إلى <bdi dir=\"ltr\">{g_cloud} W/m²</bdi> خلال دقيقة."
+   },
+   "cool": {
+    "title": "الألواح تبرد",
+    "text": "تحت السحابة تفقد <bdi dir=\"ltr\">{cool_c} °C</bdi> في <bdi dir=\"ltr\">{cloud_min} min</bdi>: من <bdi dir=\"ltr\">{t_before}</bdi> إلى <bdi dir=\"ltr\">{t_cool} °C</bdi>."
+   },
+   "sun": {
+    "title": "الشمس تعود",
+    "text": "يعود الإشعاع إلى <bdi dir=\"ltr\">{g_back} W/m²</bdi>. الارتفاع الذي يليه يُعدّ قفزة حرارية (<bdi dir=\"ltr\">thermal spike</bdi>)."
+   },
+   "spike": {
+    "title": "قفزة حرارية",
+    "text": "ترتفع الحرارة بسرعة: <bdi dir=\"ltr\">+{rise_c} °C</bdi> في <bdi dir=\"ltr\">{rise_min} min</bdi> على السلسلة <bdi dir=\"ltr\">{first_string}</bdi>."
+   },
+   "alarm": {
+    "title": "إنذار الكاشف",
+    "text": "الكاشف (<bdi dir=\"ltr\">{detector_ar}</bdi>) يطلق إنذارًا على السلسلة <bdi dir=\"ltr\">{first_string}</bdi>، وتتبعها السلاسل الـ<bdi dir=\"ltr\">{n_alarm}</bdi> خلال <bdi dir=\"ltr\">{alarm_span_s} s</bdi> لأنها تعرضت للسحابة نفسها. قاعدة القدرة الصافية تسمح بالرش."
+   },
+   "spray": {
+    "title": "الصمامات تفتح والرش يبدأ",
+    "text": "رشّة مدتها <bdi dir=\"ltr\">{burst_s} s</bdi> على <bdi dir=\"ltr\">{n_spray}</bdi> مناطق. الألواح المرشوشة تبرد <bdi dir=\"ltr\">{spray_drop_c} °C</bdi>."
+   },
+   "result": {
+    "title": "ماذا كلّف وماذا أعطى",
+    "text": "المضخة <bdi dir=\"ltr\">{e_pump_wh} Wh</bdi>، والماء المستهلك <bdi dir=\"ltr\">{water_used_l} L</bdi>. الطاقة الصافية مقارنةً بعدم التبريد بعد <bdi dir=\"ltr\">{after_min} min</bdi> من الرش: <bdi dir=\"ltr\">{net_vs_ref_wh} Wh</bdi>. المعاملات افتراضية: الإشارة تعتمد على التبخر وقدرة المضخة، ولم نقسهما بعد."
+   },
+   "noalarm": {
+    "title": "لا إنذار",
+    "text": "لم يطلق الكاشف أي إنذار في هذه الفترة، فلم يحدث رش."
+   },
+   "refused": {
+    "title": "لا رش",
+    "text": "صدر الإنذار، لكن قاعدة القدرة الصافية رفضت الرش: الكسب المتوقع أقل من طاقة المضخة."
+   }
+  }
+ }
+}

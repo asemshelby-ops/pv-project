@@ -31,13 +31,13 @@
 </section>
 
 <div id="content">
-<nav class="filters" aria-label="Time range">
+<nav class="filters liveonly" aria-label="Time range">
   <span class="label">Range (simulated time)</span>
   <span id="ranges" class="seg"></span>
   <span id="setup" class="note"></span>
 </nav>
 
-<section class="tiles" id="tiles" aria-label="Newest simulated step"></section>
+<section class="tiles liveonly" id="tiles" aria-label="Newest simulated step"></section>
 
 <section class="card" id="view3d">
   <h2>Rooftop in 3D <small>simulated; each module coloured by its back-sheet temperature, same scale as the table below</small></h2>
@@ -46,20 +46,23 @@
     <span><i class="box" style="background:var(--series-1)"></i>valve open, spray over the string</span>
     <span><i class="dot"></i>module with one of the string's five sensors</span>
     <span>▲ in a string's label: open alarm</span>
-    <span>sun and shadows: Makkah at the simulated time (drawing only)</span>
+    <span>sun, its path over the day and shadows: Makkah at the simulated time (drawing only)</span>
+    <span>cloud shadow: where the simulated irradiance is below clear sky; its moving edge is drawing, the twin applies one irradiance to all modules</span>
     <span><i class="box" style="background:var(--ink)"></i>our real module, apart on its own stand with its own tag: the only measured one</span>
   </div>
   <p id="v3msg" class="note" hidden></p>
   <div class="v3">
     <div id="v3stage" class="stage">
-      <span class="badge replay">SIMULATION</span>
+      <span id="v3label" class="badge replay simlabel">SIMULATION — placeholder parameters, not measured</span>
       <div class="ctl">
+        <button id="v3story" type="button" title="Guided demo, about 75 s: cloud, cooling, sun back, thermal spike, alarm, spray. SIMULATION.">▶ Story</button>
         <span id="v3mode" class="seg" role="group" aria-label="Module look">
           <button type="button" data-mode="heat">Heat map</button>
           <button type="button" data-mode="realistic">Realistic</button>
         </span>
         <button id="v3present" type="button">Presentation</button>
         <button id="v3reset" type="button">Overview</button>
+        <button id="v3sunpath" type="button" class="toggle" title="The sun's path over Makkah on the simulated day (drawing)">Sun path</button>
         <label class="q">quality <select id="v3quality">
           <option value="auto">auto</option><option value="high">high</option>
           <option value="medium">medium</option><option value="low">low</option></select></label>
@@ -67,12 +70,45 @@
       <span id="v3modeNote" class="modenote" hidden>Realistic look: temperatures on click and in the table below</span>
       <span class="hint">drag: orbit · scroll: zoom · right-drag: pan · click: values</span>
       <span id="v3perf" class="perf"></span>
+      <div id="v3legend" class="v3legend" aria-label="Colour scale of the module temperature"></div>
+      <!-- story mode (rooftop_story.js); the caption TEXT is in story_captions.json -->
+      <aside id="stCounters" class="stcounters" hidden></aside>
+      <div id="stBar" class="stbar" hidden>
+        <div class="stctl">
+          <button id="stPrev" type="button" aria-label="Previous step">⏮</button>
+          <button id="stPlay" type="button" aria-label="Play or pause">▶</button>
+          <button id="stNext" type="button" aria-label="Next step">⏭</button>
+          <span id="stClock" class="stclock"></span>
+          <span class="grow"></span>
+          <span id="stLang" class="seg" role="group" aria-label="Caption language">
+            <button type="button" data-lang="en">EN</button><button type="button" data-lang="ar">عربي</button>
+          </span>
+          <button id="stExit" type="button">✕</button>
+        </div>
+        <div id="stCap" class="stcap" aria-live="polite"><div id="stTitle" class="sttitle"></div><div id="stText" class="sttext"></div></div>
+        <div id="stProg" class="stprog"></div>
+      </div>
     </div>
     <aside id="v3info" class="v3info" aria-live="polite"></aside>
   </div>
 </section>
 
-<section class="card" id="overview">
+<section class="card" id="compare">
+  <h2>Controller comparison <small>the five strategies on the same simulated day, the same rooftop and the same sensor noise</small>
+    <span class="badge replay simlabel">SIMULATION — placeholder parameters, not measured</span></h2>
+  <p id="cmpNote" class="note"></p>
+  <div id="cmpCards" class="cmpcards"></div>
+  <div id="cmpLegend" class="legend"></div>
+  <div id="cmpCharts" class="cmpcharts">
+    <div><h3>Mean module temperature <small>degC, simulated</small></h3><canvas id="cmpTemp" height="170"></canvas></div>
+    <div><h3>Net energy minus no cooling <small>Wh since the morning, simulated; above zero = more than without cooling</small></h3><canvas id="cmpGain" height="170"></canvas></div>
+    <div><h3>Pump and valve energy <small>Wh since the morning, simulated</small></h3><canvas id="cmpPump" height="150"></canvas></div>
+    <div><h3>Water used <small>L since the morning (evaporated + lost), simulated</small></h3><canvas id="cmpWater" height="150"></canvas></div>
+  </div>
+  <details class="cmptable"><summary>The same numbers as a table</summary><div class="scroll"><table id="cmpTable"><thead></thead><tbody></tbody></table></div></details>
+</section>
+
+<section class="card liveonly" id="overview">
   <h2>Strings, spray zones and valves <small>simulated; each cell is one module, coloured by its back-sheet temperature</small></h2>
   <div class="legend">
     <span><span class="scaleLo">20</span>&nbsp;degC <i class="scalebar"></i> <span class="scaleHi">70</span>&nbsp;degC</span>
@@ -83,7 +119,7 @@
   <div class="scroll"><table id="roof" class="roof"><thead></thead><tbody></tbody></table></div>
 </section>
 
-<main class="grid one">
+<main class="grid one liveonly">
   <section class="charts">
     <article class="card">
       <h2>String temperature <small>degC, simulated</small></h2>
@@ -110,7 +146,7 @@
   </section>
 </main>
 
-<section class="card" id="alarms">
+<section class="card liveonly" id="alarms">
   <div class="alarmhead">
     <h2>Simulation alarms</h2>
     <span id="tabs" class="seg">
@@ -129,6 +165,8 @@
 
 <div id="tip" class="tip" hidden></div>
 <script src="rooftop.js"></script>
+<script src="rooftop_compare.js"></script>
 <script type="module" src="rooftop3d.js"></script>
+<script type="module" src="rooftop_story.js"></script>
 </body>
 </html>

@@ -21,6 +21,10 @@ never reads or writes the historian of the real module (scada/sim_source.py):
   GET  /api/sim/alarms   ?which=open|all          GET /api/sim/journal
   POST /api/sim/ack      as /api/ack, for the simulation's alarms
 
+  GET  /api/sim/story    the story mode's data   } files written by twin/showcase.py; they
+  GET  /api/sim/compare  the controller comparison } are served whether or not the
+                                                   simulation itself is running
+
 The 3D view of /rooftop (rooftop3d.js) also reads GET /api/state, only to draw our real
 module apart from the rooftop and labelled as the only measured one; nothing of it goes
 into the simulation, and no simulated value is drawn on it.
@@ -41,11 +45,23 @@ STATIC = {"/": ("index.html", "text/html"), "/app.js": ("app.js", "text/javascri
           "/rooftop": ("rooftop.html", "text/html"),
           "/rooftop.js": ("rooftop.js", "text/javascript"),
           "/rooftop3d.js": ("rooftop3d.js", "text/javascript"),
+          "/rooftop_story.js": ("rooftop_story.js", "text/javascript"),
+          "/rooftop_compare.js": ("rooftop_compare.js", "text/javascript"),
+          # the caption text of the story mode: the one place to edit or translate it
+          "/story_captions.json": ("story_captions.json", "application/json"),
           # Three.js for the 3D view of the rooftop page, vendored so the SCADA works offline
           "/vendor/three-0.160.0/three.module.min.js":
               ("vendor/three-0.160.0/three.module.min.js", "text/javascript"),
           "/vendor/three-0.160.0/OrbitControls.js":
               ("vendor/three-0.160.0/OrbitControls.js", "text/javascript")}
+# IBM Plex Sans Arabic for the Arabic captions of the story mode, vendored (offline)
+FONT_DIR = "vendor/ibm-plex-sans-arabic-5.3.0"
+STATIC.update({f"/{FONT_DIR}/ibm-plex-sans-arabic-{sub}-{w}-normal.woff2":
+               (f"{FONT_DIR}/ibm-plex-sans-arabic-{sub}-{w}-normal.woff2", "font/woff2")
+               for sub in ("arabic", "latin") for w in (400, 600)})
+SHOWCASE_DIR = "out/twin/showcase"      # twin/showcase.py writes story.json, compare.json here
+SHOWCASE_OFF = {"available": False, "simulation": True,
+                "hint": "No showcase data yet. Create it with: python -m twin.showcase"}
 SIM_OFF = {"available": False, "simulation": True,
            "hint": "The rooftop simulation is not running. Start it with: "
                    "python -m scada.run --sim"}
@@ -131,7 +147,8 @@ class Handler(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json"):
         data = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
         self.send_response(code)
-        self.send_header("Content-Type", f"{ctype}; charset=utf-8")
+        self.send_header("Content-Type", ctype if ctype.startswith("font/")
+                         else f"{ctype}; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
@@ -171,6 +188,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _sim_get(self, path, q):
         """The simulation's API: its own file, never the historian of the real module."""
+        if path in ("/api/sim/story", "/api/sim/compare"):
+            f = pathlib.Path(self.server.showcase_dir) / (path.rsplit("/", 1)[1] + ".json")
+            if not f.exists():
+                return self._send(200, SHOWCASE_OFF)
+            return self._send(200, f.read_bytes())
         db = self.server.sim_db_path
         if db is None:
             return self._send(200 if path == "/api/sim/state" else 404, SIM_OFF)
@@ -221,17 +243,19 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(db_path, info, port=8050, sim_db_path=None, sim_info=None,
-                notify_status=None, host="127.0.0.1"):
+                notify_status=None, host="127.0.0.1", showcase_dir=SHOWCASE_DIR):
     """info: {"mode": "live" | "replay", ...} shown by the HMI. port 0 = any free port.
     host: "127.0.0.1" (default, this PC only) or "0.0.0.0" (every network interface;
     scada.run --lan, trusted network only: there is no login).
     sim_db_path: the simulation file of scada/sim_source.py, or None (no simulation).
-    notify_status: callable giving the Telegram notifier's state (scada/notify.py), or None."""
+    notify_status: callable giving the Telegram notifier's state (scada/notify.py), or None.
+    showcase_dir: folder with story.json and compare.json of twin/showcase.py."""
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     server.db_path, server.info = str(db_path), info
     server.sim_db_path = None if sim_db_path is None else str(sim_db_path)
     server.sim_info = sim_info or {}
     server.notify_status = notify_status
+    server.showcase_dir = str(showcase_dir)
     return server
 

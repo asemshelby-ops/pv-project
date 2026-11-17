@@ -149,7 +149,8 @@ def clear_sky(w):
 
 
 def utc_seconds(w):
-    return (pd.DatetimeIndex(w.t_local).tz_localize(config.TZ).asi8 // 10**9).astype(int)
+    t = pd.DatetimeIndex(w.t_local).tz_localize(config.TZ)
+    return np.asarray((t - pd.Timestamp("1970-01-01", tz="UTC")) // pd.Timedelta("1s"), dtype=int)
 
 
 def find_cloud(w, g_clear):
@@ -354,6 +355,10 @@ def story(p, w, roof, run, ref, dip, window, g_clear, weather_note, kind):
         "e_ref_wh": r(np.cumsum(p_ref) * h, 2),
     }
     out["chapters"], out["facts"] = chapters(out, dip, k0, mods, valve, alarm, dt)
+    out["facts"]["detector"] = ("NASIM-GBT" if "NASIM" in ctrl.name else
+                                f"threshold rule (rise \u2265 {config.THR_RISE_C:g} \u00b0C in "
+                                f"{config.DET_WINDOW_MIN:g} min)")
+    out["facts"]["detector_ar"] = ("NASIM-GBT" if "NASIM" in ctrl.name else "threshold rule")
     out["seconds"] = round(sum(c["seconds"] for c in out["chapters"]), 1)
     return out
 
@@ -380,7 +385,7 @@ def chapters(st, dip, k0, mods, valve, alarm, dt):
             ("sun", min(back + per(30), n - 1) if first is None else
              min(back + per(30), max(first - 1, sun + 1)), "wide", 8.0)]
     if first is None:
-        end_rise = min(back + per(480), n - 1)
+        end_rise = max(min(back + per(480), n - 1 - per(60)), back)    # room for the last chapter
         cuts += [("spike", end_rise, "overview", 10.0), ("noalarm", n - 1, "presentation", 9.0)]
         facts.update(rise_c=round(float(tm[end_rise] - facts["t_cool"]), 1),
                      rise_min=round((end_rise - sun) * dt / 60.0, 1))
@@ -394,7 +399,7 @@ def chapters(st, dip, k0, mods, valve, alarm, dt):
                      rise_c=round(float(st["strings"]["t_zone"][first][z1 - 1]
                                         - min(row[z1 - 1] for row in st["strings"]["t_zone"][sun:first + 1])), 1),
                      rise_min=round((first - sun) * dt / 60.0, 1))
-        cuts.append(("spike", max(first - 1, back + per(30)), "overview", 10.0))
+        cuts.append(("spike", first - 1, "overview", 10.0))    # dropped when the alarm is early
         on = np.flatnonzero(valve[first:].any(axis=1)) + first
         on = on[on <= first + per(600)]
         if len(on) and on[0] <= group[-1] + per(60):
@@ -414,8 +419,9 @@ def chapters(st, dip, k0, mods, valve, alarm, dt):
                 e_pump_wh=round(st["e_pump_wh"][-1], 1),
                 net_vs_ref_wh=round(st["e_net_wh"][-1] - st["e_ref_wh"][-1], 1),
                 after_min=round((n - 1 - close_i) * dt / 60.0))
-            cuts += [("alarm", min(int(group[-1]) + 2, close_i), f"string:{z1}", 9.0),
-                     ("spray", min(close_i + per(60), n - 1), f"string:{z1}", 12.0),
+            # alarm: the first alarm and the first valves; spray: the burst and 30 s after it
+            cuts += [("alarm", min(first + 2, close_i), f"string:{z1}", 9.0),
+                     ("spray", min(close_i + per(30), n - 1), f"string:{z1}", 12.0),
                      ("result", n - 1, "presentation", 10.0)]
         else:                                                  # the net-power rule refused the burst
             cuts += [("alarm", min(int(group[-1]) + per(60), n - 1), f"string:{z1}", 9.0),
@@ -426,7 +432,10 @@ def chapters(st, dip, k0, mods, valve, alarm, dt):
         if i1 - i0 < 2 and cid not in ("alarm", "spray"):      # nothing to show: its samples
             continue                                           # go to the next chapter
         i1 = max(i1, i0 + 1)
-        out.append({"id": cid, "i0": i0, "i1": i1, "seconds": seconds, "view": view})
+        # look: the cloud's shadow shows on the lit glass of the realistic look; on the heat
+        # map colour means temperature and is never darkened
+        out.append({"id": cid, "i0": i0, "i1": i1, "seconds": seconds, "view": view,
+                    "look": "realistic" if cid in ("cloud", "sun") else "heat"})
         i0 = i1
         if i0 >= n - 1:
             break

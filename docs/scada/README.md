@@ -111,6 +111,11 @@ pages switches between "Real module · dashboard" and "Rooftop twin (SIMULATION)
 .venv\Scripts\python -m scada.run --replay --sim nasim   next to a replay (or to live data)
 ```
 
+For presentations the page has a guided **story mode** (<http://127.0.0.1:8050/rooftop?story=1>,
+about 75 s, English or Arabic captions), a **controller comparison** and an export to MP4:
+see `docs/twin/README.md`, section "Presentation views". `python -m scada.run --showcase`
+serves only those, without running the simulation.
+
 Open <http://127.0.0.1:8050/rooftop>. The page shows the digital twin of `twin/`: 120
 simulated modules in 6 strings, one spray zone and valve per string, a shared pump and
 tank, run by one controller (`predictive`, `nasim`, `threshold`, `continuous` or `none`).

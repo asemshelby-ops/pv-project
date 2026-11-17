@@ -217,6 +217,10 @@ class Feeder:
             weathers = rooftop.weather_days(table)
             weather_note = f"synthetic days of data/synth.py (hard variant, seed {seed})"
         self.weathers = list(weathers)
+        # clear-sky irradiance on the module plane per sample: only for the page's drawing of
+        # cloud shadows (measured irradiance / clear sky); the plant never reads it
+        from twin import showcase
+        self.g_clear = [showcase.clear_sky(w) for w in self.weathers]
         self.controller = make_controller(controller, self.p)
         self.reference = controllers.NoCooling()
         self.plant = rooftop.Plant(self.roof, compare.NOISE_SEED)
@@ -294,7 +298,8 @@ class Feeder:
               int(rec["bypassed"][z])) for z in range(self.roof.shape[0])])
         historian.set_meta(c, "sim_modules", json.dumps(np.round(self.plant.t, 2).tolist()))
         historian.set_meta(c, "sim_progress", json.dumps(
-            {"day": self.day + 1, "date": w.date, "finished": False}))
+            {"day": self.day + 1, "date": w.date, "finished": False,
+             "g_clear": round(float(self.g_clear[self.day][k]), 1)}))
         self.engine.evaluate(c, t, rec, wall)
         c.commit()
         self.k += 1

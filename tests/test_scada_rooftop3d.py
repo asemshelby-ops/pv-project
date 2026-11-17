@@ -18,6 +18,7 @@ import pvlib
 import pytest
 
 from scada import historian, run, server
+from twin import VIEW_LABEL, showcase
 from tests.test_scada_sim import feeder
 from tests.test_scada_stack import _row
 from tests.test_twin_rooftop import weather
@@ -25,6 +26,7 @@ from tests.test_twin_rooftop import weather
 WEB = pathlib.Path(server.__file__).resolve().parent / "web"
 VENDOR = WEB / "vendor" / "three-0.160.0"
 CHECK = pathlib.Path(__file__).resolve().parent / "browser" / "rooftop3d_check.cjs"
+STORY_CHECK = pathlib.Path(__file__).resolve().parent / "browser" / "story_check.cjs"
 
 
 def _serve(tmp_path, controller="continuous", steps=0, real_rows=()):
@@ -40,7 +42,7 @@ def _serve(tmp_path, controller="continuous", steps=0, real_rows=()):
         f.step(wall=1.0)
     f.close()                       # SQLite: the thread that runs the feeder opens its own
     httpd = server.make_server(live, {"mode": "live"}, port=0, sim_db_path=f.db,
-                               sim_info={"speed": 100})
+                               sim_info={"speed": 100}, showcase_dir=tmp_path / "no_showcase")
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     return httpd, f, f"http://127.0.0.1:{httpd.server_address[1]}"
 
@@ -108,7 +110,16 @@ def test_page_loads_follows_the_simulation_and_answers_clicks(tmp_path):
     # loads, with the camera intro played and the permanent badge
     assert first["ready"] and first["error"] is None and first["dims"] == "6x20"
     assert first["introPlayed"] and first["view"] == "overview"
-    assert out["badge"] == "SIMULATION"
+    assert out["badge"] == VIEW_LABEL            # the label that is always on the view
+    # sun path of the simulated day and the cloud shadow: constant clear weather, no shadow
+    path = check["sunPath"]
+    assert path["visible"] and path["points"] > 40 and check["cloud"]["dark"] == 0
+    ball = [b - c for b, c in zip(path["ball"], path["center"])]
+    assert sum(v * v for v in ball) ** 0.5 == pytest.approx(path["radius"], rel=1e-3)
+    el = check["sun"]["el"]
+    assert ball[1] / path["radius"] == pytest.approx(__import__("math").sin(el * 3.14159265 / 180), abs=2e-3)
+    assert out["legend"].startswith("Module temperature") and "20" in out["legend"] and "70" in out["legend"]
+    assert out["storyOff"]["ready"] is False and "python -m twin.showcase" in out["storyOff"]["error"]
     # updates: a newer simulated step is drawn, every module in the shared colour scale
     assert later["tUtc"] > first["tUtc"] and later["updates"] > first["updates"]
     assert check["wrongColours"] == [] and check["faces"] == {"heat": True, "realistic": False}
@@ -153,3 +164,79 @@ def test_page_loads_follows_the_simulation_and_answers_clicks(tmp_path):
     hi, lo = out["forced_high"], out["forced_low"]
     assert hi["quality"] == "high" and hi["shadows"] is True and not hi["introPlayed"]
     assert lo["quality"] == "low" and lo["shadows"] is False and lo["pixelRatio"] == 1
+    # the spray jets are drawn on the medium and high tiers only
+    assert out["jets_high"] == [True] * 6 and out["jets_low"] == [False] * 6
+    assert out["cloudRule"] == {"clear": 0, "half": 0.5, "deep": 1, "night": 0}
+
+
+@pytest.mark.skipif(_browser_ready() is None, reason="needs Node.js with Playwright and Chromium")
+def test_story_mode_and_comparison_without_a_running_simulation(tmp_path):
+    show = tmp_path / "showcase"
+    showcase.build(show, detector="threshold", story_detector="threshold", params_file=None,
+                   log=lambda *a: None)
+    story = json.loads((show / "story.json").read_text(encoding="utf-8"))
+    live = tmp_path / "historian.sqlite"
+    run.open_historian(live, "live")
+    httpd = server.make_server(live, {"mode": "live"}, port=0, showcase_dir=show)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        res = subprocess.run([_browser_ready(), str(STORY_CHECK),
+                              f"http://127.0.0.1:{httpd.server_address[1]}/rooftop"],
+                             capture_output=True, text=True, timeout=420)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+    assert res.returncode == 0, res.stderr
+    out = json.loads(res.stdout.strip().splitlines()[-1])
+    assert out["errors"] == [] and out["external"] == []
+    # without the simulation: the story's first moment on the roof, the comparison drawn
+    idle = out["idle"]
+    assert idle["nolive"] and not idle["tilesShown"] and idle["compareShown"]
+    assert idle["label"] == VIEW_LABEL == idle["compareLabel"] and idle["labelShown"]
+    assert idle["compare"] == {"ready": True, "n": 5, "keys": list(showcase.KEYS)}
+    assert idle["cards"] == 5 and idle["sims"] == 5          # every card says SIM
+    assert not idle["theater"] and not idle["story"]["on"] and idle["story"]["sample"] == 0
+    assert idle["sunPath"]["visible"] and idle["jets"] == [False] * 6
+    # play, pause, step
+    assert out["playing"]["theater"] and out["playing"]["hold"] is True
+    assert out["playing"]["story"]["chapter"] == "intro"
+    assert out["paused"]["playing"] is False and out["pausedLater"]["tau"] == out["paused"]["tau"]
+    assert out["next"]["chapter"] == "cloud" and out["next"]["tau"] == 7.0
+    assert out["prev"]["chapter"] == "intro" and out["prev"]["tau"] == 0.0
+    assert 60 <= out["next"]["total"] <= 90
+    # the chapters, in order, show what the twin's run holds
+    ch = {c["id"]: c for c in out["chapters"]}
+    assert list(ch) == [c["id"] for c in story["chapters"]]
+    f = story["facts"]
+    assert ch["intro"]["cloud"]["dark"] == 0 and ch["intro"]["faces"]["heat"]
+    assert ch["intro"]["scale"] == [35, 60] and "35" in ch["intro"]["legend"] and ch["intro"]["legendShown"]
+    assert f"{f['g_before']} W/m²" in ch["intro"]["text"]
+    assert ch["cloud"]["faces"] == {"heat": False, "realistic": True} and not ch["cloud"]["legendShown"]
+    assert ch["cool"]["cloud"]["c"] == 1 and ch["cool"]["cloud"]["dark"] > 0.5 and ch["cool"]["faces"]["heat"]
+    assert f"{f['cool_c']:g} °C" in ch["cool"]["text"]
+    assert ch["spike"]["cloud"]["dark"] == 0 and ch["spike"]["spraying"] == [False] * 6
+    assert "alarm on string 1" in ch["alarm"]["text"] and "threshold rule" in ch["alarm"]["text"]
+    assert ch["spray"]["spraying"] == [True] * 6 and ch["spray"]["jets"] == [False] * 6   # low tier
+    assert "894" in ch["spray"]["counters"] and "SIMULATED" in ch["spray"]["counters"]
+    assert "[LIT-PLACEHOLDER]" in ch["spray"]["counters"]
+    assert ch["result"]["spraying"] == [False] * 6 and "Placeholder parameters" in ch["result"]["text"]
+    assert f"+{f['net_vs_ref_wh']:g} Wh" in ch["result"]["text"]
+    # PV power on the counter is the run's value at that sample
+    assert float(ch["cool"]["pv"].replace("kW", "")) == pytest.approx(
+        story["p_dc"][ch["cool"]["story"]["sample"]] / 1000, abs=0.2)
+    # Arabic captions: right to left, the vendored font, Latin runs kept left to right
+    ar = out["arabic"]
+    assert (ar["dir"], ar["lang"], ar["direction"]) == ("rtl", "ar", "rtl")
+    assert ar["font"].startswith('"IBM Plex Sans Arabic"') and ar["loaded"] is True
+    assert ar["bdi"] and all(b[0] == "ltr" and b[2] == "ltr" for b in ar["bdi"])
+    assert [b[1] for b in ar["bdi"]][-1] == f"+{f['net_vs_ref_wh']:g} Wh" and ar["html"] == 0
+    assert ar["label"] == VIEW_LABEL and ar["labelShown"]
+    # after the story: the live scale and look are back
+    assert not out["exited"]["theater"] and out["exited"]["hold"] is False
+    assert out["exited"]["scale"] == [20, 70] and out["exited"]["cloud"]["dark"] == 0
+    # export mode: drawn frame by frame only, label and caption on, buttons off, jets on
+    ex = out["export"]
+    assert ex["renders"] == 4 and ex["rendersIdle"] == 0
+    assert ex["labelShown"] and ex["label"] == VIEW_LABEL and ex["captionShown"] and ex["countersShown"]
+    assert not ex["controlsShown"] and not ex["qualityShown"]
+    assert ex["quality"] == "high" and ex["jets"] == [True] * 6 and ex["story"]["chapter"] == "spray"

@@ -39,6 +39,9 @@ same rooftop, and shown in the SCADA as a simulation source.
 | `twin/rank.py` | one-at-a-time ranking of the unmeasured quantities by their effect on net energy |
 | `twin/fit.py` | fits parameters to rig files and writes the overlay that replaces placeholders |
 | `twin/validate.py` | validation hook: replay of logger files against measured temperature and power |
+| `twin/showcase.py` | one simulated day for the presentation views: story mode and controller comparison |
+| `twin/refresh.py` | **one command when real data arrives**: refit + regenerate those views |
+| `scada/export_story.py` | the story mode as an MP4 and PNG stills for slides |
 | `twin/data/pump_curve_R385_TEMPLATE.csv` | the table Abdullah fills in on the bench |
 | `scada/sim_source.py`, `scada/web/rooftop.*` | the twin as a SIMULATION source of the SCADA |
 
@@ -52,6 +55,10 @@ python -m twin.compare                    five strategies, 5 synthetic days (abo
 python -m twin.compare --no-sensitivity   the main table only (about 2 min)
 python -m twin.rank                       one quantity at a time, ranked (about 8 min, 4 processes)
 python -m scada.run --sim                 rooftop page: http://127.0.0.1:8050/rooftop
+python -m scada.run --showcase            only the story mode and the controller comparison
+python -m twin.showcase                   (re)create their data: out/twin/showcase/ (about 20 s)
+python -m scada.export_story              the story as MP4 + stills (about 10 min at 1280x720)
+python -m twin.refresh --data <SD copy> --real     real data: refit and regenerate (see below)
 python -m twin.params                     regenerate docs/twin/parameters.md
 python -m pytest tests/test_twin_*.py tests/test_scada_sim.py
 ```
@@ -63,7 +70,78 @@ synthetic run. It is not in git; create it once with `python -m analysis.demo_sy
 Results go to `out/twin/` (not in git): `validation_demo/`, `compare/report.md`,
 `rank/report.md`. `twin.rank` does not need the NASIM model.
 
+## Presentation views (story mode, comparison, export)
+
+Everything in this section is SIMULATION. The 3D view and every exported picture and video
+carry the label **"SIMULATION — placeholder parameters, not measured"** (`twin.VIEW_LABEL`;
+the export stops if the page does not show it).
+
+**Story mode** — `http://127.0.0.1:8050/rooftop?story=1`, or the button "▶ Story" on the 3D
+view. About 75 s, eight steps: cloud shadow crosses the roof → modules cool → sun returns →
+temperatures climb (thermal spike) → detector alarm → valves open, spray → temperatures
+drop → what it cost and gave. Play/pause (space), step (⏮ ⏭ or the arrow keys, or click a
+segment of the progress bar), EN / عربي, Esc leaves. Dragging the view frees the camera
+until the next step. Counters: PV power, pump power, net power, water used.
+
+- It replays `out/twin/showcase/story.json`: a window of ONE simulated day, every 10 s step
+  of the twin with every module temperature. Chapter limits and the numbers in the captions
+  are computed from that run (`twin/showcase.py`, `chapters()`); nothing is scripted.
+- **Caption text is in one file: `scada/web/story_captions.json`** (English and Arabic).
+  `{name}` is replaced by a number of the run. In Arabic, every English term, number and
+  unit is wrapped in `<bdi dir="ltr">…</bdi>`; `tests/test_twin_showcase.py` fails if one
+  is not. Font: IBM Plex Sans Arabic, vendored (offline).
+- The day is a **scenario day** `[SCENARIO]`: clear sky over Makkah with three clouds
+  placed by hand. With `--data <SD copy>` the weather of a logged day is used instead.
+- The twin applies **one irradiance to all modules** (one pyranometer; a cloud edge crosses
+  this roof in less than one 10 s sample). So after a cloud every string re-heats and all
+  six alarms come within about 30 s: there is no single "affected string". The shadow that
+  slides over the roof is drawing, tied to the irradiance ramp of the run.
+- The story's detector is the **threshold rule** by default (rise ≥ 2.5 °C in 10 min): it
+  waits for the rise, so the picture shows climb → alarm → spray. NASIM-GBT alarms while
+  the sun is still returning, before a rise is visible:
+  `python -m twin.showcase --story-detector nasim`. The captions name the detector that ran.
+- The two cloud steps use the realistic module look (the shadow shows on lit glass); on the
+  heat map colour means temperature and is never darkened. In story mode the colour scale
+  is narrowed to the story's range (35–60 °C on the scenario day); the legend shows it.
+
+**Controller comparison** — on the same page, below the 3D view: the five strategies on
+that same day, rooftop and sensor noise. Four charts with one time axis (module
+temperature, net energy minus no cooling, pump energy, water use), a card per strategy
+marked SIM, and the table. The grey band is the story's window. The comparison uses
+NASIM-GBT for the spike-triggered strategy when its model is on the computer
+(`python -m analysis.demo_synth`), else the threshold rule, and says which.
+
+**Export for slides** — `python -m scada.export_story [--lang en|ar|both] [--size 1920x1080]
+[--fps 25] [--gpu]` writes `out/twin/showcase/story_<lang>.mp4`, stills in
+`out/twin/showcase/stills/` and `compare_page.png`. Headless Chromium draws the story frame
+by frame at a fixed time step (the video is the same on any computer), ffmpeg encodes it.
+`out/twin/showcase/compare.png` (written by `twin.showcase`) is the comparison as a figure.
+
+**3D view** — new drawing aids, none of them data: the cloud shadow (see above; on the
+live page it follows irradiance / clear-sky irradiance of the newest step), the sun's path
+over Makkah for the simulated day with hour marks (button "Sun path"), a colour legend in
+°C inside the view, spray jets on the medium and high quality tiers. Frame times:
+`python tests/browser/bench3d.py [--gpu] [--story]`; results of 2026-11-17 in
+[showcase/frame-times.md](showcase/frame-times.md).
+
 ## When real data exists
+
+**One command** does steps 1, 2 and the views:
+
+```
+python -m twin.refresh --data <copy of the SD card> --real
+python -m twin.refresh --data <copy of the SD card> --real --gamma -0.0041 --export
+```
+
+It validates the twin as it is (`out/twin/refresh/1_before/report.md`), fits
+(`twin/params_measured.json`, tag `[MEASURED]`), validates again (`2_after/report.md`),
+and regenerates the story mode and the controller comparison with the new parameters and
+the weather of a logged day (`--date YYYY-MM-DD`; default: the day with the deepest midday
+cloud; `--scenario-weather` keeps the scenario day). `--export` also renders the MP4.
+Without `--real` it is a dry run: the fit goes to `out/twin/refresh/fit_synthetic.json`
+and never into the measured slot. It does **not** fit evaporation, spray conductance or
+pump power: those need the bucket test and the spray test (step 3 and `placeholders.md`).
+The steps one by one:
 
 1. **Validate first.** `python -m twin.validate --data <copy of the SD card> --real`
    replays the measured irradiance, ambient temperature and wind through the twin and

@@ -33,6 +33,10 @@ async function open(browser, out, query) {
     await page.waitForFunction(() => window.roof3d.info.realT !== null && !window.roof3d.info.intro, null, { timeout: 60000 });
     out.first = await info();
     out.badge = await page.locator("#v3stage .badge").innerText();
+    out.legend = await page.locator("#v3legend").innerText();
+    out.storyOff = await page.evaluate(() => window.roofStory.info);      // no showcase data on this server
+    out.cloudRule = await page.evaluate(() => { const f = window.roof3d.cloudFromIrradiance;
+      return { clear: f(900, 947).c, half: +f(900 * (1 - 0.165), 900, 1).c.toFixed(3), deep: f(260, 900).c, night: f(5, 20).c }; });
 
     // 2. it updates: a newer simulated step arrives and is drawn, in the shared colour scale
     await page.waitForFunction((t) => window.roof3d.info.tUtc > t, out.first.tUtc, { timeout: 60000 });
@@ -44,7 +48,7 @@ async function open(browser, out, query) {
       return { tUtc: st.latest.t_utc, wrongColours: wrong, spraying: v.spraying(), wet: v.wet(),
         valves: st.strings.map((x) => x.valve), valveColour: v.valveColor(0), series1: R.css("--series-1"),
         realColour: v.realColor(), realExpected: R.tempColor(v.info.realT), faces: v.faceVisible(),
-        sun: v.info.sun, sunTUtc: v.info.tUtc };
+        sun: v.info.sun, sunTUtc: v.info.tUtc, sunPath: v.sunPath(), cloud: v.cloud() };
     });
     out.later = await info();
     out.check = await check();
@@ -101,6 +105,7 @@ async function open(browser, out, query) {
     for (const q of ["high", "low"]) {
       const p = await open(browser, out, `?quality=${q}&intro=0`);
       out["forced_" + q] = await p.evaluate(() => window.roof3d.info);
+      out["jets_" + q] = await p.evaluate(() => window.roof3d.jets());
       await p.close();
     }
   } catch (e) {

@@ -7,6 +7,8 @@
     python -m scada.run --sim                             only the rooftop SIMULATION
     python -m scada.run --replay --sim nasim              ... or next to a replay / live data
     python -m scada.run --replay --speed 600 --sim        everything (start-scada.bat)
+    python -m scada.run --showcase                        only the story mode and the controller
+                                                          comparison of /rooftop (presentation)
 
 Then open http://127.0.0.1:8050 ; the bar at the top switches between the real module's
 dashboard and the rooftop page. Stop with Ctrl+C.
@@ -24,6 +26,10 @@ Setup: docs/scada/telegram.md.
 --sim runs the rooftop twin (twin/, 120 simulated modules) and shows it on the page
 /rooftop, marked SIMULATION. It has its own file (out/scada/simulation.sqlite) and never
 touches the historian: the real module stays the only real data source.
+
+--sim and --showcase also serve the presentation data of twin/showcase.py (story mode and
+controller comparison, out/twin/showcase/); it is created on the first start (about a
+minute). Open http://127.0.0.1:8050/rooftop?story=1 for the story.
 
 Live and replay never share a historian: live data goes to out/scada/historian.sqlite, a
 replay to out/scada/replay.sqlite, which is emptied at every replay start. A historian
@@ -85,6 +91,16 @@ def open_historian(path, mode):
     conn.close()
 
 
+def ensure_showcase(folder=server.SHOWCASE_DIR):
+    """The presentation data of /rooftop (twin/showcase.py); created when it is missing."""
+    folder = pathlib.Path(folder)
+    if (folder / "compare.json").exists():
+        return
+    from twin import showcase
+    print(f"Creating the showcase data in {folder} (SIMULATION, about a minute) ...", flush=True)
+    showcase.build(folder)
+
+
 def start_notifier(a, db, stop, threads):
     """The Telegram notifier for live data, or None. A bad config stops the start: an
     operator who set up alerts must not believe they are on when they are not."""
@@ -124,6 +140,9 @@ def main():
     ap.add_argument("--sim-speed", type=float, default=120.0,
                     help="simulation speed, times real time")
     ap.add_argument("--sim-days", type=int, default=2, help="simulated days")
+    ap.add_argument("--showcase", action="store_true",
+                    help="serve the story mode and the controller comparison of /rooftop "
+                         "(SIMULATION, twin/showcase.py) without running the simulation")
     ap.add_argument("--telegram", metavar="CONFIG",
                     help=f"phone alerts with this config file (default {notify.CONFIG_PATH} "
                          "if it exists; live data only)")
@@ -134,9 +153,9 @@ def main():
                  "phone alerts are for the real module only, never a replay or the simulation")
     if a.replay and (a.folder or a.serial):
         ap.error("--replay cannot be combined with --folder or --serial")
-    if not (a.replay or a.folder or a.serial or a.sim):
+    if not (a.replay or a.folder or a.serial or a.sim or a.showcase):
         ap.error("give --folder and/or --serial for live data, --replay for a demo, "
-                 "or --sim for the rooftop simulation")
+                 "--sim for the rooftop simulation, or --showcase for its story mode")
 
     stop, threads = threading.Event(), []
     if a.replay:
@@ -161,6 +180,8 @@ def main():
         sim_db = sim_source.SIM_DB                                         # NASIM's model is missing
         sim_info = {"speed": a.sim_speed}
         threads.append(threading.Thread(target=feeder.run, args=(stop, a.sim_speed)))
+    if a.sim or a.showcase:
+        ensure_showcase()
     notifier = start_notifier(a, db, stop, threads) if not a.replay else None
     for t in threads:
         t.daemon = True
@@ -174,6 +195,9 @@ def main():
     if a.sim:
         print(f"Rooftop SIMULATION ({feeder.controller.name}) on "
               f"http://127.0.0.1:{port}/rooftop   file: {sim_db}", flush=True)
+    if a.sim or a.showcase:
+        print(f"Story mode and controller comparison (SIMULATION) on "
+              f"http://127.0.0.1:{port}/rooftop?story=1", flush=True)
     if a.lan:
         print(LAN_WARNING, flush=True)
         ip = lan_address()
