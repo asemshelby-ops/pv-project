@@ -147,6 +147,7 @@ function setPlaying(on) {
   S.playing = on && S.on;
   if (S.playing && S.tau >= S.total - 0.01) S.tau = 0;
   if (S.playing) S.free = false;
+  S.clock = 0;
   $("stPlay").textContent = S.playing ? "⏸" : "▶";
   stage.requestRender();
 }
@@ -189,8 +190,11 @@ function exit() {
 const DRIVER = {
   active: () => S.on && S.playing,
   moving: () => !S.free,
-  frame(now, dt) {
-    S.tau += dt;
+  frame(now) {
+    // the story keeps real time however slowly the picture is drawn (a slow computer shows
+    // fewer frames, not a slower story); a pause of the tab is not caught up
+    S.tau += S.clock ? Math.min(0.5, (now - S.clock) / 1000) : 0;
+    S.clock = now;
     if (S.tau >= S.total) { if (S.loop) S.tau = 0; else { S.tau = S.total; show(S.tau, true); setPlaying(false); return !S.free; } }
     show(S.tau);
     return !S.free;                              // true: the camera is the story's

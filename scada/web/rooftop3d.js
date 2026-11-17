@@ -440,10 +440,19 @@ function decideTier(tier, m, allowUp) {
   if (fast && allowUp && i < ORDER.length - 1) return ORDER[i + 1];
   return tier;
 }
+// Story mode fills the window: several times the pixels of the normal view. So that "low"
+// and "medium" do not get slower there, the drawn pixels are capped (the picture is scaled
+// up by the browser); the normal view and the video export are not capped.
+const THEATER_PX = { low: 0.5e6, medium: 1.0e6, high: Infinity };
+function pixelRatio() {
+  const T = TIERS[V.tier], st = $("v3stage"), base = Math.min(window.devicePixelRatio || 1, T.pr);
+  if (EXPORT || !document.body.classList.contains("theater") || !st.clientWidth) return base;
+  return Math.min(base, Math.sqrt(THEATER_PX[V.tier] / (st.clientWidth * st.clientHeight)));
+}
 function setTier(t) {
   V.tier = t;
   const T = TIERS[t];
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, T.pr));
+  renderer.setPixelRatio(pixelRatio());
   const on = T.shadow > 0;
   if (renderer.shadowMap.enabled !== on || (on && sunLight.shadow.mapSize.x !== T.shadow)) {
     renderer.shadowMap.enabled = on; sunLight.castShadow = on;
@@ -903,6 +912,7 @@ function frame(now) {
 function resize() {
   const st = $("v3stage"), w = st.clientWidth, h = st.clientHeight;
   if (!w || !h) return;
+  renderer.setPixelRatio(pixelRatio());
   renderer.setSize(w, h, false);
   camera.aspect = w / h; camera.updateProjectionMatrix();
   requestRender();

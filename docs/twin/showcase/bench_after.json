@@ -1,0 +1,71 @@
+{
+  "errors": [],
+  "cases": [
+    {
+      "name": "low, heat, all zones spraying",
+      "ms_per_frame": 135.46179775281055,
+      "raf_median_ms": 166.60000000000036,
+      "quality": "low",
+      "pixelRatio": 1
+    },
+    {
+      "name": "medium, heat, all zones spraying",
+      "ms_per_frame": 158.39736842105384,
+      "raf_median_ms": 199.90000000000146,
+      "quality": "medium",
+      "pixelRatio": 1
+    },
+    {
+      "name": "high, heat, all zones spraying",
+      "ms_per_frame": 162.38243243243178,
+      "raf_median_ms": 216.6999999999989,
+      "quality": "high",
+      "pixelRatio": 1
+    },
+    {
+      "name": "low, realistic, all zones spraying",
+      "ms_per_frame": 138.19425287356373,
+      "raf_median_ms": 183.20000000000073,
+      "quality": "low",
+      "pixelRatio": 1
+    },
+    {
+      "name": "medium, realistic, all zones spraying",
+      "ms_per_frame": 162.27837837837714,
+      "raf_median_ms": 200.09999999999854,
+      "quality": "medium",
+      "pixelRatio": 1
+    },
+    {
+      "name": "high, realistic, all zones spraying",
+      "ms_per_frame": 167.44583333333205,
+      "raf_median_ms": 216.6999999999989,
+      "quality": "high",
+      "pixelRatio": 1
+    },
+    {
+      "name": "low, story mode playing",
+      "ms_per_frame": 259.36250000000774,
+      "raf_median_ms": 16.700000000000728,
+      "quality": "low",
+      "pixelRatio": 1
+    },
+    {
+      "name": "medium, story mode playing",
+      "ms_per_frame": 320.8342105263133,
+      "raf_median_ms": 16.700000000000728,
+      "quality": "medium",
+      "pixelRatio": 1
+    },
+    {
+      "name": "high, story mode playing",
+      "ms_per_frame": 301.08250000000237,
+      "raf_median_ms": 16.69999999999891,
+      "quality": "high",
+      "pixelRatio": 1
+    }
+  ],
+  "viewport": "1300x900",
+  "renderer": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+  "stage": "952x500"
+}
