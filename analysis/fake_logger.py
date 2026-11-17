@@ -20,7 +20,7 @@ import pvlib
 from scipy.optimize import brentq
 
 import config
-from data.schema import BACK_SENSORS
+from data.schema import BACK_SENSORS, MARKER_CODES
 
 HEADER = ["date", "time", *BACK_SENSORS, "T_ambient", "humidity", "irradiance",
           "voltage", "current", "power", "wind", "p", "alarm"]
@@ -49,21 +49,57 @@ def write_logger_files(days, out, extra_columns=True):
         g[HEADER + EXTRA if extra_columns else HEADER].to_csv(out / f"{key}.csv", index=False)
 
 
-def write_markers(schedule, out):
+def write_markers(schedule, out, codes=False):
     """schedule: {local date: [(HH:MM:SS, event, notes), ...]}. Writes /markers.csv (UTC,
-    ms) and logsheets/<date>.csv, numbering the presses of each day in time order."""
+    ms) and logsheets/<date>.csv, numbering the presses of each day in time order.
+    codes=True writes the four-column file of a logger built with MARKER_CODES_ENABLED 1:
+    the `code` of the event's name (data/schema.py, MARKER_CODES), 0 for every other row."""
     out = pathlib.Path(out)
     (out / "logsheets").mkdir(parents=True, exist_ok=True)
-    lines, millis = ["date,time,millis"], 100000
+    code_of = {name: code for code, name in MARKER_CODES.items()}
+    lines, millis = ["date,time,millis,code" if codes else "date,time,millis"], 100000
     for date in sorted(schedule):
         sheet = []
         for k, (hms, event, notes) in enumerate(sorted(schedule[date]), start=1):
             t = _utc([pd.Timestamp(f"{date} {hms}")])[0]
             millis += 60000 + 137 * k
-            lines.append(f"{t:%Y-%m-%d},{t:%H:%M:%S}.{(137 * k) % 1000:03d},{millis}")
+            lines.append(f"{t:%Y-%m-%d},{t:%H:%M:%S}.{(137 * k) % 1000:03d},{millis}"
+                         + (f",{code_of.get(event, 0)}" if codes else ""))
             sheet.append({"marker": k, "local_time": hms[:5], "event": event, "notes": notes})
         pd.DataFrame(sheet).to_csv(out / "logsheets" / f"{date}.csv", index=False)
     (out / "markers.csv").write_text("\n".join(lines) + "\n")
+
+
+def add_load_off_tests(days, tests, rise_ss_c=6.0, tau_s=380.0):
+    """SYNTHETIC controlled open-circuit tests (docs/paper/03 sec. 11, a proposal).
+    tests: [(local date, 'HH:MM:SS', minutes)]. While the load is off, the power the module
+    was delivering stays in it as heat: the back sheet rises towards `rise_ss_c` above its
+    path with the thermal time constant, and falls back after the load is on again; the
+    irradiance does not change. rise_ss_c = 6 degC is INVENTED so that the rise within
+    10 min passes the 3 degC of the spike definition; the estimate of 03 sec. 11 for the
+    real module is 2.4 to 5.9 degC. Returns (days, schedule): the changed table and the
+    marker lines `load off` / `load on` to merge into a write_markers() schedule."""
+    d = days.copy()
+    t = pd.to_datetime(d["date"] + " " + d["time"])
+    extra, off, schedule = np.zeros(len(d)), np.zeros(len(d), dtype=bool), {}
+    for date, hms, minutes in tests:
+        t0 = pd.Timestamp(f"{date} {hms}")
+        s = (t - t0).dt.total_seconds().to_numpy()
+        dur = 60.0 * minutes
+        same_day = (d["date"] == date).to_numpy()
+        during = same_day & (s >= 0) & (s <= dur)
+        after = same_day & (s > dur)
+        peak = rise_ss_c * (1 - math.exp(-dur / tau_s))
+        extra += np.where(during, rise_ss_c * (1 - np.exp(-np.clip(s, 0, None) / tau_s)), 0.0)
+        extra += np.where(after, peak * np.exp(-np.clip(s - dur, 0, None) / tau_s), 0.0)
+        off |= during
+        schedule.setdefault(date, []).extend([
+            (hms, "load off", "synthetic"),
+            (str((t0 + pd.Timedelta(minutes=minutes)).time()), "load on", "synthetic")])
+    d[BACK_SENSORS] = np.round((d[BACK_SENSORS].to_numpy() + extra[:, None])
+                               / config.DS18B20_LSB_C) * config.DS18B20_LSB_C
+    d.loc[off, ["current", "power"]] = 0.0           # open circuit
+    return d, schedule
 
 
 # --- I-V sweeps of a gamma run -------------------------------------------------------------

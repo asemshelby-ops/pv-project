@@ -154,6 +154,53 @@ def _matched(scored, budget):
     return None if best is None else best[1]
 
 
+def _keep():
+    """The summary numbers kept per setting (validation and test) in curves and matched."""
+    return ["FA_per_day", "recall", "F1", "FP", "delay_median_min", "lead_median_min",
+            "remaining_median"] + [f"delay_median_min_{c}" for c in metrics.causes()]
+
+
+def _matched_table(test, picks, seed, n_boot):
+    """The table of the comparison at equal false-alarm budgets. picks: {budget: {detector:
+    None, or (setting, alarms, validation summary, test summary)}}; `test` scores alarms on
+    the test days. One row per budget and detector; a detector without a setting that
+    qualifies gets a row with only its name."""
+    keep, rows_m = _keep(), []
+    for budget, by_name in picks.items():
+        ref = None if by_name["NASIM-GBT"] is None else test(by_name["NASIM-GBT"][1])[1:]
+        for name in SWEPT:
+            row = {"budget_FA_per_day": budget, "detector": name}
+            if by_name[name] is not None:
+                s, al, v, t = by_name[name]
+                row.update({"setting": str(s), "val_FA_per_day": v["FA_per_day"],
+                            "val_recall": v["recall"], **{f"test_{k}": t[k] for k in keep},
+                            "test_spikes": t["spikes"],
+                            **{f"test_n_{c}": t[f"n_{c}"] for c in metrics.causes()}})
+                if ref is not None and name != "NASIM-GBT":
+                    diff = metrics.bootstrap_difference(ref, test(al)[1:],
+                                                        ("delay_median_min", "recall"),
+                                                        n=n_boot, seed=seed)
+                    for key, short in (("delay_median_min", "delay"), ("recall", "recall")):
+                        d = diff[key]
+                        row.update({f"nasim_minus_{short}": d[0], f"nasim_minus_{short}_lo": d[1],
+                                    f"nasim_minus_{short}_hi": d[2]})
+            rows_m.append(row)
+    return pd.DataFrame(rows_m)
+
+
+def matched_rescored(det, frame, events, excluded=None, seed=0, n_boot=2000):
+    """The matched-budget table again for another event table: the SAME detectors, the same
+    settings (chosen on the validation days of the main run) and the same alarms, scored on
+    the test days against `events`. Used to show a result with some spikes made neutral
+    (load-off spikes; docs/paper/05 sec. 9 does the same for dusty days). Nothing is
+    retrained or retuned, so the two tables differ only by the spikes left out."""
+    test = Scorer(frame, events, excluded, det["parts"]["test"])
+    picks = {budget: {name: None if p is None else (p[0], p[1], p[2], test(p[1])[0])
+                      for name, p in by_name.items()}
+             for budget, by_name in det["matched_picks"].items()}
+    return _matched_table(test, picks, seed, n_boot)
+
+
 def run(frame, events, excluded=None, seed=0, n_boot=2000, log=print):
     """Returns a dict: results (one row per detector, test days), tuned settings, alarms,
     per-detector (day table, matches) for the test days, the trained model and the split."""
@@ -217,36 +264,17 @@ def run(frame, events, excluded=None, seed=0, n_boot=2000, log=print):
                                              n=n_boot, seed=seed)
              for b in ("Threshold (tuned)", "CUSUM", STEP)}
 
-    keep = ["FA_per_day", "recall", "F1", "FP", "delay_median_min", "lead_median_min",
-            "remaining_median"] + [f"delay_median_min_{c}" for c in metrics.CAUSES]
+    keep = _keep()
     curves = pd.DataFrame([{"detector": name, "setting": str(s), "tuned_F1": al is alarms[name],
                             **{f"val_{k}": v[k] for k in keep}, **{f"test_{k}": t[k] for k in keep}}
                            for name in SWEPT for s, al, v, t in scored[name]])
     log("matched false-alarm rates ...")
-    rows_m = []
-    for budget in config.MATCH_FA_PER_DAY:
-        picks = {name: _matched(scored[name], budget) for name in SWEPT}
-        ref = None if picks["NASIM-GBT"] is None else test(picks["NASIM-GBT"][1])[1:]
-        for name in SWEPT:
-            row = {"budget_FA_per_day": budget, "detector": name}
-            if picks[name] is not None:
-                s, al, v, t = picks[name]
-                row.update({"setting": str(s), "val_FA_per_day": v["FA_per_day"],
-                            "val_recall": v["recall"], **{f"test_{k}": t[k] for k in keep},
-                            "test_spikes": t["spikes"],
-                            **{f"test_n_{c}": t[f"n_{c}"] for c in metrics.CAUSES}})
-                if ref is not None and name != "NASIM-GBT":
-                    diff = metrics.bootstrap_difference(ref, test(al)[1:],
-                                                        ("delay_median_min", "recall"),
-                                                        n=n_boot, seed=seed)
-                    for key, short in (("delay_median_min", "delay"), ("recall", "recall")):
-                        d = diff[key]
-                        row.update({f"nasim_minus_{short}": d[0], f"nasim_minus_{short}_lo": d[1],
-                                    f"nasim_minus_{short}_hi": d[2]})
-            rows_m.append(row)
+    picks = {budget: {name: _matched(scored[name], budget) for name in SWEPT}
+             for budget in config.MATCH_FA_PER_DAY}
+    matched = _matched_table(test, picks, seed, n_boot)
     counts = {k: int(((events["class"] == "spike") & events["valid"]
                       & events["date_local"].isin(v)).sum()) for k, v in parts.items()}
     return {"results": pd.DataFrame(rows), "tuned": tuned, "alarms": alarms, "detail": detail,
-            "differences": diffs, "curves": curves, "matched": pd.DataFrame(rows_m),
-            "model": model, "p": p, "X": X, "parts": parts,
+            "differences": diffs, "curves": curves, "matched": matched,
+            "matched_picks": picks, "model": model, "p": p, "X": X, "parts": parts,
             "spikes_per_part": counts}

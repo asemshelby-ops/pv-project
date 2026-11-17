@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 import config
+from analysis.metrics import LOAD_OFF
 from data.schema import BACK_SENSORS
 from detect.features import solar_angles
 
@@ -73,8 +74,9 @@ def cause_sensitivity(events, pairs=config.CAUSE_SENSITIVITY):
     base = sp["f_G"].map(cause_from_fraction)
     if "cause_true" in sp:
         known = sp["cause_true"]
-    else:
-        known = sp["origin"].map({"ctl_mesh": "irradiance", "ctl_windbreak": "non_irradiance"})
+    else:        # a load-off rise has no irradiance step: a known non-irradiance cause
+        known = sp["origin"].map({"ctl_mesh": "irradiance", "ctl_windbreak": "non_irradiance",
+                                  "ctl_load": "non_irradiance"})
     has = known.isin(["irradiance", "non_irradiance"])
     rows = []
     for f_non, f_irr in pairs:
@@ -135,9 +137,10 @@ def label(frame, excluded=None, tests=None):
         for a, b, c in find_rises(ts, config.SPIKE_MINOR_C):
             if not any(a <= c0 and a0 <= c for a0, c0 in taken):
                 rows.append({**_describe(g, ts, g1, a, b, c), "class": "minor"})
+    columns = COLUMNS + (["cause_rule"] if config.LOADOFF_CLASS_ENABLED else [])
     ev = pd.DataFrame(rows)
     if ev.empty:
-        return pd.DataFrame(columns=COLUMNS)
+        return pd.DataFrame(columns=columns)
     ev = ev.sort_values("start").reset_index(drop=True)
     ev["origin"] = "natural"
     t_on, t_pk = pd.to_datetime(ev["start"]), pd.to_datetime(ev["end"])
@@ -146,6 +149,13 @@ def label(frame, excluded=None, tests=None):
         for _, tst in tests.iterrows():
             if tst["origin"] == "ctl_mesh":          # the rise follows the removal of the mesh
                 hit = (t_on >= tst["off"] - early) & (t_on <= tst["off"] + pd.Timedelta(minutes=10))
+            elif tst["origin"] == "ctl_load":
+                # Open-circuit test (only with config.LOADOFF_CLASS_ENABLED): the rise REACHES
+                # its threshold while the load is off. The onset is not used here: it is the
+                # latest minimum of the 10 min before, and a module that was already warming
+                # slowly puts it minutes before the load went off [ASSUMPTION, 2026-11-17].
+                t_th = pd.to_datetime(ev["t_theta"])
+                hit = (t_th >= tst["on"]) & (t_th <= tst["off"] + early)
             else:                                    # the rise happens while the windbreak is up
                 hit = (t_on >= tst["on"] - early) & (t_on <= tst["off"])
             ev.loc[hit, "origin"] = tst["origin"]
@@ -155,8 +165,14 @@ def label(frame, excluded=None, tests=None):
             ev.loc[hit, "valid"] = False
             ev.loc[hit, "note"] = "excluded: " + x["reason"]
     ev.loc[~ev["valid"] & (ev["note"] == ""), "note"] = "sun too low"
+    if config.LOADOFF_CLASS_ENABLED:
+        # Load-off spikes as their own class: a rise during a controlled open-circuit test
+        # (origin ctl_load) gets the cause `load_off`. What the irradiance rule itself said is
+        # kept in `cause_rule` (it should say non_irradiance: the sun did not change).
+        ev["cause_rule"] = ev["cause"]
+        ev.loc[ev["origin"] == "ctl_load", "cause"] = LOAD_OFF
     ev.insert(0, "event_id", np.arange(1, len(ev) + 1))
-    return ev[COLUMNS]
+    return ev[columns]
 
 
 def attach_truth(events, drivers):

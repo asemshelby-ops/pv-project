@@ -31,8 +31,8 @@ import numpy as np
 import pandas as pd
 
 import config
-from analysis import (detection, ect, events, gamma, ingest, phase_b, report, soiling, validate,
-                      verdict)
+from analysis import (detection, ect, events, gamma, ingest, metrics, phase_b, report, soiling,
+                      validate, verdict)
 
 DEFAULT_MAPPING = {   # ESP32 column -> (reference column, scale); an ASSUMPTION until the
     "T1": ("TC1", 1.0), "T3": ("TC2", 1.0), "T5": ("TC3", 1.0),   # data-logger model is known
@@ -104,9 +104,23 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
     det["results"].to_csv(out / "detection_results.csv", index=False)
     det["curves"].to_csv(out / "detection_curves.csv", index=False)
     det["matched"].to_csv(out / "detection_matched.csv", index=False)
-    claim = verdict.evaluate(det["matched"], det["spikes_per_part"]["train"])
+    if config.LOADOFF_CLASS_ENABLED:
+        # load-off spikes as their own class: the verdict with them and without them
+        is_lo = (ev["class"] == "spike") & ev["valid"] & (ev["cause"] == metrics.LOAD_OFF)
+        lo_counts = {k: int((is_lo & ev["date_local"].isin(v)).sum()) for k, v in det["parts"].items()}
+        ev_without = ev.copy()
+        ev_without.loc[is_lo, "valid"] = False       # neutral, like a minor rise
+        matched_without = detection.matched_rescored(det, frame, ev_without, excluded, seed, n_boot)
+        matched_without.to_csv(out / "detection_matched_without_load_off.csv", index=False)
+        train = det["spikes_per_part"]["train"]
+        claim = verdict.with_and_without(det["matched"], train, matched_without,
+                                         train - lo_counts["train"], lo_counts)
+        log(f"verdict with load-off spikes: {claim['with_load_off']['outcome']}; without: "
+            f"{claim['without_load_off']['outcome']}")
+    else:
+        claim = verdict.evaluate(det["matched"], det["spikes_per_part"]["train"])
+        log(f"verdict on the detector claim: {claim['outcome']}")
     (out / "verdict.json").write_text(json.dumps(claim, indent=2, default=str), encoding="utf-8")
-    log(f"verdict on the detector claim: {claim['outcome']}")
     (out / "tuned.json").write_text(json.dumps(
         {**{k: float(v) for k, v in det["tuned"].items()}, "split_days": {
             k: [v[0], v[-1], len(v)] for k, v in det["parts"].items()},
@@ -201,7 +215,8 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
             f"{k} {v[0]:+.2f} ({v[1]:+.2f} to {v[2]:+.2f})" for k, v in d.items()))
     lines += ["", "## Table 3 - per cause", "", md(t3), "",
               "## Table 8 - detectors at equal false-alarm budgets", "", md(t8), ""]
-    lines += verdict.markdown(claim, synthetic)
+    lines += (verdict.markdown_both(claim, synthetic) if config.LOADOFF_CLASS_ENABLED
+              else verdict.markdown(claim, synthetic))
     if t6 is not None:
         lines += ["## Table 6 - cause rule against known causes", "", md(t6), ""]
     lines += ["## Table 9 - sensitivity of the cause labels to the two limits", "", md(t9), ""]

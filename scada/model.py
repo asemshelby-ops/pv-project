@@ -14,7 +14,7 @@ import pathlib
 from dataclasses import asdict, dataclass
 
 from data.schema import (ALARM_BITS, BACK_SENSORS, COLUMNS, LOGGER_EXTRA_COLUMNS,
-                         STATUS_BITS)
+                         PHASE_B_COLUMNS, STATUS_BITS)
 
 # The three row formats a file can have. The logger wrote FORMAT_OLD until 2026-11-12 and
 # writes FORMAT_NEW since; FORMAT_SCHEMA is the bare schema (synthetic day tables).
@@ -22,6 +22,11 @@ FORMAT_SCHEMA = list(COLUMNS)
 FORMAT_OLD = FORMAT_SCHEMA + ["p", "alarm"]
 FORMAT_NEW = FORMAT_OLD + list(LOGGER_EXTRA_COLUMNS)
 FORMATS = {len(f): f for f in (FORMAT_SCHEMA, FORMAT_OLD, FORMAT_NEW)}
+# Rows of a logger built with PHASE_B_ENABLED 1 (Phase B preparation, 2026-11-17, not
+# adopted): six more fields after `status`. Kept apart from FORMATS: the SCADA has no tags
+# for them yet. It reads such a row by its first 21 fields and leaves the six alone, so a
+# Phase B logger does not blind it.
+PHASE_B_FORMATS = {len(FORMAT_NEW) + len(PHASE_B_COLUMNS): FORMAT_NEW + list(PHASE_B_COLUMNS)}
 
 LOAD_MODES = {  # the `load_mode` column (docs/paper/07 sec. 7)
     "none": "no load fitted",

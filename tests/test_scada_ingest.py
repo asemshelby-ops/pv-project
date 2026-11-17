@@ -281,3 +281,32 @@ def test_parser_counts_boots_from_falls_of_uptime():
     anchors = [p.parse(row.format(s, up), 0.0)[2]
                for s, up in ((0, 5000), (10, 15000), (20, 3000), (30, 13000))]
     assert anchors == [True, False, True, False] and p.boot_no == 1
+
+
+# --- Phase B preparation: the two new file formats do not blind the SCADA -------------------
+
+def test_rows_of_a_phase_b_logger_are_read_by_their_first_21_fields(conn):
+    """A logger built with PHASE_B_ENABLED 1 appends six fields after `status`. Over the
+    serial line there is no header: the row must still be read, the six left alone."""
+    assert sorted(model.FORMATS) == [14, 16, 21] and sorted(model.PHASE_B_FORMATS) == [27]
+    row = ("2026-12-01,06:00:00,40.0,40.1,40.2,40.3,40.4,30.0,40.0,800,17.5,5.0,87.5,NaN,0.01,1,"
+           "0.4600,hold,0,20000,0,7,1,0.600,1.493,0.2489,19.900")
+    assert len(row.split(",")) == 27
+    serial = SerialIngest(conn, "COM9")
+    assert serial.handle_line(row, wall=1000.0) == "row"
+    got = conn.execute("SELECT T3, irradiance, alarm, load_mode, status FROM samples").fetchone()
+    assert (got["T3"], got["irradiance"], got["alarm"], got["load_mode"], got["status"]) == (
+        40.2, 800.0, 1, "hold", 0)
+
+
+def test_coded_marker_rows_are_stored_with_the_name_of_their_code(conn, tmp_path):
+    (tmp_path / "20261201.csv").write_text(NEW_HEADER + "\n")
+    (tmp_path / "markers.csv").write_text(
+        "date,time,millis,code\n2026-12-01,03:10:00.137,160137,0\n"
+        "2026-12-01,07:30:00.274,7000274,30\n2026-12-01,07:42:00.411,7720411,31\n")
+    assert FolderIngest(conn, tmp_path).poll(wall=1000.0)["markers"] == 3
+    notes = [r["note"] for r in conn.execute("SELECT note FROM markers ORDER BY millis")]
+    assert notes == [None, "load off", "load on"]
+    serial = SerialIngest(conn, "COM9")                         # the logger prints the name too
+    assert serial.handle_line("# marker (mesh on): 2026-12-01,08:00:00.000,9000000,10") == "marker"
+    assert conn.execute("SELECT note FROM markers WHERE millis = 9000000").fetchone()["note"] == "mesh on"

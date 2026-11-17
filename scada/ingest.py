@@ -27,6 +27,7 @@ import pathlib
 import re
 import time
 
+from data.schema import MARKER_CODES
 from scada import alarms, historian, model
 
 DAY_FILE = re.compile(r"^\d{8}\.csv$")
@@ -84,7 +85,7 @@ class RowParser:
             self.header = fields
             return "skip", None, False
         names = self.header if self.header and len(fields) == len(self.header) \
-            else model.FORMATS.get(len(fields))
+            else model.FORMATS.get(len(fields)) or model.PHASE_B_FORMATS.get(len(fields))
         if names is None:
             self.bad_lines += 1
             return "bad", None, False
@@ -157,12 +158,16 @@ def _marker_time_ms(date, clock):
 
 
 def _store_marker(conn, line, source, note=None):
-    """One /markers.csv line (date,time,millis). Returns True if it was a marker."""
+    """One /markers.csv line (date,time,millis). Returns True if it was a marker.
+    A logger built with MARKER_CODES_ENABLED 1 writes a fourth field, the row's code
+    (data/schema.py, MARKER_CODES): its name becomes the note if the line brings none."""
     f = [x.strip() for x in line.split(",")]
     try:
-        if len(f) != 3:
+        if len(f) not in (3, 4):
             return False
         t_ms, millis = _marker_time_ms(f[0], f[1]), int(f[2])
+        if len(f) == 4 and int(f[3]) and note is None:
+            note = MARKER_CODES.get(int(f[3]), f"code {int(f[3])}")
     except ValueError:
         return False
     conn.execute("INSERT OR IGNORE INTO markers (t_utc_ms, millis, note, source) "

@@ -17,14 +17,16 @@ import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
 
 from analysis import events as ev_mod  # noqa: E402
-from analysis.metrics import CAUSES  # noqa: E402
+from analysis.metrics import CAUSES, causes  # noqa: E402
 from data.schema import BACK_SENSORS  # noqa: E402
 
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#d9d8d4"
 SLOT = ["#2a78d6", "#eb6834", "#1baf7a", "#8a5bd1"]
 CAUSE_STYLE = {"irradiance": (SLOT[0], "", "irradiance-driven"),
                "non_irradiance": (SLOT[1], "////", "not irradiance-driven"),
-               "mixed": (SLOT[2], "....", "mixed")}
+               "mixed": (SLOT[2], "....", "mixed"),
+               # only with config.LOADOFF_CLASS_ENABLED (a controlled open-circuit test)
+               "load_off": (SLOT[3], "xxxx", "load off (controlled)")}
 DETECTORS = ["Threshold (tuned)", "CUSUM", "Irradiance step", "NASIM-GBT"]
 DET_STYLE = {"Threshold (tuned)": (SLOT[0], "-", "s"), "CUSUM": (SLOT[1], "--", "^"),
              "Irradiance step": (SLOT[3], ":", "D"), "NASIM-GBT": (SLOT[2], "-.", "o")}
@@ -89,7 +91,7 @@ def fig_spike_statistics(events, n_days, out):
     fig, ax = plt.subplots(1, 2, figsize=(TWO_COL, 2.3), gridspec_kw={"wspace": 0.28})
     edges = np.arange(3.0, max(sp["size_C"].max(), 4) + 1.0, 1.0)
     bottom = np.zeros(len(edges) - 1)
-    for c in CAUSES:
+    for c in causes():
         colour, hatch, text = CAUSE_STYLE[c]
         h, _ = np.histogram(sp[sp["cause"] == c]["size_C"], edges)
         ax[0].bar(edges[:-1], h, width=0.9, align="edge", bottom=bottom, color=colour,
@@ -253,7 +255,7 @@ def _write(df, out, name, caption):
 def table_spikes(events, n_days, gamma=None, out="."):
     sp = events[(events["class"] == "spike") & events["valid"]]
     rows = []
-    for c, part in [(c, sp[sp["cause"] == c]) for c in CAUSES] + [("all", sp)]:
+    for c, part in [(c, sp[sp["cause"] == c]) for c in causes()] + [("all", sp)]:
         if not len(part):
             continue
         q = part["size_C"].quantile([0.25, 0.5, 0.75])
@@ -296,7 +298,7 @@ def table_per_cause(results, out="."):
     rows = [{"cause": c if k == 0 else "", "n": x[f"n_{c}"] if k == 0 else "",
              "detector": x["detector"], "recall": num(x[f"recall_{c}"], ".2f"),
              "F1": num(x[f"F1_{c}"], ".2f"), "delay min": num(x[f"delay_median_min_{c}"], ".1f")}
-            for c in CAUSES for k, (_, x) in enumerate(r.iterrows())]
+            for c in causes() for k, (_, x) in enumerate(r.iterrows())]
     t = pd.DataFrame(rows)                 # one row per cause and detector: fits one column
     return _write(t, out, "table3_per_cause",
                   "Recall, F1 and median delay per cause; precision uses all false alarms.")
@@ -375,12 +377,15 @@ def table_cause_check(events, out="."):
     """How the automatic cause rule agrees with known causes: synthetic truth if present,
     and controlled tests (mesh = irradiance, windbreak = not irradiance)."""
     sp = events[(events["class"] == "spike") & events["valid"]]
+    # the label the irradiance rule gave: `cause` itself, unless load-off spikes are their
+    # own class (then `cause` is load_off for them and the rule's label is in `cause_rule`)
+    rule = sp["cause_rule"] if "cause_rule" in sp else sp["cause"]
     parts = []
     if "cause_true" in sp:
-        parts.append(pd.crosstab(sp["cause_true"], sp["cause"]).rename_axis("known cause"))
+        parts.append(pd.crosstab(sp["cause_true"], rule).rename_axis("known cause"))
     ctl = sp[sp["origin"] != "natural"]
     if len(ctl):
-        parts.append(pd.crosstab(ctl["origin"], ctl["cause"]).rename_axis("known cause"))
+        parts.append(pd.crosstab(ctl["origin"], rule[ctl.index]).rename_axis("known cause"))
     if not parts:
         return None
     t = pd.concat(parts).reindex(columns=CAUSES, fill_value=0).fillna(0).astype(int).reset_index()

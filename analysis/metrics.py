@@ -21,6 +21,13 @@ import pandas as pd
 import config
 
 CAUSES = ["irradiance", "non_irradiance", "mixed"]
+LOAD_OFF = "load_off"     # cause label of a controlled open-circuit test (docs/paper/03 sec. 11)
+
+
+def causes():
+    """The cause labels in use: the three of docs/paper/03 sec. 3 and, when load-off spikes
+    are their own class (config.LOADOFF_CLASS_ENABLED, off by default), `load_off`."""
+    return CAUSES + ([LOAD_OFF] if config.LOADOFF_CLASS_ENABLED else [])
 DAY_H = (pd.Timedelta(config.DAY_END) - pd.Timedelta(config.DAY_START)).total_seconds() / 3600
 GRACE = np.timedelta64(config.MATCH_GRACE_MIN * 60, "s")
 
@@ -97,9 +104,9 @@ def per_day(matches, false_alarms, days, obs_h=None):
     the valid observation hours (`obs_h` from observation_hours; the whole day window if
     not given)."""
     d = pd.DataFrame(0, index=pd.Index(days, name="date"),
-                     columns=[f"{k}_{c}" for c in CAUSES for k in ("n", "tp")] + ["fp"])
+                     columns=[f"{k}_{c}" for c in causes() for k in ("n", "tp")] + ["fp"])
     d["obs_h"] = DAY_H if obs_h is None else obs_h.reindex(d.index, fill_value=0.0).to_numpy()
-    for c in CAUSES:
+    for c in causes():
         mc = matches[matches["cause"] == c]
         d[f"n_{c}"] = mc.groupby("date_local").size().reindex(d.index, fill_value=0)
         d[f"tp_{c}"] = mc[mc["detected"]].groupby("date_local").size().reindex(d.index, fill_value=0)
@@ -111,8 +118,8 @@ def per_day(matches, false_alarms, days, obs_h=None):
 def summarise(day_table, matches):
     """All reported numbers from the per-day table and the per-spike matches."""
     hours = float(day_table["obs_h"].sum())
-    n = sum(day_table[f"n_{c}"].sum() for c in CAUSES)
-    tp = sum(day_table[f"tp_{c}"].sum() for c in CAUSES)
+    n = sum(day_table[f"n_{c}"].sum() for c in causes())
+    tp = sum(day_table[f"tp_{c}"].sum() for c in causes())
     fp = int(day_table["fp"].sum())
     p, r, f = _f1(tp, n - tp, fp)
     det = matches[matches["detected"]]
@@ -120,7 +127,7 @@ def summarise(day_table, matches):
            "precision": p, "recall": r, "F1": f, "obs_hours": hours,
            "FA_per_day": fp / (hours / DAY_H) if hours else np.nan,
            "FA_per_100h": 100.0 * fp / hours if hours else np.nan}
-    for c in CAUSES:
+    for c in causes():
         nc, tc = int(day_table[f"n_{c}"].sum()), int(day_table[f"tp_{c}"].sum())
         _, rc, fc = _f1(tc, nc - tc, fp)
         dc = det[det["cause"] == c]

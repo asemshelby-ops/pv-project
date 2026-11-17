@@ -18,6 +18,16 @@ the limits are the PREREG_* constants of config.py.
   distinctive  holds, and no baseline "matches": meets C1 and C2 with a delay that is not
                detectably longer than NASIM's (interval of NASIM minus baseline reaches 0)
 The four sentences are the only wordings the paper may use.
+
+Load-off spikes (config.LOADOFF_CLASS_ENABLED, off by default; docs/paper/03 sec. 11).
+Whether controlled open-circuit spikes count towards the precondition (>= 20 test spikes,
+>= 8 of them not irradiance-driven) is NOT decided. With the switch on, with_and_without()
+gives the verdict twice, so that the decision can be taken knowing what it changes:
+  with     every valid spike counts; a load-off spike is "not irradiance-driven" (the sun
+           did not change)
+  without  load-off spikes are neutral, like a minor rise: not counted, and an alarm inside
+           one is neither a detection nor a false alarm
+The detectors and their settings are the same in both (nothing is retrained or retuned).
 """
 import math
 
@@ -63,6 +73,8 @@ def evaluate(matched, train_spikes, budget=None):
     n_test = get(NASIM, "test_spikes") if has_setting(NASIM) else float("nan")
     n_non = (get(NASIM, "test_n_non_irradiance") + get(NASIM, "test_n_mixed")
              if has_setting(NASIM) else float("nan"))
+    if has_setting(NASIM) and "test_n_load_off" in rows.columns:
+        n_non += get(NASIM, "test_n_load_off")       # no irradiance step in a load-off rise
     pre = (train_spikes >= config.PREREG_MIN_TRAIN_SPIKES
            and _ok(n_test, lambda v: v >= config.PREREG_MIN_TEST_SPIKES)
            and _ok(n_non, lambda v: v >= config.PREREG_MIN_TEST_NON_IRR))
@@ -132,11 +144,51 @@ def evaluate(matched, train_spikes, budget=None):
     return out
 
 
+def with_and_without(matched, train_spikes, matched_without, train_spikes_without, counts):
+    """Both verdicts when load-off spikes are their own class. matched_without: the same
+    detectors and settings scored with load-off spikes neutral (detection.matched_rescored).
+    counts: load-off spikes per part of the split {"train": n, "val": n, "test": n}."""
+    return {"with_load_off": evaluate(matched, train_spikes),
+            "without_load_off": evaluate(matched_without, train_spikes_without),
+            "load_off_spikes": counts,
+            "note": "Whether load-off spikes count towards the precondition is not decided "
+                    "(docs/paper/03 sec. 11): both verdicts are reported. Same detectors and "
+                    "settings in both."}
+
+
+def markdown_both(both, synthetic=False):
+    """Both verdicts as lines for summary.md (config.LOADOFF_CLASS_ENABLED)."""
+    c = both["load_off_spikes"]
+    lines = ["## Verdict on the detector claim, with and without load-off spikes "
+             "(criteria of docs/paper/03 sec. 10)", ""]
+    if synthetic:
+        lines += ["SYNTHETIC DATA: this shows that the verdict is computed, not that the claim is true.", ""]
+    lines += [f"Load-off spikes (controlled open-circuit tests, cause `load_off`): {c['train']} on the "
+              f"training days, {c['val']} on the validation days, {c['test']} on the test days.",
+              "Whether they count towards the precondition is NOT decided (docs/paper/03 sec. 11), "
+              "so the verdict is given both ways. The detectors and their settings are the same "
+              "in both; in the second, a load-off spike is neutral (not counted; an alarm inside "
+              "it is neither a detection nor a false alarm).", ""]
+    for key, title in (("with_load_off", "With load-off spikes"),
+                       ("without_load_off", "Without load-off spikes")):
+        lines += [f"### {title}", ""] + _body(both[key])
+    same = both["with_load_off"]["outcome"] == both["without_load_off"]["outcome"]
+    lines += ["The two outcomes are the same." if same else
+              "**The two outcomes differ: the claim depends on whether load-off spikes count.**", ""]
+    return lines
+
+
 def markdown(v, synthetic=False):
     """The verdict as lines for summary.md."""
     lines = ["## Verdict on the detector claim (criteria fixed in advance, docs/paper/03 sec. 10)", ""]
     if synthetic:
         lines += ["SYNTHETIC DATA: this shows that the verdict is computed, not that the claim is true.", ""]
+    return lines + _body(v)
+
+
+def _body(v):
+    """Precondition, conditions, baselines, outcome and sentence of one verdict."""
+    lines = []
     lines += [f"Primary budget: {v['budget']:g} false alarms per day; settings chosen on the "
               f"validation days, numbers from the test days.", "",
               f"- Precondition: **{'met' if v['precondition'][0] else 'NOT met'}** - {v['precondition'][1]}"]
