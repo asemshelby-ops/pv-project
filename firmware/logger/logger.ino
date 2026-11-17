@@ -30,6 +30,24 @@
 #include <esp_task_wdt.h>
 #include <pv_load.h>
 #include <pv_status.h>
+#if PHASE_B_ENABLED
+// PHASE B (randomized spray trial; docs/phase-b/01-randomized-spray.md). NOT ADOPTED and not
+// run on hardware: compiled only with PHASE_B_ENABLED 1 (pv_config.h). Each row then ends
+// with six more columns, after `status`:
+//   ...,status,spike_id,spray_assign,pump_duty,flow_Lpm,water_L_cum,P_pump_W
+// and /spray_log.csv records the boot line (seed, counters), every event and every alarm
+// that opened none. In THIS build the NASIM alarm does act: it opens a spike event and, in
+// the spray arm of a wet run, starts the pump. The pump output is LOW at boot and after
+// every stop of pv_spray_logic.c, and it never runs in a dry run (PHASE_B_DRY_RUN 1, the
+// default). NASIM must be retrained on field data before a wet run.
+#include <pv_spray.h>
+#endif
+#if MARKER_CODES_ENABLED
+#include "phase_b_config.h"  // MARKER_CODE_*: generated from data/schema.py (MARKER_CODES)
+#endif
+#if NASIM_TIMING_LOG
+#include <pv_timing.h>
+#endif
 
 extern "C" {  // export/c is C, compiled here through nasim_core.c / nasim_model.c
 #include "nasim.h"
@@ -83,6 +101,24 @@ PvDs18b20 probes(pins::ONEWIRE);
 PvPyr20Modbus pyr(Serial2, pins::RS485_RX, pins::RS485_TX);
 PvSdCard sd;
 PvDevice *const DEVICES[] = {&rtc, &env, &hub, &panel, &probes, &pyr, &sd};
+#if PHASE_B_ENABLED
+// Pump-rail INA226. The two M5 units share the fixed address 0x41, so the pump unit sits
+// behind its own PaHub channel; PUMP_INA226_PAHUB_CH -1 = a unit wired directly to the bus
+// at another address (config.py, [PLACEHOLDER]).
+PvIna226 pump_ina("INA226 pump", PUMP_INA226_PAHUB_CH >= 0 ? &hub : nullptr,
+                  PUMP_INA226_PAHUB_CH >= 0 ? PUMP_INA226_PAHUB_CH : 0, Wire, PUMP_INA226_ADDR,
+                  PUMP_INA226_SHUNT_OHM, PUMP_INA226_MAX_A);
+PvSpray spray(pump_ina);
+// DS18B20 in the tank (T_water), by ROM: [PLACEHOLDER] in config.py. All zero = not fitted;
+// with SPRAY_NEED_T_WATER no event then opens in a wet run.
+static const uint8_t TANK_ROM[8] = TANK_ROM_BYTES;
+String header_b;            // HEADER + the six Phase B columns (built in setup)
+char day_checked[16] = "";  // day file whose first line was checked in this boot
+#endif
+#if NASIM_TIMING_LOG
+static const uint32_t TIMING_PERIOD_MS = 3600000;  // one line per hour in /status_log.csv
+pv_timing_t nasim_timing;
+#endif
 
 gbt_detector_t det;               // NASIM-GBT
 thr_detector_t det_thr;           // baseline: temperature-rise threshold
@@ -149,6 +185,9 @@ void mapProbes() {
   }
   for (uint8_t i = 0; i < probes.count; i++) {
     if (memcmp(probes.rom[i], HEATSINK_ROM, 8) == 0) continue;  // not a back-sheet sensor
+#if PHASE_B_ENABLED
+    if (memcmp(probes.rom[i], TANK_ROM, 8) == 0) continue;      // nor is the tank sensor
+#endif
     int free_k = -1;
     bool used = false;
     for (int k = 4; k >= 0; k--) {
@@ -223,6 +262,193 @@ void resetDetectors() {
   cusum_inc_reset(&det_cusum);
 }
 
+#if PHASE_B_ENABLED
+// ---- Phase B (randomized spray trial) -------------------------------------------------------
+float tankTemp() {  // T_water; NaN = no valid reading
+  if (!readable(probes)) return NAN;
+  const int idx = probes.indexOf(TANK_ROM);  // an all-zero ROM matches no sensor
+  return idx < 0 ? NAN : probes.tempC[idx];
+}
+
+// One line of /spray_log.csv, also printed: UTC date and time, uptime, event id (0 = none),
+// what happened, details as key=value pairs. No comma inside `detail`.
+void sprayLog(long id, const char *what, const char *detail) {
+  char line[288];
+  uint32_t unix_s;
+  unsigned milli;
+  const uint32_t ms = millis();
+  if (utcOf(ms, unix_s, milli)) {
+    const DateTime t(unix_s);
+    snprintf(line, sizeof(line), "%04u-%02u-%02u,%02u:%02u:%02u,%lu,%ld,%s,%s", t.year(),
+             t.month(), t.day(), t.hour(), t.minute(), t.second(), (unsigned long)ms, id, what,
+             detail);
+  } else {
+    snprintf(line, sizeof(line), ",,%lu,%ld,%s,%s", (unsigned long)ms, id, what, detail);
+  }
+  Serial.printf("# spray: %s\n", line);
+  if (sd.ok()) sd.appendLine("/spray_log.csv", line, "date,time,uptime_ms,spike_id,event,detail");
+}
+
+// Writes what the trial logic did since the last call: alarms that opened no event, events
+// opened, sprays ended, windows closed.
+void sprayNotes() {
+  const uint32_t notes = spray_take_notes(&spray.S);
+  if (!notes) return;
+  const spray_t &S = spray.S;
+  char d[160];
+  if (notes & SPRAY_NOTE_REFUSED) {
+    snprintf(d, sizeof(d), "reason=%s", spray_reason_text(S.last_reason));
+    sprayLog(0, "refused", d);
+  }
+  if (notes & SPRAY_NOTE_STOPPED) {
+    snprintf(d, sizeof(d), "reason=%s on_ms=%lu litres=%.4f energy_j=%.1f",
+             spray_stop_text(S.done.stop_reason), (unsigned long)S.done.spray_ms,
+             (double)((float)S.done.pulses / FLOW_PULSES_PER_L), (double)S.done.energy_j);
+    sprayLog(S.done.spike_id, "stopped", d);
+  }
+  if (notes & SPRAY_NOTE_CLOSED) {
+    snprintf(d, sizeof(d), "assign=%ld sprayed=%lu stop=%s on_ms=%lu litres=%.4f energy_j=%.1f",
+             (long)S.done.assign, (unsigned long)S.done.sprayed,
+             spray_stop_text(S.done.stop_reason), (unsigned long)S.done.spray_ms,
+             (double)((float)S.done.pulses / FLOW_PULSES_PER_L), (double)S.done.energy_j);
+    sprayLog(S.done.spike_id, "closed", d);
+  }
+  if (notes & SPRAY_NOTE_OPENED) {
+    snprintf(d, sizeof(d), "assign=%ld t_module=%.2f t_water=%.2f", (long)S.assign,
+             (double)S.t_module_alarm, (double)tankTemp());
+    sprayLog(S.spike_id, "opened", d);
+  }
+}
+
+// SPRAY ON | SPRAY OFF | SPRAY RESET | SPRAY STATUS. True if the line was one of them.
+bool sprayCommand(const char *c) {
+  if (strncmp(c, "SPRAY", 5)) return false;
+  if (!strcmp(c, "SPRAY OFF")) {  // also stops a spray that is running
+    spray.arm(false);
+    sprayNotes();
+    sprayLog(0, "command", "SPRAY OFF");
+  } else if (!strcmp(c, "SPRAY ON")) {
+    spray.arm(true);
+    sprayLog(0, "command", spray.S.armed ? "SPRAY ON" : "SPRAY ON refused (not ready)");
+    if (!spray.S.armed) Serial.printf("# spray: cannot switch on: %s\n", spray.detail());
+  } else if (!strcmp(c, "SPRAY RESET")) {  // after a latched pump fault, once it is repaired
+    spray.resetFault();
+    sprayLog(0, "command", "SPRAY RESET");
+  } else if (!strcmp(c, "SPRAY STATUS")) {
+    const spray_t &S = spray.S;
+    Serial.printf("# spray: mode=%s id=%ld assign=%ld armed=%lu dry_run=%d n_wet=%lu n_dry=%lu "
+                  "fault=%s blocked=%s last_refusal=%s pump_ina=%s\n",
+                  spray_mode_text(S.mode), (long)S.spike_id, (long)S.assign,
+                  (unsigned long)S.armed, (int)PHASE_B_DRY_RUN, (unsigned long)S.n_wet,
+                  (unsigned long)S.n_dry, spray_stop_text(S.fault_latched),
+                  spray_reason_text(S.blocked), spray_reason_text(S.last_reason),
+                  pump_ina.statusText());
+  } else {
+    Serial.println("# commands: SPRAY ON | SPRAY OFF | SPRAY RESET | SPRAY STATUS");
+  }
+  return true;
+}
+
+// A day file begun by a build without the Phase B columns has the old header line. Before
+// the first row of this boot goes into such a file, the new header line is appended, so a
+// reader knows from which line on a row has six more fields (analysis/ingest.py).
+void rowHeaderCheck() {
+  if (!strcmp(day_path, day_checked) || !sd.ok()) return;
+  snprintf(day_checked, sizeof(day_checked), "%s", day_path);
+  if (!SD.exists(day_path)) return;  // new file: the header is written with the first row
+  File f = SD.open(day_path, FILE_READ);
+  if (!f) return;
+  String first = f.readStringUntil('\n');
+  f.close();
+  first.trim();
+  if (first != header_b) sd.appendLine(day_path, header_b.c_str());
+}
+
+// Called once from setup(): devices of the trial, the boot line of /spray_log.csv.
+void sprayBoot() {
+  header_b = String(HEADER) + spray_row_header();
+  if (PUMP_INA226_PAHUB_CH < 0 || hub.ok()) pump_ina.begin();
+  const bool ready = spray.begin();
+  const spray_t &S = spray.S;
+  char d[224];
+  snprintf(d, sizeof(d), "seed=%lu block=%lu n_wet=%lu n_dry=%lu dry_run=%lu armed=%lu "
+           "duty=%.3f max_ms=%lu window_ms=%lu lockout_ms=%lu pulses_per_l=%.2f",
+           (unsigned long)S.cfg.seed, (unsigned long)S.cfg.block, (unsigned long)S.n_wet,
+           (unsigned long)S.n_dry, (unsigned long)S.cfg.dry_run, (unsigned long)S.armed,
+           (double)S.cfg.pump_duty, (unsigned long)S.cfg.spray_max_ms,
+           (unsigned long)S.cfg.window_ms, (unsigned long)S.cfg.lockout_ms,
+           (double)S.cfg.pulses_per_l);
+  sprayLog(0, "boot", d);
+  if (!ready) {
+    Serial.printf("# PHASE B: NOT READY (%s) -> no event will open\n", spray.detail());
+    sprayLog(0, "fault", spray.detail());
+  }
+  Serial.println(PHASE_B_DRY_RUN
+                     ? "# PHASE B: DRY RUN. Events are opened and arms drawn; the pump output stays LOW."
+                     : "# PHASE B: WET RUN. A NASIM alarm can start the pump.");
+  Serial.println("# PHASE B: commands SPRAY ON | SPRAY OFF | SPRAY RESET | SPRAY STATUS");
+  if (!HAS_LOAD) {  // with the load the loop watchdog is already on (same time-out)
+    esp_task_wdt_config_t wdt = {LOOP_WDT_MS, 0, true};
+    if (esp_task_wdt_reconfigure(&wdt) != ESP_OK) esp_task_wdt_init(&wdt);
+    enableLoopWDT();
+  }
+}
+
+#endif  // PHASE_B_ENABLED
+#if MARKER_CODES_ENABLED
+// `code` column of /markers.csv for a marker name (nullptr = a button press = 0).
+int markerCode(const char *what) {
+  if (!what) return MARKER_CODE_BUTTON;
+  if (!strcmp(what, "mesh on")) return MARKER_CODE_MESH_ON;
+  if (!strcmp(what, "mesh off")) return MARKER_CODE_MESH_OFF;
+  if (!strcmp(what, "windbreak on")) return MARKER_CODE_WINDBREAK_ON;
+  if (!strcmp(what, "windbreak off")) return MARKER_CODE_WINDBREAK_OFF;
+  if (!strcmp(what, "load off")) return MARKER_CODE_LOAD_OFF;
+  if (!strcmp(what, "load on")) return MARKER_CODE_LOAD_ON;
+  return MARKER_CODE_BUTTON;
+}
+
+// MARK MESH ON | MARK MESH OFF | MARK WINDBREAK ON | MARK WINDBREAK OFF: a marker row with
+// its code, at the millisecond the line arrived. True if the line was a MARK command.
+bool markCommand(const char *c) {
+  if (strncmp(c, "MARK", 4)) return false;
+  const uint32_t ms = millis();
+  if (!strcmp(c, "MARK MESH ON")) writeMarker(ms, "mesh on");
+  else if (!strcmp(c, "MARK MESH OFF")) writeMarker(ms, "mesh off");
+  else if (!strcmp(c, "MARK WINDBREAK ON")) writeMarker(ms, "windbreak on");
+  else if (!strcmp(c, "MARK WINDBREAK OFF")) writeMarker(ms, "windbreak off");
+  else Serial.println("# commands: MARK MESH ON | MARK MESH OFF | MARK WINDBREAK ON | MARK WINDBREAK OFF");
+  return true;
+}
+
+#endif  // MARKER_CODES_ENABLED
+#if NASIM_TIMING_LOG
+// One line of the status file /status_log.csv: the NASIM update times of the last hour
+// (PvDaq/src/pv_timing.h) and the memory left. Measured on the board, not estimated.
+void timingLog() {
+  char stats[96], line[224];
+  uint32_t unix_s;
+  unsigned milli;
+  const uint32_t ms = millis();
+  timing_line(&nasim_timing, ms, stats, sizeof(stats));
+  char when[24] = ",";
+  if (utcOf(ms, unix_s, milli)) {
+    const DateTime t(unix_s);
+    snprintf(when, sizeof(when), "%04u-%02u-%02u,%02u:%02u:%02u", t.year(), t.month(), t.day(),
+             t.hour(), t.minute(), t.second());
+  }
+  snprintf(line, sizeof(line), "%s,%lu,%s,%lu,%lu,%lu", when, (unsigned long)ms, stats,
+           (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap(),
+           (unsigned long)uxTaskGetStackHighWaterMark(NULL));
+  Serial.printf("# status: %s\n", line);
+  if (sd.ok()) {
+    String header = String("date,time,uptime_ms,") + timing_header() +
+                    ",heap_free_B,heap_min_B,stack_min_B";
+    sd.appendLine("/status_log.csv", line, header.c_str());
+  }
+}
+
+#endif  // NASIM_TIMING_LOG
 // ---- one sample ---------------------------------------------------------------------------
 void sample(uint32_t n) {
   uint32_t status = 0;
@@ -232,6 +458,11 @@ void sample(uint32_t n) {
       if (!d->ok() && d != &panel) retried |= d->begin();
     }
     if (!panel.ok() && hub.ok()) retried |= panel.begin();  // the INA226 needs the PaHub
+#if PHASE_B_ENABLED
+    if (!pump_ina.ok() && pump_ina.status() != PvStatus::ReadError &&
+        (PUMP_INA226_PAHUB_CH < 0 || hub.ok()))
+      pump_ina.begin();  // not found yet: try again (a unit lost on the bus is retried by trigger)
+#endif
     mapProbes();  // a re-scan may have found a sensor for a column that had none
     if (retried || n == 0) printStatus();
   }
@@ -247,7 +478,14 @@ void sample(uint32_t n) {
   if (HAS_LOAD) load.rowReading();   // 64-average, triggered (also one hold step)
   else if (readable(panel)) panel.read();
   if (HAS_LOAD && conv_running) {    // conversion started ~800 ms ago in loadLoop()
+#if PHASE_B_ENABLED
+    while (millis() - conv_ms < PvDs18b20::CONVERSION_MS + 10) {
+      load.service(last_g, heatsinkTemp());
+      spray.service();
+    }
+#else
     while (millis() - conv_ms < PvDs18b20::CONVERSION_MS + 10) load.service(last_g, heatsinkTemp());
+#endif
     probes.fetch();
     conv_running = false;
   } else if (probes.count) {
@@ -296,7 +534,13 @@ void sample(uint32_t n) {
     s.wind = NAN;
     s.doy = doy;
     s.minute = minute + lt.second() / 60.0;
+#if NASIM_TIMING_LOG
+    const uint32_t t_nasim_us = micros();
     if (gbt_update(&det, &s)) alarm |= NASIM_ALARM_NASIM;
+    timing_add(&nasim_timing, micros() - t_nasim_us, det.p == det.p);  // p is NaN in warm-up
+#else
+    if (gbt_update(&det, &s)) alarm |= NASIM_ALARM_NASIM;
+#endif
     if (thr_update(&det_thr, &s)) alarm |= NASIM_ALARM_THRESHOLD;
     if (cusum_inc_update(&det_cusum, &s)) alarm |= NASIM_ALARM_CUSUM;
     p = det.p;  // NAN while the 10-min buffers fill
@@ -316,6 +560,28 @@ void sample(uint32_t n) {
     }
   }
 
+#if PHASE_B_ENABLED
+  // Phase B: the row's inputs go to the trial logic (which may open an event and start the
+  // pump), then its six columns and status bits are taken for this row.
+  char spray_fields[96];
+  {
+    spray_row_in_t in = {};
+    for (int k = 0; k < 5; k++) in.t_module += (float)T[k] / 5.0f;  // NaN if one is missing
+    in.t_water = tankTemp();
+    in.g = (float)g;
+    in.alarm = (alarm & NASIM_ALARM_NASIM) ? 1 : 0;
+    in.row_fault = (status & (ST_RTC_INVALID | ST_TEMP_FAIL | ST_AMBIENT_FAIL | ST_IRRAD_FAIL |
+                              ST_PANEL_FAIL)) ? 1 : 0;
+    in.load_ok = HAS_LOAD ? (load.L.mode == LOAD_HOLD ? 1 : 0) : 1;
+    in.storage_ok = (sd.ok() && spray.storageOk()) ? 1 : 0;
+    in.window_fits = (minute >= 0 && minute + (int)(PHASE_B_EVENT_WINDOW_MS / 60000u) <=
+                                         NASIM_END_MIN) ? 1 : 0;
+    spray.row(in);
+    status |= spray.rowFields(spray_fields, sizeof(spray_fields));
+    sprayNotes();
+  }
+
+#endif
   // CSV row
   String row;
   row.reserve(220);
@@ -367,15 +633,27 @@ void sample(uint32_t n) {
   const int attempts = sd.ok() ? 2 : 1;  // a card that was working gets one re-mount + retry
   bool written = false;
   String line;
+#if PHASE_B_ENABLED
+  rowHeaderCheck();
+#endif
   for (int a = 0; a < attempts && !written; a++) {
     if (a > 0) status |= ST_SD_RETRY;
+#if PHASE_B_ENABLED
+    line = row + String(status) + spray_fields;
+    written = (a == 0 ? (sd.ok() || sd.begin()) : sd.begin()) &&
+              sd.appendLine(day_path, line.c_str(), header_b.c_str());
+#else
     line = row + String(status);
     written = (a == 0 ? (sd.ok() || sd.begin()) : sd.begin()) &&
               sd.appendLine(day_path, line.c_str(), HEADER);
+#endif
   }
   if (!written && !sd_lost) printStatus();
   sd_lost = !written;
   Serial.println(line);
+#if NASIM_TIMING_LOG
+  if (timing_due(&nasim_timing, millis())) timingLog();
+#endif
 }
 
 // Polls the RTC until its second changes and records that edge (blocks up to ~1.1 s).
@@ -388,6 +666,9 @@ void syncRtcEdge() {
   const uint32_t start = millis();
   while (millis() - start < 1100) {
     if (HAS_LOAD) load.service(last_g, heatsinkTemp());  // the hold loop goes on meanwhile
+#if PHASE_B_ENABLED
+    spray.service();  // and so do the pump's stops
+#endif
     if (!rtc.read()) return;
     const uint32_t s = rtc.time().unixtime();
     if (s != s0) {
@@ -422,9 +703,17 @@ void writeMarker(uint32_t ms, const char *what) {
   } else {
     snprintf(line, sizeof(line), ",,%lu", (unsigned long)ms);
   }
+#if MARKER_CODES_ENABLED
+  char coded[80];  // the same row with its code as a fourth field
+  snprintf(coded, sizeof(coded), "%s,%d", line, markerCode(what));
+  if (what) Serial.printf("# marker (%s): %s\n", what, coded);
+  else Serial.printf("# marker: %s\n", coded);
+  if (sd.ok()) sd.appendLine("/markers.csv", coded, "date,time,millis,code");
+#else
   if (what) Serial.printf("# marker (%s): %s\n", what, line);
   else Serial.printf("# marker: %s\n", line);
   if (sd.ok()) sd.appendLine("/markers.csv", line, "date,time,millis");
+#endif
 }
 
 void logMarker() {
@@ -514,6 +803,23 @@ void storeSweep() {
 }
 
 void loadCommand(const char *c) {
+#if MARKER_CODES_ENABLED
+  if (markCommand(c)) return;
+#endif
+#if PHASE_B_ENABLED
+  if (sprayCommand(c)) return;
+  if (!HAS_LOAD) {  // no load fitted: the commands below have nothing to act on
+    Serial.println("# no load fitted. Commands: SPRAY ON | SPRAY OFF | SPRAY RESET | SPRAY STATUS");
+    return;
+  }
+#else
+#if MARKER_CODES_ENABLED
+  if (!HAS_LOAD) {
+    Serial.println("# no load fitted. Commands: MARK MESH ON | MARK MESH OFF | MARK WINDBREAK ON | MARK WINDBREAK OFF");
+    return;
+  }
+#endif
+#endif
   if (!strncmp(c, "GAMMA", 5)) {  // GAMMA <minutes>: a sweep every 15 s; GAMMA 0 ends it
     const long minutes = constrain(atol(c + 5), 0L, 120L);
     load_gamma(&load.L, millis(), (uint32_t)minutes);
@@ -587,7 +893,13 @@ void loadLoop(uint32_t next_row_ms) {
   load.service(last_g, heatsinkTemp());
   noteLoad();
   int32_t to_row = (int32_t)(next_row_ms - millis());
+#if PHASE_B_ENABLED
+  // No sweep while the pump runs: a sweep blocks for ~1.7 s, in which the pump's stops would
+  // not be checked. The sweep that was due starts when the spray has ended.
+  if (to_row > 0 && !spray.pumpOn() && load_sweep_due(&load.L, millis(), (uint32_t)to_row)) {
+#else
   if (to_row > 0 && load_sweep_due(&load.L, millis(), (uint32_t)to_row)) {
+#endif
     if (readable(pyr)) pyr.read();  // G just before the sweep
     const float g_before = pyr.ok() ? pyr.irradiance : NAN;
     to_row = (int32_t)(next_row_ms - millis());
@@ -637,13 +949,31 @@ void setup() {
     enableLoopWDT();
     Serial.println("# load: active. Commands: GAMMA <minutes> | LOAD OFF | LOAD ON");
   }
+#if NASIM_TIMING_LOG
+  timing_init(&nasim_timing, TIMING_PERIOD_MS, millis());
+  Serial.println("# NASIM update time: one line per hour in /status_log.csv");
+#endif
+#if PHASE_B_ENABLED
+  sprayBoot();
+  Serial.println(header_b);
+#else
   Serial.println(HEADER);
+#endif
 }
 
 void loop() {
   static uint32_t next = millis();
   static uint32_t n = 0;
   if (mark_ms) logMarker();
+#if PHASE_B_ENABLED
+  spray.service();
+  sprayNotes();
+  if (!HAS_LOAD) readCommands();  // with the load, loadLoop() reads the serial commands
+#else
+#if MARKER_CODES_ENABLED
+  if (!HAS_LOAD) readCommands();
+#endif
+#endif
   if (HAS_LOAD) loadLoop(next);
   if ((int32_t)(millis() - next) < 0) return;
   next += SAMPLE_PERIOD_MS;                 // fixed grid: no drift from the sampling time

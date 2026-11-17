@@ -11,6 +11,28 @@
 #define HAS_LOAD 0         // 0 = no load hardware fitted: both load pins stay LOW, rows carry
 #endif                     // D = NaN, load_mode = none. Set to 1 only after bench B0-B7 pass
                            // (firmware/tests/load_bench/BENCH.md).
+#ifndef PHASE_B_ENABLED
+// ---- Phase B preparation (2026-11-17). NOT ADOPTED, software only, nothing bought. ----
+// The three switches below default to 0. With all three at 0 the logger is, line for line,
+// the logger of before (tests/test_phase_b_flags.py resolves them and compares the source
+// with a recorded reference). Values: config.py, Phase B block -> generated
+// export/c/generated/phase_b_config.h (python -m export.phase_b_header).
+//   1 = randomized spray trial (PvDaq/src/pv_spray.h; docs/phase-b/01): on a NASIM alarm
+//       a spike event is opened and its arm drawn; six more columns after `status`;
+//       /spray_log.csv. The pump runs only if PHASE_B_DRY_RUN is 0 as well.
+#define PHASE_B_ENABLED 0
+#endif
+#ifndef MARKER_CODES_ENABLED
+//   1 = /markers.csv gets a fourth column `code` (data/schema.py, MARKER_CODES) and the
+//       serial commands MARK MESH ON|OFF and MARK WINDBREAK ON|OFF; LOAD OFF / LOAD ON
+//       write their own codes. 0 = the three columns of before.
+#define MARKER_CODES_ENABLED 0
+#endif
+#ifndef NASIM_TIMING_LOG
+//   1 = the time of every NASIM update is taken with micros() and one line per hour goes
+//       to /status_log.csv (PvDaq/src/pv_timing.h; docs/phase-b/04).
+#define NASIM_TIMING_LOG 0
+#endif
 
 // ---- GPIO (firmware/PINMAP.md) ----------------------------------------------
 namespace pins {
