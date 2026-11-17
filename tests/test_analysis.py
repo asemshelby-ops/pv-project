@@ -308,3 +308,26 @@ def test_sweeps_below_the_irradiance_limit_are_left_out_of_gamma(tmp_path):
     sweeps = gamma.sweep_parameters(*gamma.read_sweeps(tmp_path))
     assert int(sweeps["low_G"].sum()) == int(second.sum())
     assert len(gamma.usable_sweeps(sweeps)) == len(sweeps) - second.sum()
+
+
+def test_scoring_raises_no_numpy_deprecation_and_missed_spikes_stay_nan():
+    """A spike with no alarm has no first-alarm time. That gap must be a NaT that carries
+    a unit: NumPy deprecates the unit-less one and will turn it into an error."""
+    import warnings
+    day = "2026-11-15"
+    ts = pd.date_range(f"{day} 08:00:00", periods=360, freq="10s")
+    ev = pd.DataFrame([
+        dict(event_id=1, date_local=day, start=f"{day} 08:10:00", t_theta=f"{day} 08:15:00",
+             end=f"{day} 08:25:00", size_C=5.0, cause="irradiance", origin="natural", valid=True),
+        dict(event_id=2, date_local=day, start=f"{day} 08:40:00", t_theta=f"{day} 08:46:00",
+             end=f"{day} 08:55:00", size_C=4.0, cause="non_irradiance", origin="natural",
+             valid=True)])
+    ev["class"] = "spike"
+    alarms = np.zeros(len(ts), bool)
+    alarms[ts == pd.Timestamp(f"{day} 08:12:00")] = True          # spike 1 only
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        m, fa, neutral = metrics.score(ts, alarms, ev)
+    assert m["detected"].tolist() == [True, False]
+    assert m["delay_s"].iloc[0] == 120 and np.isnan(m["delay_s"].iloc[1])
+    assert m["lead_s"].iloc[0] == 180 and np.isnan(m["lead_s"].iloc[1])

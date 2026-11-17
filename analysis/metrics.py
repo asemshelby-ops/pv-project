@@ -62,7 +62,7 @@ def score(ts, alarms, events, excluded=None, temp=None):
 
     m = sp[["event_id", "date_local", "cause", "origin", "size_C"]].copy()
     m["detected"] = [k in first for k in range(len(sp))]
-    t_first = np.array([first.get(k, np.datetime64("NaT")) for k in range(len(sp))],
+    t_first = np.array([first.get(k, np.datetime64("NaT", "ns")) for k in range(len(sp))],
                        dtype="datetime64[ns]")
     sec = np.timedelta64(1, "s")
     m["delay_s"] = (t_first - s0) / sec
