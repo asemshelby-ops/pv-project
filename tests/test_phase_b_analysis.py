@@ -348,6 +348,19 @@ def test_a_locked_week_is_counted_and_shown_in_no_table(rig, monkeypatch, tmp_pa
     assert set(phase_b.analysis_set(full)["spike_id"]) <= kept
 
 
+def test_a_week_that_is_not_written_as_two_dates_in_order_is_refused(rig, monkeypatch):
+    """The dates are compared as text, so a date in another form would silently match nothing."""
+    for bad in (("2026-11-9", "2026-11-15"), ("09/11/2026", "15/11/2026"), ("2026-11-20", "2026-11-14")):
+        monkeypatch.setattr(config, "PHASE_B_HELDOUT_WEEK", bad)
+        with pytest.raises(ValueError):
+            phase_b.event_table(rig["df"], rig["log"], rig["excluded"])
+        with pytest.raises(ValueError):
+            phase_b.in_heldout_week(["2026-11-15"])
+    monkeypatch.setattr(config, "PHASE_B_HELDOUT_WEEK", ("2026-11-14", "2026-11-20"))
+    assert list(phase_b.in_heldout_week(["2026-11-13", "2026-11-14", "2026-11-20", "2026-11-21"])) == \
+        [False, True, True, False]
+
+
 def test_unlocking_adds_the_week_as_its_own_table_and_changes_nothing_else(rig, monkeypatch, tmp_path):
     days = sorted(rig["result"]["events"]["date_local"].unique())
     monkeypatch.setattr(config, "PHASE_B_HELDOUT_WEEK", (days[-3], days[-1]))

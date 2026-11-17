@@ -59,11 +59,10 @@ constexpr uint8_t PUMP_LEDC_CHANNEL = 2;
 // One pump-rail reading: 1.1 ms conversions x 2 x 64 averages = 141 ms (TI datasheet).
 constexpr uint32_t PUMP_CONV_MS = 145;
 constexpr uint32_t PUMP_READ_TIMEOUT_MS = 450;   // then the reading counts as failed
-// The independent timer cuts the pump this long after the longest spray should have ended.
-constexpr uint32_t SPRAY_HARD_MARGIN_MS = 3000;  // [ASSUMPTION] above the longest loop stall
 // The PCNT counter runs from 0 up to this value and starts again at 0 (ESP-IDF pulse_cnt).
 constexpr int FLOW_COUNT_LIMIT = 32767;
-constexpr uint32_t FLOW_GLITCH_NS = 10000;       // [ASSUMPTION] pulses shorter than 10 us ignored
+// From phase_b_config.h: SPRAY_HARD_MARGIN_MS (the independent timer cuts the pump this long
+// after the longest spray should have ended) and FLOW_GLITCH_NS (shorter pulses are ignored).
 
 spray_cfg_t pvSprayConfig();   // the values of phase_b_config.h, as the logic takes them
 

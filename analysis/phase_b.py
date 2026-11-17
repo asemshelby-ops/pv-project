@@ -108,6 +108,11 @@ def in_heldout_week(dates):
     if config.PHASE_B_HELDOUT_WEEK is None:
         return pd.Series(False, index=dates.index)
     first, last = config.PHASE_B_HELDOUT_WEEK
+    for day in (first, last):                    # the dates are compared as text
+        if pd.Timestamp(day).strftime("%Y-%m-%d") != day:
+            raise ValueError(f"config.PHASE_B_HELDOUT_WEEK: {day!r} is not written as YYYY-MM-DD")
+    if first > last:
+        raise ValueError("config.PHASE_B_HELDOUT_WEEK: the first day lies after the last")
     return (dates >= first) & (dates <= last)
 
 

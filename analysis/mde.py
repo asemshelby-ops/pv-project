@@ -28,7 +28,6 @@ import math
 import pathlib
 import tempfile
 
-import numpy as np
 import pandas as pd
 from scipy import optimize, stats
 

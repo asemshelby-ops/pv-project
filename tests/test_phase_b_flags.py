@@ -73,7 +73,8 @@ def test_placeholders_are_in_one_place_and_tagged():
     value that is not known yet carries the [PLACEHOLDER] tag in config.py."""
     block = (ROOT / "config.py").read_text(encoding="utf-8").split("PHASE B PREPARATION")[1]
     tagged = set(re.findall(r"^(\w+) = .*?# \[PLACEHOLDER\]", block, re.M))
-    for name in ("PUMP_DUTY", "SPRAY_MAX_S", "FLOW_PULSES_PER_L", "FLOW_PIN", "PUMP_INA226_ADDR",
+    for name in ("PUMP_DUTY", "SPRAY_MAX_S", "FLOW_PULSES_PER_L", "FLOW_PIN", "FLOW_GLITCH_NS",
+                 "PUMP_INA226_ADDR", "PUMP_INA226_SHUNT_OHM", "PUMP_INA226_MAX_A",
                  "PUMP_I_MAX_A", "PUMP_NO_FLOW_S", "TANK_ROM", "PHASE_B_SEED", "ECT_VOC_REF_V",
                  "ECT_BETA_VOC_REL", "ECT_A_IRR", "SPRAY_MIN_DT_WATER_C", "SPRAY_MAX_DT_WATER_C"):
         assert name in tagged, name
@@ -85,6 +86,9 @@ def test_placeholders_are_in_one_place_and_tagged():
     for path in (src / "pv_spray.h", src / "pv_spray.cpp", ROOT / "firmware/logger/logger.ino"):
         text = path.read_text(encoding="utf-8")
         assert not re.search(r"#define (PUMP_DUTY|FLOW_PULSES_PER_L|FLOW_PIN|SPRAY_MAX_MS)\b", text)
+        assert not re.search(r"constexpr \w+ (FLOW_GLITCH_NS|SPRAY_HARD_MARGIN_MS|FLOW_PIN)\b", text)
+    for name in ("FLOW_GLITCH_NS", "SPRAY_HARD_MARGIN_MS"):       # used, and only from the header
+        assert name in glue and f"#define {name} " in phase_b_header.header()
 
 
 # --- the reducer itself ------------------------------------------------------------------------

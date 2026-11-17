@@ -255,7 +255,7 @@ def map_footprint(path):
                 p["functions"][fn] = p["functions"].get(fn, 0) + size
         elif archive is None and kind in ("bss", "data") and name.count(".") >= 2:
             var = name.split(".", 2)[2]
-            if var in STATE and member.endswith((".ino.cpp.o", ".cpp.o", ".o")):
+            if var in STATE:
                 state[var] = state.get(var, 0) + size
     return {"parts": parts, "state": state, "shared": shared}
 

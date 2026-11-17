@@ -19,7 +19,9 @@
 #define PUMP_I_MAX_A 5.0f  /* [PLACEHOLDER] over-current stop */
 #define PUMP_NO_FLOW_MS 5000u  /* [PLACEHOLDER] pump on, no flow pulse */
 #define PUMP_SAMPLE_MS 250u  /* pump-power readings */
+#define SPRAY_HARD_MARGIN_MS 3000u  /* independent cut-off: this long after the longest spray */
 #define FLOW_PULSES_PER_L 450.0f  /* [PLACEHOLDER] flow sensor */
+#define FLOW_GLITCH_NS 10000u  /* [PLACEHOLDER] shorter pulses are ignored */
 #define FLOW_PIN 35  /* [PLACEHOLDER] GPIO of the flow pulses */
 #define PUMP_INA226_ADDR 0x41  /* [PLACEHOLDER] I2C address */
 #define PUMP_INA226_PAHUB_CH 1  /* -1 = directly on the bus */

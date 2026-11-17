@@ -8,6 +8,7 @@ two 1.5 ohm branches as R / D. The INA226 is modelled as the mean of V and I ove
 conversion window. Passing here shows that the logic is right, not that the hardware
 works: that is the bench procedure (firmware/tests/load_bench/BENCH.md)."""
 import ctypes
+import importlib.util
 import math
 import pathlib
 import re
@@ -725,7 +726,14 @@ def test_time_wrap_of_millis(lib):
 
 # --- the files the logger writes (text of logger.ino; it cannot run on the PC) --------------------
 
-LOGGER = (ROOT / "firmware/logger/logger.ino").read_text(encoding="utf-8")
+# Since 2026-11-17 the sketch also holds code behind three flags that are 0 in pv_config.h
+# (Phase B preparation). These tests are about the logger as it is built today, so they
+# read the sketch with those flags resolved to 0: that text is, character for character,
+# the file they were written against (tests/test_phase_b_flags.py checks it).
+_spec = importlib.util.spec_from_file_location("make_golden", ROOT / "tests/golden/make_phase_b_off.py")
+_golden = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_golden)
+LOGGER = _golden.flag_off_source((ROOT / "firmware/logger/logger.ino").read_text(encoding="utf-8"))
 
 
 def _literal(after):

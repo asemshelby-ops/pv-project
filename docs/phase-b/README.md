@@ -71,6 +71,13 @@ A firmware flag is set for one build with `-D`, e.g. the build `logger_all` of
   irradiance-driven), and `verdict.json` holds both. Whether load-off spikes may count
   towards the 20 and the 8 is the supervisor's decision; the code shows both answers and
   takes neither.
+- SYNTHETIC illustration (`python -m analysis.demo_phase_b --days 20`; two open-circuit
+  tests a day with an **invented** rise large enough to pass 3 °C in 10 min): 31 of the 40
+  tests gave a spike labelled `load_off`. On the test days, spikes that are not
+  irradiance-driven: 9 with them, 5 without. The "≥ 8" of the precondition is met only if
+  they count — which is exactly why the question has to be settled before field data
+  exists. (Whether the real module heats that much at open circuit is not known;
+  `docs/paper/03` §11 estimates 1.9 to 4.7 °C.)
 
 ## How to run it
 
@@ -100,14 +107,16 @@ All in `config.py`. A wet build is refused until each has a measured or chosen v
 | `SPRAY_STOP_DROP_C` | 0 (not used) | a decision: fixed dose or temperature target |
 | `SPRAY_MIN_DT_WATER_C`, `SPRAY_MAX_DT_WATER_C` | 2 °C, 40 °C | a decision with a stated basis; no manufacturer guidance exists for this module |
 | `PUMP_I_MAX_A`, `PUMP_NO_FLOW_S` | 5 A, 5 s | the pump's data; the priming time of the real loop |
-| `FLOW_PULSES_PER_L`, `FLOW_PIN` | 450, GPIO35 | the sensor that is bought, calibrated by volume; the wiring |
+| `FLOW_PULSES_PER_L`, `FLOW_GLITCH_NS`, `FLOW_PIN` | 450, 10 µs, GPIO35 | the sensor that is bought: calibrated by volume, its shortest pulse; the wiring |
 | `PUMP_INA226_ADDR`, `_PAHUB_CH`, `_SHUNT_OHM`, `_MAX_A` | 0x41, channel 1, 5 mΩ, 10 A | the board used on the pump rail (see `02` §1) |
 | `TANK_ROM` | all zero = not fitted | the ROM of the DS18B20 in the tank (`/rom_scan.txt`) |
 | `ECT_VOC_REF_V`, `ECT_ISC_REF_A`, `ECT_BETA_VOC_REL`, `ECT_A_IRR` | 21.5 V, 5.88 A, −0.30 %/°C, 0.05 | a calibration of this module, or the fit on its own sweeps (`03`) |
 | `PHASE_B_HELDOUT_WEEK` | `None` | `[PROPOSAL]` the trial's last week, named at the freeze |
 
-Assumptions that are not placeholders but still need a decision: the 30-minute window,
-the 10-minute lock-out and baseline, the 200 W/m² lower limit, α = 0.05 and 80 % power.
+Assumptions that are not placeholders but still need a decision or a measurement: the
+30-minute window, the 10-minute lock-out and baseline, the 200 W/m² lower limit, the 3 s
+margin of the independent cut-off timer (above the longest stall of the main loop, to be
+measured on the board), α = 0.05 and 80 % power.
 
 ## What still needs hardware, and what needs a decision
 

@@ -56,6 +56,14 @@ def test_codes_are_distinct_and_reach_the_firmware_through_the_generated_header(
     assert named == {name: f"MARKER_CODE_{name.upper().replace(' ', '_')}"
                      for name in MARKER_CODES.values() if name != "button"}
     assert 'writeMarker(ms, "load off")' in ino and 'writeMarker(millis(), "load on")' in ino
+    # one writer of /markers.csv in either build: with the flag the row and the header have
+    # the code as a fourth field, without it both are what they were
+    writer = ino.split("void writeMarker(uint32_t ms, const char *what) {")[1].split("\n}\n")[0]
+    on, off = re.search(r"#if MARKER_CODES_ENABLED\n(.*?)#else\n(.*?)#endif", writer, re.S).groups()
+    assert ino.count('"/markers.csv"') == 2 and writer.count('"/markers.csv"') == 2
+    assert 'sd.appendLine("/markers.csv", coded, "date,time,millis,code");' in on
+    assert 'sd.appendLine("/markers.csv", line, "date,time,millis");' in off
+    assert '"%s,%d", line, markerCode(what)' in on
     for cmd, name in (("MARK MESH ON", "mesh on"), ("MARK WINDBREAK OFF", "windbreak off")):
         assert f'if (!strcmp(c, "{cmd}")) writeMarker(ms, "{name}");' in ino
 

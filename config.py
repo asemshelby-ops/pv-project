@@ -286,10 +286,15 @@ PUMP_I_MAX_A = 5.0              # [PLACEHOLDER] over-current stop (stalled pump)
 PUMP_NO_FLOW_S = 5              # [PLACEHOLDER] pump on this long without a flow pulse -> stop
                                 # (dry tank, blocked line): priming time of the real loop
 PUMP_SAMPLE_MS = 250            # [ASSUMPTION] period of the pump-power readings (64-average)
+SPRAY_HARD_MARGIN_S = 3         # [ASSUMPTION] the independent timer cuts the pump this long
+                                # after the longest spray should have ended: above the longest
+                                # stall of the main loop, which has to be measured on the board
 
 # --- Sensors and pins [PLACEHOLDER: nothing is bought or wired] --------------------------------
 FLOW_PULSES_PER_L = 450.0       # [PLACEHOLDER] flow-sensor pulses per litre: no sensor chosen.
                                 # Calibrate by volume / time in the bucket test
+FLOW_GLITCH_NS = 10000          # [PLACEHOLDER] pulses shorter than this are ignored (noise).
+                                # From the sensor's shortest pulse at full flow: no sensor chosen
 FLOW_PIN = 35                   # [PLACEHOLDER] GPIO of the flow pulses. 35/36/39 are the spare
                                 # pins (PINMAP.md): input-only, no pull-up; a 5 V Hall sensor
                                 # needs a divider or level shifter
