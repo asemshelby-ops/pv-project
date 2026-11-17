@@ -82,7 +82,7 @@ A firmware flag is set for one build with `-D`, e.g. the build `logger_all` of
 ## How to run it
 
 ```bash
-python -m pytest                                   # everything, about 20 min
+python -m pytest                                   # everything: 564 tests, about a quarter of an hour
 python -m pytest tests/test_phase_b_flags.py       # flags off = byte-identical
 python -m analysis.demo_phase_b --days 20          # SYNTHETIC end-to-end: trial, ECT, load-off
 python -m analysis.mde --per-arm 10 20 40          # smallest detectable difference, SYNTHETIC spread
