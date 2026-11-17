@@ -26,18 +26,49 @@ file, as in /nodate.csv) cannot be placed on the time axis: they are left out an
 COUNTED in `df.attrs["rows_without_time"]`, with a warning. `df.attrs["rows_time_rebuilt"]`
 counts the rebuilt ones.
 Raw values are never changed, except for optional per-sensor calibration offsets.
+
+Phase B preparation (2026-11-17; nothing below changes a file that has none of it):
+  * `spike_id`, `spray_assign`, `pump_duty`, `flow_Lpm`, `water_L_cum`, `P_pump_W`  the six
+                        columns a logger built with PHASE_B_ENABLED 1 appends after `status`
+                        (data/schema.py, PHASE_B_COLUMNS). They are in the table only if a
+                        file has them.
+  * /markers.csv        may carry a fourth column `code` (MARKER_CODES_ENABLED 1): the event
+                        of a coded row comes from the code, not from the typed sheet.
+  * /spray_log.csv      read_spray_log(): boot lines, events and refusals of the trial.
 """
+import io
 import pathlib
+import re
 import warnings
 
 import numpy as np
 import pandas as pd
 
 import config
-from data.schema import BACK_SENSORS, LOGGER_EXTRA_COLUMNS
+from data.schema import BACK_SENSORS, LOGGER_EXTRA_COLUMNS, MARKER_CODES
 
 REQUIRED = BACK_SENSORS + ["T_ambient", "irradiance"]     # inputs of every detector
 DAY_FILE = "[0-9]" * 8 + ".csv"
+
+
+def _read_day_file(path):
+    """One logger file, every field as text. If the number of fields changes part-way (a
+    day file begun by a build without the Phase B columns and continued by one with them,
+    which writes its header line again first), pandas cannot read it in one go: the file is
+    then read piece by piece, each piece by the header line above it."""
+    try:
+        return pd.read_csv(path, comment="#", dtype=str, skip_blank_lines=True)
+    except pd.errors.ParserError:
+        pieces, lines = [], []
+        for line in pathlib.Path(path).read_text(encoding="utf-8").splitlines():
+            if not line.strip() or line.startswith("#"):
+                continue
+            if line.startswith("date,") and lines:
+                pieces.append(pd.read_csv(io.StringIO("\n".join(lines)), dtype=str))
+                lines = []
+            lines.append(line)
+        pieces.append(pd.read_csv(io.StringIO("\n".join(lines)), dtype=str))
+        return pd.concat(pieces, ignore_index=True)
 
 
 def read_logger(src, calib=None):
@@ -49,8 +80,8 @@ def read_logger(src, calib=None):
         raise FileNotFoundError(f"no logger files in {src}")
     if src.is_dir() and (src / "nodate.csv").exists():
         files.append(src / "nodate.csv")           # rows of boots that never had RTC time
-    raw = pd.concat([pd.read_csv(f, comment="#", dtype=str, skip_blank_lines=True)
-                    .assign(_file=k) for k, f in enumerate(files)], ignore_index=True)
+    raw = pd.concat([_read_day_file(f).assign(_file=k) for k, f in enumerate(files)],
+                    ignore_index=True)
     raw = raw[raw["date"] != "date"].reset_index(drop=True)   # a repeated header line
     for c in LOGGER_EXTRA_COLUMNS:                 # files written before 2026-11-12
         if c not in raw:
@@ -66,6 +97,9 @@ def read_logger(src, calib=None):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     for c in ("sweep_id", "uptime_ms", "status"):
         df[c] = df[c].astype("Int64")              # whole numbers, <NA> where not recorded
+    for c in ("spike_id", "spray_assign"):         # only in files of a Phase B logger
+        if c in df:
+            df[c] = df[c].astype("Int64")
     for name, off in (calib or {}).items():
         df[name] = df[name] - off
     df.attrs["rows_without_time"] = lost
@@ -128,10 +162,31 @@ def day_quality(df):
 
 # --- markers and the daily log sheet ----------------------------------------------------
 
+def _read_marker_rows(path):
+    """/markers.csv as text columns. The plain file (three fields in every line) is read as
+    before. A file with coded rows (a fourth field, written by a build with
+    MARKER_CODES_ENABLED 1, possibly after rows of an older build) is read line by line:
+    `code` is 0 for a row that has none (a button press: its meaning is on the sheet)."""
+    rows = [line.split(",") for line in pathlib.Path(path).read_text(encoding="utf-8").splitlines()
+            if line.strip()]
+    if all(len(r) == 3 for r in rows):
+        return pd.read_csv(path, dtype=str)
+    data = [r for r in rows if r[0] != "date"]
+    bad = [r for r in data if len(r) not in (3, 4)]
+    if bad:
+        raise ValueError(f"{path}: a marker line with {len(bad[0])} fields: {','.join(bad[0])}")
+    return pd.DataFrame({"date": [r[0] or np.nan for r in data],
+                         "time": [r[1] or np.nan for r in data],
+                         "millis": [r[2] for r in data],
+                         "code": pd.array([int(r[3]) if len(r) == 4 else 0 for r in data],
+                                          dtype="Int64")})
+
+
 def read_markers(path):
     """/markers.csv (date,time,millis; UTC with milliseconds). Returns (table, number of
-    presses that had no RTC time). `marker` numbers the presses of each LOCAL day from 1."""
-    m = pd.read_csv(path, dtype=str)
+    presses that had no RTC time). `marker` numbers the presses of each LOCAL day from 1.
+    A file with coded rows also gives the column `code` (data/schema.py, MARKER_CODES)."""
+    m = _read_marker_rows(path)
     t = pd.to_datetime(m["date"].fillna("") + " " + m["time"].fillna(""), utc=True,
                        errors="coerce")
     no_time = int(t.isna().sum())
@@ -140,7 +195,7 @@ def read_markers(path):
     m["t_local"] = local.dt.tz_localize(None)
     m["date_local"] = local.dt.strftime("%Y-%m-%d")
     m["marker"] = m.groupby("date_local").cumcount() + 1
-    return m[["t_utc", "t_local", "date_local", "marker"]], no_time
+    return m[["t_utc", "t_local", "date_local", "marker"] + (["code"] if "code" in m else [])], no_time
 
 
 def join_logsheets(markers, sheet_dir):
@@ -161,6 +216,19 @@ def join_logsheets(markers, sheet_dir):
     out = pd.concat(parts, ignore_index=True) if parts else markers.assign(event=[], notes=[])
     out["event"] = (out["event"].astype("string").str.strip().str.lower()
                     .fillna("").astype(object))
+    if "code" in out:                 # a coded row IS its code; the sheet only confirms it
+        for k, code in out["code"].items():
+            if pd.isna(code) or int(code) == 0:
+                continue
+            name = MARKER_CODES.get(int(code))
+            when = f"{out.at[k, 'date_local']} marker {out.at[k, 'marker']}"
+            if name is None:
+                problems.append(f"{when}: unknown marker code {int(code)}")
+                continue
+            if out.at[k, "event"] not in ("", name):
+                problems.append(f"{when}: code {int(code)} = '{name}', but the log sheet says "
+                                f"'{out.at[k, 'event']}' (the code is used)")
+            out.at[k, "event"] = name
     return out, problems
 
 
@@ -193,4 +261,37 @@ def controlled_tests(m):
              for a, b in _pairs(m, "windbreak on", "windbreak off") if b is not None]
     rows += [(t, t, "negative_control")
              for t in m[m["event"] == "negative control"]["t_local"]]
+    if config.LOADOFF_CLASS_ENABLED:  # controlled open-circuit test: the rise comes while the
+        rows += [(a, b, "ctl_load")   # load is off (docs/paper/03 sec. 11, a proposal)
+                 for a, b in _pairs(m, "load off", "load on") if b is not None]
     return pd.DataFrame(rows, columns=["on", "off", "origin"])
+
+
+# --- Phase B: the trial's own log ---------------------------------------------------------
+
+SPRAY_LOG_COLUMNS = ["t_utc", "t_local", "uptime_ms", "spike_id", "event", "detail", "boot"]
+
+
+def read_spray_log(path):
+    """/spray_log.csv (date,time,uptime_ms,spike_id,event,detail; UTC) of a Phase B logger.
+    `detail` becomes a dict of its key=value pairs; `boot` numbers the boot lines, so every
+    line can be read with the settings (seed, block, dry_run ...) of its own boot. A line
+    written before the clock was read has no time; it keeps its place in the file."""
+    path = pathlib.Path(path)
+    if not path.exists():
+        return pd.DataFrame(columns=SPRAY_LOG_COLUMNS)
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        f = line.split(",", 5)
+        if len(f) != 6 or f[0] == "date":
+            continue
+        pairs = re.findall(r"(\w+)=(.*?)(?=\s+\w+=|$)", f[5])
+        rows.append({"date": f[0], "time": f[1], "uptime_ms": int(f[2]), "spike_id": int(f[3]),
+                     "event": f[4], "detail": dict(pairs) if pairs else {"text": f[5]}})
+    log = pd.DataFrame(rows, columns=["date", "time", "uptime_ms", "spike_id", "event", "detail"])
+    t = pd.to_datetime(log["date"] + " " + log["time"], format="%Y-%m-%d %H:%M:%S", utc=True,
+                       errors="coerce")
+    log["t_utc"] = t
+    log["t_local"] = t.dt.tz_convert(config.TZ).dt.tz_localize(None)
+    log["boot"] = (log["event"] == "boot").cumsum()
+    return log[SPRAY_LOG_COLUMNS]

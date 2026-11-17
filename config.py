@@ -332,3 +332,7 @@ ECT_MIN_G_WM2 = 400.0           # [LIT] IEC 60904-5:2011+AMD1:2022: only above 4
 ECT_LAG_MAX_S = 300             # [ASSUMPTION] search range of the cross-correlation
 ECT_SPIKE_PAD_MIN = 10          # [ASSUMPTION] minutes before onset and after the peak that
                                 # belong to a spike's lag window
+ECT_LAG_MIN_SWEEPS = 8          # [ASSUMPTION] a spike needs this many usable sweeps for a lag
+ECT_FIT_MAX_RATE_C_MIN = 0.2    # [ASSUMPTION] fit only on sweeps taken while the back sheet
+                                # changes more slowly than this (it then stands for the cells)
+ECT_FIT_MIN_SWEEPS = 30         # [ASSUMPTION] fewer steady sweeps: no fit, placeholders stay

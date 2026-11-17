@@ -7,6 +7,11 @@ Compile only: nothing is flashed. The logger also compiles export/c (NASIM), so 
 gets the include paths to export/c and export/c/generated as extra compiler flags.
 The logger is compiled twice: as it is flashed today (HAS_LOAD 0 in pv_config.h, no load
 hardware) and with -DHAS_LOAD=1 ("logger_load"), so the load code is always build-checked.
+Phase B preparation (2026-11-17, not adopted): two more builds of the logger keep the
+flag-guarded code build-checked: "logger_phase_b" (PHASE_B_ENABLED 1, a dry run unless
+config.py says otherwise) and "logger_all" (load, Phase B, marker codes and the NASIM
+timing log together). Flash and RAM of the NASIM model itself, from the objects of a
+build: python firmware/tools/footprint.py.
 Prints, per sketch, OK / FAILED, the flash and RAM use, and every warning that
 comes from this project's own files (warnings inside the pinned third-party
 libraries, which live under Arduino15, are only counted).
@@ -19,7 +24,11 @@ import sys
 FW = pathlib.Path(__file__).resolve().parent
 ROOT = FW.parent
 SKETCHES = sorted(p.parent for p in FW.glob("tests/*/sketch.yaml")) + [FW / "logger"]
-BUILDS = [(s, s.name, "") for s in SKETCHES] + [(FW / "logger", "logger_load", " -DHAS_LOAD=1")]
+BUILDS = [(s, s.name, "") for s in SKETCHES] + [
+    (FW / "logger", "logger_load", " -DHAS_LOAD=1"),
+    (FW / "logger", "logger_phase_b", " -DPHASE_B_ENABLED=1"),
+    (FW / "logger", "logger_all", " -DHAS_LOAD=1 -DPHASE_B_ENABLED=1 -DMARKER_CODES_ENABLED=1"
+                                  " -DNASIM_TIMING_LOG=1")]
 
 
 def compile_sketch(sketch, name, define):
@@ -45,7 +54,8 @@ def main():
         if pick not in name:
             continue
         ok, out, own, lib_warn, flash, ram = compile_sketch(s, name, define)
-        rel = s.relative_to(FW).as_posix() + ("  [HAS_LOAD=1]" if define else "")
+        rel = s.relative_to(FW).as_posix() + (
+            f"  [{define.replace('-D', '').strip()}]" if define else "")
         if not ok:
             failed += 1
             errors = [l for l in out.splitlines() if "error" in l.lower()]

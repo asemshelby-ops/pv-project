@@ -13,6 +13,15 @@ logsheets/YYYY-MM-DD.csv (typed log sheets), and, once the load exists, the swee
   5. comparison with the reference data logger (if an export is given)
   6. figures (PDF + PNG), tables (CSV + LaTeX) and summary.md in --out
 A step whose input is missing is skipped and said so in summary.md.
+
+Phase B preparation (2026-11-17, not adopted). Three switches in config.py, all False; with
+all three False this file gives byte-for-byte what it gave before
+(tests/test_phase_b_flags.py):
+  PHASE_B_ENABLED        on files of a logger built with PHASE_B_ENABLED 1: the spray trial's
+                         tables (analysis/phase_b.py); the windows of wet sprays become
+                         excluded periods for steps 2 and 3
+  LOADOFF_CLASS_ENABLED  load-off spikes as their own class; the verdict with and without them
+  ECT_ENABLED            equivalent cell temperature from the sweeps' V_oc (analysis/ect.py)
 """
 import argparse
 import json
@@ -22,7 +31,8 @@ import numpy as np
 import pandas as pd
 
 import config
-from analysis import detection, events, gamma, ingest, report, soiling, validate, verdict
+from analysis import (detection, ect, events, gamma, ingest, phase_b, report, soiling, validate,
+                      verdict)
 
 DEFAULT_MAPPING = {   # ESP32 column -> (reference column, scale); an ASSUMPTION until the
     "T1": ("TC1", 1.0), "T3": ("TC2", 1.0), "T5": ("TC3", 1.0),   # data-logger model is known
@@ -71,6 +81,18 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
     else:
         notes.append("no markers.csv: no excluded windows, no controlled-test labels")
 
+    pb_events = spray_log = None
+    excluded_rig = excluded                  # the excluded periods before any spray is added
+    if config.PHASE_B_ENABLED and phase_b.has_columns(df):
+        spray_log = ingest.read_spray_log(data / "spray_log.csv")
+        pb_events = phase_b.event_table(df, spray_log, excluded)
+        sprays = phase_b.spray_windows(pb_events)
+        if len(sprays):   # the re-heating after a spray is not a spike of interest (03 sec. 4)
+            excluded = sprays if excluded is None else pd.concat([excluded, sprays],
+                                                                 ignore_index=True)
+            notes.append(f"Phase B: the windows of {len(sprays)} wet spray events are excluded "
+                         "from the spike statistics and the detector scoring")
+
     ev = events.label(frame, excluded, tests)
     if drivers is not None:
         ev = events.attach_truth(ev, drivers)
@@ -91,7 +113,7 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
          "spikes_per_part": det["spikes_per_part"]}, indent=2))
     det["model"].booster_.save_model(str(out / "nasim_gbt_nowind.txt"))
 
-    g_sum, runs = None, []
+    g_sum, runs, sweeps = None, [], None
     points, summary = gamma.read_sweeps(data)
     if len(points) and joined is not None:
         sweeps = gamma.sweep_parameters(points, summary)
@@ -106,6 +128,19 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
             notes.append("sweep files found but no valid gamma run")
     else:
         notes.append("no sweep files (load not fitted): gamma and the power cost are not computed")
+
+    if (pb_events is not None or config.ECT_ENABLED) and sweeps is None and len(points):
+        sweeps = gamma.sweep_parameters(points, summary)
+    pb = None
+    if pb_events is not None:
+        pb = phase_b.run(df, out, spray_log, sweeps, excluded_rig, n_boot=n_boot, seed=seed)
+        log(f"Phase B: {pb['audit']['wet']} wet events, {pb['audit']['dry_run']} dry-run events")
+    ect_result = None
+    if config.ECT_ENABLED:
+        if sweeps is None:
+            notes.append("ECT: no sweep files, the equivalent cell temperature is not computed")
+        else:
+            ect_result = ect.run(sweeps, frame, ev, out)
 
     v_table = None
     if reference is not None:
@@ -190,11 +225,15 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
     if v_table is not None:
         lines += ["## Table 5 - against the reference logger", "",
                   md(v_table.drop(columns=["kind", "intercept", "ref_mean"]).round(3)), ""]
+    if pb is not None:
+        lines += phase_b.markdown(pb, synthetic)
+    if ect_result is not None:
+        lines += ect.markdown(ect_result, synthetic)
     lines += ["## Notes", ""] + [f"- {n}" for n in notes] + ["", "## Figures", ""] + [f"- {f}" for f in files]
     (out / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     log(f"-> {out / 'summary.md'}")
     return {"frame": frame, "events": ev, "detection": det, "verdict": claim, "gamma": g_sum, "validation": v_table,
-            "notes": notes, "out": out}
+            "notes": notes, "out": out, "phase_b": pb, "ect": ect_result}
 
 
 def main():
