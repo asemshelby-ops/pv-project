@@ -63,3 +63,20 @@ ESP32 (21/22) ── [level shifter if the M5 side idles near 5 V — measure fi
 ## PWM outputs
 
 LEDC, 20 kHz, 11-bit resolution since 2026-11-13 (20 kHz is above hearing; 20 kHz × 2¹¹ = 40.96 MHz is within the 80 MHz APB clock, 12 bits would not be; `pv_config.h` checks this at compile time). Both outputs are driven LOW (duty 0) at boot by every sketch in this folder; no sketch in Phase 0 turns them on. The pump and sweep logic come later.
+
+## Phase B preparation (2026-11-17) — not adopted, nothing wired
+
+Only in a logger built with `PHASE_B_ENABLED 1` (`docs/phase-b/01-randomized-spray.md`).
+Values tagged `[PLACEHOLDER]` live in `config.py` and reach the firmware through the
+generated `phase_b_config.h`; they are not typed into `pv_config.h`.
+
+| Function | GPIO / channel | Note |
+|---|---|---|
+| Pump MOSFET gate (PWM) | **32**, as above | LEDC channel 2 (the load has channels 0 and 1). A compile-time check refuses a pump pin equal to a load pin (33, 14). In a dry run the PWM is never attached and the pin stays LOW. |
+| Flow sensor pulses | **35** `[PLACEHOLDER]` (`FLOW_PIN`) | One of the spare input-only pins, counted by the hardware pulse counter (PCNT), rising edges. No internal pull-up: an open-collector or reed output needs an external one; a 5 V Hall sensor needs a divider or level shifter. A compile-time check refuses a pin that is already used. Taking 35 leaves 36 and 39 for the anemometer. |
+| Pump-rail INA226 | PaHub port "1", address 0x41 `[PLACEHOLDER]` | As in the I2C diagram above. `PUMP_INA226_PAHUB_CH = -1` = a board with another address directly on the bus. |
+| Tank DS18B20 (T_water) | on the 1-Wire bus, GPIO **4** | Found by its ROM (`TANK_ROM` `[PLACEHOLDER]`); all zero = not fitted, and then no wet event opens. |
+
+Bench checks before any water: the gate pull-down holds GPIO32 LOW through power-up and
+reset (scope); the pump's start-up current stays inside the INA226's ±10 A; the level of
+the flow sensor's output at GPIO35.

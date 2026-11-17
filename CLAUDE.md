@@ -280,6 +280,42 @@ upper bound; Watmuff's form alone costs 1.4 points); (3) wind at the module (ane
 gamma and u0 come free with the paper's sweeps and logged days. Never quote a twin
 number without "simulation"; never write "the system saves x %".
 
+## Phase B preparation — branch `phase-b-prep` (2026-11-17; post-paper, software only, NOT ADOPTED, not merged)
+
+What exists (docs/phase-b/README.md): a randomized spray trial on a NASIM alarm (spray /
+no-spray drawn by the logger in seeded blocks of 4; pump stops; pump OFF at boot, reset and
+any sensor fault; dry run by default), per-event metering (flow pulses, pump-rail INA226),
+analysis of the two arms (energy normalized by irradiance, gain, pump, net, L/kWh), a
+cleaning-or-cooling check (I_sc/G of the sweeps before / after), load-off spikes as their own
+cause class with the verdict with and without them, equivalent cell temperature from V_oc
+(IEC 60904-5 approach; preview read only, NO conformity claimed), NASIM flash/RAM from a
+build + hourly on-board timing log, minimum detectable effect and a held-out week
+([PROPOSAL], docs/paper/03 sec. 11 note and sec. 12).
+Rules of that work, keep them:
+- Every part sits behind a switch that is OFF: firmware PHASE_B_ENABLED, MARKER_CODES_ENABLED,
+  NASIM_TIMING_LOG (pv_config.h, used only as `#if FLAG` / `#if !FLAG`); analysis
+  PHASE_B_ENABLED, LOADOFF_CLASS_ENABLED, ECT_ENABLED (config.py). With all off, logger rows
+  and analysis results are byte-identical to main at 51d18aa: tests/test_phase_b_flags.py
+  against tests/golden/phase_b_off.json. The golden hashes of data and results are tied to
+  the machine that made them (last digits of the maths libraries); on another machine remake
+  them from 51d18aa with tests/golden/make_phase_b_off.py, never from the new code.
+- Unknown values are [PLACEHOLDER] constants in ONE place, config.py block "PHASE B
+  PREPARATION"; the firmware gets them via `python -m export.phase_b_header`. A wet build is
+  refused until PHASE_B_PLACEHOLDERS_CONFIRMED.
+- Synthetic data only so far; label every number SYNTHETIC. paper/main.tex is not edited
+  before the supervisor approves.
+- Do not commit a regenerated export/c/generated/nasim_model_*.c from Linux: it differs from
+  the committed (Windows) file in the 17th digit of some thresholds.
+- NOT done: no ESP32 build of the Phase B code (only a syntax check against stub headers,
+  tests/test_firmware_host.py), nothing run on a board, footprint table of docs/phase-b/04
+  not filled.
+Run: `python -m analysis.demo_phase_b --days 20` (SYNTHETIC end to end);
+`python -m analysis.mde --per-arm 10 20 40`; `python firmware/tools/footprint.py --detail`.
+Key planning result (SYNTHETIC spread, docs/paper/03 sec. 12): 20 events per arm detect an
+energy gain of >= ~1.0 % of a 30-min window; the expected gain of one 60 s spray is ~0.4 %
+[EST]; the temperature drop needs only a few events. Measure the real spread with >= 2 weeks
+of dry run before fixing the trial's length.
+
 ## Working rules
 
 - Graduation project defended orally. Explain what you write; small reviewed steps.

@@ -16,6 +16,7 @@ Prints, per sketch, OK / FAILED, the flash and RAM use, and every warning that
 comes from this project's own files (warnings inside the pinned third-party
 libraries, which live under Arduino15, are only counted).
 """
+import json
 import pathlib
 import re
 import subprocess
@@ -31,9 +32,25 @@ BUILDS = [(s, s.name, "") for s in SKETCHES] + [
                                   " -DNASIM_TIMING_LOG=1")]
 
 
+def image_size(out):
+    """(flash, RAM) as arduino-cli prints them at the end of a build: two regex matches
+    with the bytes and the percentage, or None."""
+    return (re.search(r"Sketch uses (\d+) bytes \((\d+)%\)", out),
+            re.search(r"Global variables use (\d+) bytes \((\d+)%\)", out))
+
+
+def save_size(build, name, define, flash, ram):
+    """Keeps the two numbers next to the build, for firmware/tools/footprint.py."""
+    size = {"build": name, "defines": define.replace("-D", "").strip(),
+            "flash_B": int(flash[1]), "flash_pct": int(flash[2]),
+            "ram_B": int(ram[1]), "ram_pct": int(ram[2])}
+    (pathlib.Path(build) / "size.json").write_text(json.dumps(size, indent=2), encoding="utf-8")
+    return size
+
+
 def compile_sketch(sketch, name, define):
-    cmd = ["arduino-cli", "compile", "--warnings", "all", "--build-path",
-           str(ROOT / "out/firmware_build" / name), str(sketch)]
+    build = ROOT / "out/firmware_build" / name
+    cmd = ["arduino-cli", "compile", "--warnings", "all", "--build-path", str(build), str(sketch)]
     if sketch.name == "logger":
         inc = f"-I{ROOT / 'export/c'} -I{ROOT / 'export/c/generated'}".replace("\\", "/") + define
         cmd += ["--build-property", f"compiler.c.extra_flags={inc}",
@@ -42,8 +59,9 @@ def compile_sketch(sketch, name, define):
     out = r.stdout + r.stderr
     warnings = [l for l in out.splitlines() if "warning:" in l]
     own = [l for l in warnings if "Arduino15" not in l]   # third-party code lives in Arduino15
-    flash = re.search(r"Sketch uses (\d+) bytes \((\d+)%\)", out)
-    ram = re.search(r"Global variables use (\d+) bytes \((\d+)%\)", out)
+    flash, ram = image_size(out)
+    if r.returncode == 0 and flash and ram and build.is_dir():
+        save_size(build, name, define, flash, ram)
     return r.returncode == 0, out, own, len(warnings) - len(own), flash, ram
 
 

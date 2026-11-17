@@ -313,9 +313,10 @@ CLEAN_AFTER_DELAY_MIN = 0       # "after" = nearest sweep this long after the sp
 MDE_ALPHA = 0.05                # two-sided significance of the arm comparison
 MDE_POWER = 0.80                # chance of detecting an effect of the stated size
 # One week of the trial that is never used for tuning [PROPOSAL, docs/paper/03 sec. 12; not
-# adopted]. Name it by its dates BEFORE the first wet event. Its events stay out of every
-# table, of the spread used for the minimum detectable effect and of any choice of a
-# setting, until PHASE_B_HELDOUT_UNLOCKED is set: once, when settings and code are frozen.
+# adopted]: the last 7 days of the wet trial. Write its two dates here at the freeze, BEFORE
+# the week begins. Its events stay out of every table, of the spread used for the minimum
+# detectable effect and of any choice of a setting, until PHASE_B_HELDOUT_UNLOCKED is set:
+# once, after the week's last day, with settings and code as they were frozen.
 PHASE_B_HELDOUT_WEEK = None     # [PLACEHOLDER] ("YYYY-MM-DD", "YYYY-MM-DD"), first and last
                                 # local day; None = no week named
 PHASE_B_HELDOUT_UNLOCKED = False

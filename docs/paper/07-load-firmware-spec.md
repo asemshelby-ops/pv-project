@@ -219,6 +219,13 @@ two. A bit is never renumbered once data exists; new bits are added at the end.
 | 7 | 128 | `DET_RESET` | NASIM's state was cleared at this row: `DET_RESET_AFTER_FAILS` (5) skipped rows in a row. `p` is empty for the next 10 min |
 | 8 | 256 | `SD_RETRY` | this row needed a second SD write attempt, or the row(s) just before it did not reach the card |
 
+Phase B preparation (2026-11-17, not adopted, off): a logger built with `PHASE_B_ENABLED 1`
+appends six more columns after `status` (`spike_id`, `spray_assign`, `pump_duty`,
+`flow_Lpm`, `water_L_cum`, `P_pump_W`) and uses three more bits (9 `PUMP_FAIL`,
+10 `SPRAY_BLOCKED`, 11 `SPRAY_ABORT`); `MARKER_CODES_ENABLED 1` adds a `code` column to
+`/markers.csv`; `NASIM_TIMING_LOG 1` writes `/status_log.csv`. With the three flags at 0,
+as shipped, this section describes the logger completely. Details: `docs/phase-b/`.
+
 Example: `status = 33` = 32 + 1 = `TROM_UNMAPPED` + `RTC_INVALID`. Until `T_ROM` is
 filled in, a clean row reads `32`, not `0`. Rows outside the 06:00–18:00 window are not
 "skipped" rows: the detector rests there by design and no bit is set.

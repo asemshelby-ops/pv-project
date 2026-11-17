@@ -74,6 +74,23 @@ paper, the firmware or `analysis/` depends on it. Start at `docs/twin/README.md`
 .venv/Scripts/python -m scada.run --sim          # rooftop page, marked SIMULATION
 ```
 
+## Phase B preparation (branch `phase-b-prep`, 2026-11-17; software only, not adopted)
+
+Preparation of the step after the paper: a randomized spray trial on a NASIM alarm with
+per-event metering, the comparison of the two arms, a cleaning-or-cooling check, load-off
+spikes as their own class, an equivalent cell temperature from V_oc, the model's footprint
+on the ESP32 and the smallest detectable spray effect. **Every part is behind a switch
+that is off**; with the switches off the logger's rows and all analysis results are
+byte-identical to before (`tests/test_phase_b_flags.py`). Tested on synthetic data only;
+values that are not known yet are `[PLACEHOLDER]` constants in `config.py`. Start at
+`docs/phase-b/README.md`.
+
+```bash
+.venv/Scripts/python -m analysis.demo_phase_b --days 20     # SYNTHETIC end-to-end run
+.venv/Scripts/python -m analysis.mde --per-arm 10 20 40     # smallest detectable difference
+.venv/Scripts/python firmware/tools/footprint.py --detail   # NASIM flash and RAM from a build
+```
+
 ## Layout
 
 | Path | Content |
@@ -87,6 +104,7 @@ paper, the firmware or `analysis/` depends on it. Start at `docs/twin/README.md`
 | `export/c/generated/` | generated: `nasim_config.h` (from config.py) and the two m2cgen models |
 | `export/run.py` | export + Python-vs-C parity test, report in `out/export/parity.md` |
 | `twin/` | post-paper: digital twin, simulated rooftop, controllers (`docs/twin/`) |
+| `analysis/phase_b.py`, `ect.py`, `mde.py` | Phase B preparation, off by default (`docs/phase-b/`) |
 | `scada/` | post-paper: SCADA layer reading the logger's files; rooftop simulation page (`docs/scada/`) |
 | `tests/` | pytest for each module |
 
