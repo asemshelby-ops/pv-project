@@ -121,8 +121,8 @@ by frame at a fixed time step (the video is the same on any computer), ffmpeg en
 live page it follows irradiance / clear-sky irradiance of the newest step), the sun's path
 over Makkah for the simulated day with hour marks (button "Sun path"), a colour legend in
 °C inside the view, spray jets on the medium and high quality tiers. Frame times:
-`python tests/browser/bench3d.py [--gpu] [--story]`; results of 2026-11-17 in
-[showcase/frame-times.md](showcase/frame-times.md).
+`python tests/browser/bench3d.py [--gpu] [--story]` (raw results of 2026-11-17, software
+rendering: `showcase/bench_before_main.json`, `showcase/bench_after.json`).
 
 ## When real data exists
 
