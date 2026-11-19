@@ -1,0 +1,170 @@
+{
+ "pipeline/day_quality.csv": {
+  "sha256": "23c6ac51f0770d8fdcdbd198daab47f90f64237e7f5c5a56719cc72de9c91414",
+  "bytes": 253
+ },
+ "pipeline/detection_curves.csv": {
+  "sha256": "4b26d1c1ead0d388d1688ed388cd81a1ef69a42e0d83e9cceddf64089d3e862b",
+  "bytes": 19978
+ },
+ "pipeline/detection_matched.csv": {
+  "sha256": "c1b48dc4f7addb8f47076a0ce135e23f08b6c1fdedbe85f2a550ee1650b19def",
+  "bytes": 2448
+ },
+ "pipeline/detection_results.csv": {
+  "sha256": "e850f4be9de3230019266cfbda7b832531fd5ef0a8e6329e1bf03ad0137fcde5",
+  "bytes": 1952
+ },
+ "pipeline/events.csv": {
+  "sha256": "a1215d061fb1039c2f0fd12eb49fb6fa54d3c1a3485ad450e45739fff13c57b8",
+  "bytes": 5105
+ },
+ "pipeline/nasim_gbt_nowind.txt": {
+  "sha256": "4974c5625a25d1259bb01d935b08d20f38b0e5f7be46338fbacd4c0c8310955c",
+  "bytes": 74800
+ },
+ "pipeline/soiling_check.csv": {
+  "sha256": "b07b00a9e31fa11594348f3e45f3bb146759185f6e8a70520bb26cdcf7ea9e52",
+  "bytes": 998
+ },
+ "pipeline/summary.md": {
+  "sha256": "b22f97f07a87983493b27e91a88fa91db28d09de49ba1518b2708c86ddaba360",
+  "bytes": 8158
+ },
+ "pipeline/table1_spike_statistics.csv": {
+  "sha256": "7cbfa81a7d688551344a57649fd943e991cc1b1546cd588395b26d584dd72e4e",
+  "bytes": 255
+ },
+ "pipeline/table1_spike_statistics.tex": {
+  "sha256": "f0a88daf878546d0beb962907a179d973b4a3a195708fe476bfb8aa834f9ad8e",
+  "bytes": 568
+ },
+ "pipeline/table2_detection.csv": {
+  "sha256": "43d2cbf63ef534d71e47c7f4c3c817ddffb242f2e7aed3484cc1c6f24d3b68cd",
+  "bytes": 602
+ },
+ "pipeline/table2_detection.tex": {
+  "sha256": "5183c8941b8749e976a4e905c3f8e08fc64cb78690cc2cd0a9084a76213f5b3b",
+  "bytes": 1058
+ },
+ "pipeline/table3_per_cause.csv": {
+  "sha256": "8417f2c2fa8b1425f4f8d6619b8dc9429c0b6d2f2dbaacbe88160c78a8a94b74",
+  "bytes": 370
+ },
+ "pipeline/table3_per_cause.tex": {
+  "sha256": "858e659e708cd4eb9527dfa5d9e928303c25a748a3ab6e01de3433f0ac62af71",
+  "bytes": 800
+ },
+ "pipeline/table4_gamma.csv": {
+  "sha256": "d1aa15fba03eeb15fba4f34bb4aa95e1160f8b85e63edc60b6391f20ae697691",
+  "bytes": 191
+ },
+ "pipeline/table4_gamma.tex": {
+  "sha256": "1952e236d81af4f1f46f45a8090ae2ec1600a462b3ac2631efd36851d6c12497",
+  "bytes": 548
+ },
+ "pipeline/table6_cause_check.csv": {
+  "sha256": "ae5933d1c4fac3811e4c3c00c1305e90f247c4b760c7b9a730b9fba9fd4d4688",
+  "bytes": 94
+ },
+ "pipeline/table6_cause_check.tex": {
+  "sha256": "513e95375f8f8d558bcec32a00f3c3679e4e94e2550a233483efaa6d90cdbfcc",
+  "bytes": 384
+ },
+ "pipeline/table8_matched_false_alarms.csv": {
+  "sha256": "8c89b3ffd3ef2af420156671d723d5b39964023934edaa54f22fa12f78699713",
+  "bytes": 1251
+ },
+ "pipeline/table8_matched_false_alarms.tex": {
+  "sha256": "d8ea15ac575108903e5c2792cb09af64c32b78e926fa567143a5b45297626dc7",
+  "bytes": 2027
+ },
+ "pipeline/table9_cause_sensitivity.csv": {
+  "sha256": "18523de05566afba8b2236d48c625c2c7cfdac0db0bea2949a2ed4531f68db78",
+  "bytes": 224
+ },
+ "pipeline/table9_cause_sensitivity.tex": {
+  "sha256": "3987b500455485449d329e623ce0295389600a6cfa7598595ef35990add09522",
+  "bytes": 595
+ },
+ "pipeline/tuned.json": {
+  "sha256": "e1b1c977218b292cda4dd86d80baab03e9ded363e3b05798cbbe2b45d3ac80ad",
+  "bytes": 445
+ },
+ "pipeline/verdict.json": {
+  "sha256": "ed9e18d53489a00dbb43bc342ef4ff1e8bc5f9144b107d163a7cabfe2dcc8386",
+  "bytes": 302
+ },
+ "powerbi/alarms.csv": {
+  "sha256": "829253a0741b04d3e1ef7aacaee98a9a8819c2e8ef77d58dbcd1158a209c484e",
+  "bytes": 32
+ },
+ "powerbi/daily_summary.csv": {
+  "sha256": "939b955f15d369a7deae87238b66e20f1670feec9e51fb1430d6c89125fafd9e",
+  "bytes": 939
+ },
+ "powerbi/spikes.csv": {
+  "sha256": "1eb18f91167f889653dd944a509d32a080f473b8d2607a97fcac6d7ae8265b6b",
+  "bytes": 4178
+ },
+ "powerbi/sweeps.csv": {
+  "sha256": "311aa49d1d5b6179943d6fdc001884d1958a1a8d206a52e90099f1b51f671ce0",
+  "bytes": 8875
+ },
+ "scada/heartbeat.txt": {
+  "sha256": "a20a81dc5fecad4bdb4624cfac82033ba388adbff0e348828bf00fd200401b19",
+  "bytes": 432
+ },
+ "scada/historian.json": {
+  "sha256": "62389d033b16193f535eb56e9db435b157c42001ba94aa073e9c3fdaf30782db",
+  "bytes": 3864281
+ },
+ "scada/http/api_alarms_all.json": {
+  "sha256": "f91ea1b9c7944375c8353206a6f60613f950976f281a7851aab3a2bfce6b037b",
+  "bytes": 6
+ },
+ "scada/http/api_model.json": {
+  "sha256": "2e73cb85294f8ad8cac2451c76c2a4d74c2117f2abb6ac1e7d77186b969313e0",
+  "bytes": 11067
+ },
+ "scada/http/api_series.json": {
+  "sha256": "2fbea072f7ca417602d94797ccddafd274385a1a3c786d0f75ffb240239bee5f",
+  "bytes": 99170
+ },
+ "scada/http/api_state.json": {
+  "sha256": "0ca6b6a69778306f6bd27c32c8609e2c23a3d65525827b111aec415421be0508",
+  "bytes": 1728
+ },
+ "scada/http/app.js": {
+  "sha256": "5bebc91228e180f2c56a56d1eac10959b8039e650ac511d555b21b4f3ad95093",
+  "bytes": 21669
+ },
+ "scada/http/get_api_wx.json": {
+  "sha256": "912c9bb181588008ec392176dd20933d7226d0c20571776e22019379d523613d",
+  "bytes": 26
+ },
+ "scada/http/get_wxref_js.txt": {
+  "sha256": "912c9bb181588008ec392176dd20933d7226d0c20571776e22019379d523613d",
+  "bytes": 26
+ },
+ "scada/http/index.html": {
+  "sha256": "9238cf33cac503dc3824674d9d34041ecee3831e07c93ccf43ce35eec3eb7292",
+  "bytes": 4331
+ },
+ "scada/http/style.css": {
+  "sha256": "756ae1ce6459acac120981dd344811c787d881afc244b184511b03a6baba708f",
+  "bytes": 11644
+ },
+ "twin/per_day.csv": {
+  "sha256": "85951c2b6a4742593d19e60e07674ecc2e08a54ed4f78599f49265f841f17c9a",
+  "bytes": 747
+ },
+ "twin/report.md": {
+  "sha256": "c0fd3633c9c84b1f0bc50635541f400b5080cf99aa18cc0d0d80a1906cba9869",
+  "bytes": 1470
+ },
+ "twin/rows.csv": {
+  "sha256": "ae9f55090909756bb8810c405609377604e3bb679b15e44829d5dbef4eab99a9",
+  "bytes": 2952175
+ }
+}
