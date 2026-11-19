@@ -145,11 +145,13 @@ def calibrate_gamma(p, gamma):
 
 # --- thermal: logged days ---------------------------------------------------------------------
 
-def thermal_arrays(frame, p, max_days=MAX_DAYS):
+def thermal_arrays(frame, p, max_days=MAX_DAYS, wind_column="wind"):
     """The arrays the thermal replay needs, from an ingested frame (analysis/ingest.py
     read_logger, or validate.frame_from_days). Rows no detector could use (segment < 0)
     are left out. Returns a dict of arrays, with `first` marking each segment start and
-    `dt` the seconds to the next row."""
+    `dt` the seconds to the next row. `wind_column`: "wind" (the logger's anemometer
+    column) or "wx_model_wind_speed_10m_ms" (Open-Meteo MODEL wind joined by wxref.join,
+    10 m grid-cell wind, not measured at the module)."""
     from data.schema import BACK_SENSORS
     f = frame[frame["segment"] >= 0]
     dates = sorted(f["date"].unique())
@@ -162,7 +164,7 @@ def thermal_arrays(frame, p, max_days=MAX_DAYS):
     first = np.r_[True, seg[1:] != seg[:-1]]
     dt = np.r_[np.diff(t_s), p.dt_s]
     dt[np.r_[first[1:], True]] = p.dt_s             # last row of a segment: unused value
-    wind = f["wind"].to_numpy(float) if "wind" in f else np.full(len(f), np.nan)
+    wind = f[wind_column].to_numpy(float) if wind_column in f else np.full(len(f), np.nan)
     has_wind = bool(np.isfinite(wind).mean() > 0.9)
     return {"t_meas": f[BACK_SENSORS].mean(axis=1).to_numpy(float),
             "g": f["irradiance"].to_numpy(float), "ta": f["T_ambient"].to_numpy(float),

@@ -13,6 +13,11 @@ logsheets/YYYY-MM-DD.csv (typed log sheets), and, once the load exists, the swee
   5. comparison with the reference data logger (if an export is given)
   6. figures (PDF + PNG), tables (CSV + LaTeX) and summary.md in --out
 A step whose input is missing is skipped and said so in summary.md.
+
+Optional, OFF by default (config.WX_ENABLED, or --weather): Open-Meteo MODEL data for the
+same days -- wx_model_hourly.csv, wx_daily_check.csv (the PYR20 check) and a section in
+summary.md; res["frame_wx"] has the model columns (wx_model_*, incl. wind) joined by time
+for analysis and the twin. The detectors never see them. Off: every output as before.
 """
 import argparse
 import json
@@ -32,7 +37,7 @@ SYNTHETIC = ("SYNTHETIC DATA. These numbers show that the pipeline runs end to e
 
 
 def run(data, out, reference=None, mapping=None, validation_date=None, drivers=None,
-        seed=0, n_boot=2000, synthetic=False, log=print):
+        seed=0, n_boot=2000, synthetic=False, log=print, weather=None):
     data, out = pathlib.Path(data), pathlib.Path(out)
     out.mkdir(parents=True, exist_ok=True)
     report.style()
@@ -190,11 +195,23 @@ def run(data, out, reference=None, mapping=None, validation_date=None, drivers=N
     if v_table is not None:
         lines += ["## Table 5 - against the reference logger", "",
                   md(v_table.drop(columns=["kind", "intercept", "ref_mean"]).round(3)), ""]
+    wx = None
+    if config.WX_ENABLED if weather is None else weather:    # MODEL data, opt-in (wxref/)
+        from wxref import analysis as wxa
+        wx = wxa.model_for(df, log=log)
+        wxa.hourly_table(wx, df, "synthetic" if synthetic else "logger").to_csv(
+            out / "wx_model_hourly.csv", index=False)
+        wx["checks"].to_csv(out / "wx_daily_check.csv", index=False)
+        wx["frame_wx"] = wxa.frame_with_model(frame, wx)
+        lines += wxa.summary_lines(wx)
     lines += ["## Notes", ""] + [f"- {n}" for n in notes] + ["", "## Figures", ""] + [f"- {f}" for f in files]
     (out / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     log(f"-> {out / 'summary.md'}")
-    return {"frame": frame, "events": ev, "detection": det, "verdict": claim, "gamma": g_sum, "validation": v_table,
-            "notes": notes, "out": out}
+    res = {"frame": frame, "events": ev, "detection": det, "verdict": claim, "gamma": g_sum,
+           "validation": v_table, "notes": notes, "out": out}
+    if wx is not None:
+        res["weather"], res["frame_wx"] = wx, wx["frame_wx"]
+    return res
 
 
 def main():
@@ -204,8 +221,11 @@ def main():
     ap.add_argument("--reference", default=None, help="data-logger export (CSV)")
     ap.add_argument("--validation-date", default=None, help="local date of the comparison day")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--weather", action="store_true",
+                    help="add the Open-Meteo MODEL outputs for this run (as WX_ENABLED)")
     a = ap.parse_args()
-    run(a.data, a.out, a.reference, None, a.validation_date, seed=a.seed)
+    run(a.data, a.out, a.reference, None, a.validation_date, seed=a.seed,
+        weather=a.weather or None)
 
 
 if __name__ == "__main__":

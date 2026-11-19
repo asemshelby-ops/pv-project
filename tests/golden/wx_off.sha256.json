@@ -1,4 +1,14 @@
 {
+ "_recorded_on": {
+  "platform": "linux",
+  "machine": "x86_64",
+  "python": "3.13",
+  "numpy": "2.5.4",
+  "pandas": "3.1.0",
+  "scipy": "1.18.1",
+  "pvlib": "0.16.1",
+  "lightgbm": "4.7.0"
+ },
  "pipeline/day_quality.csv": {
   "sha256": "23c6ac51f0770d8fdcdbd198daab47f90f64237e7f5c5a56719cc72de9c91414",
   "bytes": 253

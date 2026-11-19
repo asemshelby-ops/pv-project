@@ -224,3 +224,47 @@ CELL_BACK_DT_C = CELL_MINUS_BACK_C   # same Sandia offset, used by the gamma ana
 # further off (0.55 % at 100 W/m2) without the NOT_SETTLED flag being set, and at <= 90
 # W/m2 the sweep is flagged. [ASSUMPTION] until bench B4 gives the real time constant.
 SWEEP_MIN_G_WM2 = 200.0
+
+# --- Weather reference: Open-Meteo MODEL data (wxref/, docs/weather-reference.md) ---------------
+# A daily cross-check for the PYR20 and a model wind column for the PC side (SCADA, analysis,
+# twin). Everything fetched is MODEL data -- weather models and satellite retrievals -- never a
+# measurement; every column, chart and message says so ("wx_model_*"). OFF by default: with
+# WX_ENABLED False nothing is fetched or written and every output is byte-identical to before
+# (tests/test_wxref_golden.py). Never used by the firmware or by any detector.
+WX_ENABLED = False
+WX_SITE_LAT = None          # [PLACEHOLDER] latitude of the roof, decimal degrees N. Fill in:
+WX_SITE_LON = None          # [PLACEHOLDER] longitude, decimal degrees E. Nothing is fetched
+                            # while either is None (the panel says "site not set").
+WX_SITE_AZIMUTH_DEG = 180.0 # compass azimuth of the module, 180 = due south (the convention of
+                            # AZIMUTH_DEG and pvlib; wxref converts it to Open-Meteo's 0 = south)
+WX_TILT_SCHEDULE = (        # tilt in effect FROM each local date, degrees from horizontal
+    ("2000-01-01", 35.0),   # [PLACEHOLDER date] 35 deg until the stand is re-tilted ...
+    ("2027-03-01", 20.0),   # [PLACEHOLDER date] ... 20 deg from March: enter the real day.
+)                           # A change is a KNOWN EVENT for the PYR20 check, not a fault.
+WX_KNOWN_EVENTS = ()        # more known events, (local date, text), e.g.
+                            # (("2026-12-02", "PYR20 re-levelled"),): the check restarts its
+                            # reference ratio after each one instead of flagging a drift
+WX_DIR = "out/wxref"        # cache, wx_model.csv, wx_daily_check.csv -- never the logger's folder
+WX_PAST_DAYS = 2            # local days before today fetched for the "recent past"
+WX_FORECAST_DAYS = 2        # local days from today on fetched as forecast (today + tomorrow)
+WX_REFRESH_S = 3600         # the model data change at most hourly: a request is not repeated
+                            # sooner than this (complete past days: never again, see wxref)
+WX_RETRY_S = (300, 3600)    # after a failed call no call before 5 min, doubling up to 1 h
+WX_TIMEOUT_S = 10.0         # per HTTP call; the SCADA never waits on it (own thread)
+WX_CHECK_SOURCE = "satellite"   # irradiance for the PYR20 check: "satellite" (Open-Meteo
+                            # satellite radiation API) or "forecast" (weather-model analysis)
+# Daily PYR20 check (wxref/check.py), all [ASSUMPTION] until tuned on real days:
+WX_CS_MIN_POA_WM2 = 300.0   # hour skipped if its clear-sky in-plane mean is lower (low sun)
+WX_CS_MIN_K_MODEL = 0.8     # model in-plane / clear-sky in-plane >= this: the model sees no cloud
+WX_CS_MAX_CLOUD_PCT = 20.0  # model cloud cover at both ends of the hour <= this (if given)
+WX_CS_MAX_CV = 0.03         # PYR20 / clear-sky in-plane inside the hour: std/mean <= this
+                            # (scale-free, so a dirty dome does not hide its own hours)
+WX_CS_MIN_COVERAGE = 0.8    # share of the hour's 10 s rows that must hold an irradiance
+WX_CHECK_MIN_HOURS = 3      # clear hours needed for a daily ratio, else "no clear hours"
+WX_BASELINE_DAYS = 7        # valid days after the start or a known event that set the reference
+WX_RATIO_REFERENCE = None   # or a fixed PYR20/model ratio set at commissioning
+WX_RATIO_BAND = 0.05        # flag when the rolling ratio leaves reference x (1 +/- band)
+WX_RATIO_SANE = (0.7, 1.3)  # a daily ratio outside this is flagged at once (scaling, wiring,
+                            # sensor fault), before and after a reference exists
+WX_DRIFT_DAYS = 3           # rolling median over this many valid days (one odd day is no flag)
+WX_TREND_DAYS = 14          # trend = straight line through the last N valid daily ratios

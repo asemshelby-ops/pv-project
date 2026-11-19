@@ -12,7 +12,11 @@ asserts every output is byte-identical (same hash). The outputs themselves are n
 Figures (PDF/PNG) are left out: they carry creation metadata.
 
 Never rewrite the golden files to make the test pass: a difference means the switch-off path
-changed. Regenerate only on unchanged code (e.g. after a library upgrade), and say so.
+changed. The hashes hold for the platform and library versions in "_recorded_on" (numeric
+output can differ in the last digit between builds); elsewhere the test is skipped with a
+note. To record for another platform or after a library upgrade: check out the commit that
+added this file (c1cd44c, before wxref/ existed), run `--write` there, keep the manifest,
+return to the branch and run `--check` -- never record on changed code.
 """
 import hashlib
 import json
@@ -49,11 +53,30 @@ def _synthetic_rig(root):
 
 
 def _files(folder, prefix):
+    """Text outputs; CRLF read as LF, so Windows line endings alone are no difference."""
     out = {}
     for p in sorted(pathlib.Path(folder).rglob("*")):
         if p.is_file() and p.suffix in TEXT_SUFFIXES:
-            out[f"{prefix}/{p.relative_to(folder).as_posix()}"] = p.read_bytes()
+            out[f"{prefix}/{p.relative_to(folder).as_posix()}"] = p.read_bytes().replace(
+                b"\r\n", b"\n")
     return out
+
+
+def fingerprint():
+    """Platform and library versions the hashes depend on (floating-point output of numpy,
+    pandas, scipy, pvlib and LightGBM can differ in the last digit between builds)."""
+    import platform
+    import sys
+
+    import lightgbm
+    import numpy
+    import pandas
+    import pvlib
+    import scipy
+    return {"platform": sys.platform, "machine": platform.machine(),
+            "python": ".".join(map(str, sys.version_info[:2])), "numpy": numpy.__version__,
+            "pandas": pandas.__version__, "scipy": scipy.__version__,
+            "pvlib": pvlib.__version__, "lightgbm": lightgbm.__version__}
 
 
 def _dump_historian(conn):
@@ -117,7 +140,7 @@ def _scada(root):
             if name == "api_alarms_all.json":
                 body = json.dumps([{k: v for k, v in a.items() if not k.endswith("_wall")}
                                    for a in json.loads(body)], sort_keys=True).encode()
-            out[f"scada/http/{name}"] = f"{code}\n".encode() + body
+            out[f"scada/http/{name}"] = f"{code}\n".encode() + body.replace(b"\r\n", b"\n")
         code, body = get("/api/state")
         st = json.loads(body)
         st.pop("server_wall")
@@ -154,9 +177,14 @@ def manifest(got):
             for k, v in sorted(got.items())}
 
 
+def recorded_on():
+    return json.loads(GOLDEN.read_text(encoding="utf-8")).get("_recorded_on")
+
+
 def differences(got):
     """Names whose bytes differ from the golden manifest (or are missing / new)."""
     want = json.loads(GOLDEN.read_text(encoding="utf-8"))
+    want.pop("_recorded_on", None)
     have = manifest(got)
     return sorted(k for k in set(have) | set(want) if have.get(k) != want.get(k))
 
@@ -174,7 +202,8 @@ if __name__ == "__main__":
         got = collect(tmp)
     if a.write:
         GOLDEN.parent.mkdir(parents=True, exist_ok=True)
-        GOLDEN.write_text(json.dumps(manifest(got), indent=1) + "\n", encoding="utf-8")
+        GOLDEN.write_text(json.dumps({"_recorded_on": fingerprint(), **manifest(got)},
+                                     indent=1) + "\n", encoding="utf-8")
         print(f"wrote {GOLDEN} ({len(got)} outputs)")
     elif a.check:
         bad = differences(got)

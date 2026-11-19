@@ -21,6 +21,12 @@ Phone alerts (Telegram, scada/notify.py) start by themselves for LIVE data (--fo
 <file> uses another config file. Never for a replay or the simulation.
 Setup: docs/scada/telegram.md.
 
+Weather reference (config.WX_ENABLED, off by default; docs/weather-reference.md): for LIVE
+data a thread fetches Open-Meteo MODEL data (at most hourly, cached in out/wxref/) and runs
+the daily PYR20 check; the page then shows a "Weather reference (model)" panel. Without
+internet it logs a warning and the rest carries on. Never for the simulation; a replay
+shows the panel with a note only.
+
 --sim runs the rooftop twin (twin/, 120 simulated modules) and shows it on the page
 /rooftop, marked SIMULATION. It has its own file (out/scada/simulation.sqlite) and never
 touches the historian: the real module stays the only real data source.
@@ -33,6 +39,7 @@ import argparse
 import pathlib
 import socket
 import threading
+import time
 
 from scada import historian, ingest, notify, replay, server, sim_source
 
@@ -104,6 +111,27 @@ def start_notifier(a, db, stop, threads):
     return n
 
 
+def start_weather(a, db, stop, threads):
+    """The weather reference's /api/wx answer, or None when it is off (then nothing of it
+    runs or is served). Live data: its own thread, which never raises. Replay: a note only."""
+    import wxref
+    if not wxref.enabled() or not (a.replay or a.folder or a.serial):
+        return None
+    from wxref import service
+    if a.replay:
+        return lambda conn: dict(service.REPLAY_STATE)
+    try:
+        svc = service.WeatherService(db)
+    except Exception as e:                      # noqa: BLE001 - never stop the SCADA for it
+        hint = f"The weather reference did not start: {e}"
+        print(f"WARNING {hint}", flush=True)
+        return lambda conn: {**service.REPLAY_STATE, "hint": hint}
+    threads.append(threading.Thread(target=svc.run, args=(stop,), name="weather"))
+    print("Weather reference: on (Open-Meteo MODEL data, cached in "
+          f"{svc.folder}; see docs/weather-reference.md)", flush=True)
+    return lambda conn: service.api_payload(conn, svc.status(), time.time())
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--folder", help="folder with the logger's files (a copy of the SD card)")
@@ -162,12 +190,13 @@ def main():
         sim_info = {"speed": a.sim_speed}
         threads.append(threading.Thread(target=feeder.run, args=(stop, a.sim_speed)))
     notifier = start_notifier(a, db, stop, threads) if not a.replay else None
+    wx = start_weather(a, db, stop, threads)
     for t in threads:
         t.daemon = True
         t.start()
     httpd = server.make_server(db, info, a.port, sim_db, sim_info,
                                notifier.status if notifier else None,
-                               host=LAN_HOST if a.lan else "127.0.0.1")
+                               host=LAN_HOST if a.lan else "127.0.0.1", wx=wx)
     port = httpd.server_address[1]
     print(f"SCADA ({info['mode']}) on http://127.0.0.1:{port}   "
           f"historian: {db}   Ctrl+C stops", flush=True)

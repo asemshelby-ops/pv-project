@@ -16,6 +16,10 @@ Writes four tables, all in LOCAL Makkah time (UTC+3), ISO dates, '.' as decimal 
   alarms.csv         one row per on-board alarm onset (rising edge), per detector
 The `date` column links every table to daily_summary (docs/powerbi.md).
 
+Optional, OFF by default (config.WX_ENABLED, or --weather for one run): Open-Meteo MODEL
+columns (wx_model_*, pyr20_*) on daily_summary and a fifth table wx_model_hourly.csv
+(docs/weather-reference.md). With it off the four tables are byte-identical to before.
+
 Nothing is computed here that the paper pipeline does not compute: the spikes come from
 analysis.events.label (offline reference labels, NOT what the board saw), the sweep
 parameters from analysis.gamma.sweep_parameters. The alarm times are the ones the ESP32
@@ -152,7 +156,7 @@ def sweeps_table(data):
     return out.sort_values("time_local").reset_index(drop=True)
 
 
-def run(data, out="out/powerbi", source="logger", log=print):
+def run(data, out="out/powerbi", source="logger", log=print, weather=None):
     data, out = pathlib.Path(data), pathlib.Path(out)
     out.mkdir(parents=True, exist_ok=True)
     df = ingest.read_logger(data)
@@ -167,6 +171,13 @@ def run(data, out="out/powerbi", source="logger", log=print):
     sw = sweeps_table(data)
     tables = {"daily_summary": daily_summary(df, ev, al, sw), "spikes": spikes_table(ev, al),
               "sweeps": sw, "alarms": al}
+    if config.WX_ENABLED if weather is None else weather:    # MODEL data, opt-in (wxref/)
+        from wxref import analysis as wxa
+        wx = wxa.model_for(df, log=log)
+        ds = tables["daily_summary"]
+        tables["daily_summary"] = ds.merge(wxa.daily_columns(wx, ds["date"]), on="date",
+                                           how="left")
+        tables["wx_model_hourly"] = wxa.hourly_table(wx, df, source).drop(columns="source")
     for t in tables.values():
         t.insert(0, "source", source)    # "synthetic" for --demo: never quote those numbers
     for name, t in tables.items():
@@ -190,11 +201,13 @@ def main():
     ap.add_argument("--data", help="folder with the SD-card files")
     ap.add_argument("--out", default="out/powerbi")
     ap.add_argument("--demo", action="store_true", help="use SYNTHETIC demo files")
+    ap.add_argument("--weather", action="store_true",
+                    help="add the Open-Meteo MODEL columns for this run (as WX_ENABLED)")
     a = ap.parse_args()
     if a.demo:
         demo(a.out)
     elif a.data:
-        run(a.data, a.out)
+        run(a.data, a.out, weather=a.weather or None)
     else:
         ap.error("give --data <folder> or --demo")
 

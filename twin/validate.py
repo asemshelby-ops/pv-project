@@ -50,11 +50,12 @@ def frame_from_days(days):
     return f
 
 
-def replay(frame, p):
+def replay(frame, p, wind_column="wind"):
     """One row per usable logger row: measured and modelled temperature and power.
     Columns: t_local, date, g, t_meas, t_twin, p_meas, p_twin, p_twin_tmeas, scored_t,
-    scored_p. Returns (table, whether the files held wind)."""
-    arr = fit.thermal_arrays(frame, p, max_days=None)
+    scored_p. Returns (table, whether the files held wind). wind_column: see
+    fit.thermal_arrays (the logger's "wind", or Open-Meteo MODEL wind)."""
+    arr = fit.thermal_arrays(frame, p, max_days=None, wind_column=wind_column)
     f = arr["frame"]
     t_twin = fit.replay_temperature(p, arr)
     g = arr["g"]
@@ -130,14 +131,22 @@ def _fmt(e, unit, rel=False):
                 else "")
 
 
-def report(stats, days, sweeps, p, source, has_wind, title="Twin validation"):
+MODEL_WIND = "wx_model_wind_speed_10m_ms"
+MODEL_WIND_NOTE = ("Open-Meteo MODEL wind at 10 m (grid cell, joined by time; NOT measured at "
+                   "the module, and not at the height the twin's u1 placeholder assumes): an "
+                   "exploratory run, not a validation of the wind term")
+
+
+def report(stats, days, sweeps, p, source, has_wind, title="Twin validation",
+           wind_column="wind"):
     tags = p.tags()
     lines = [
         f"# {title}", "",
         f"> {SIM_NOTICE}", "",
         f"- Data: {source}",
         "- Twin parameters: " + ", ".join(f"{n} {t}" for t, n in sorted(tags.items())),
-        "- Wind: " + ("measured (wind column of the files)" if has_wind else
+        "- Wind: " + ((MODEL_WIND_NOTE if wind_column == MODEL_WIND else
+                       "measured (wind column of the files)") if has_wind else
                       f"not in the files; the twin used {p.wind_fallback_ms:g} m/s "
                       "throughout, so it cannot follow wind lulls"),
         f"- Days: {len(days)}; rows below {MIN_G:g} W/m2 are not scored", "",
@@ -193,16 +202,17 @@ def figure(table, path, title):
     plt.close(fig)
 
 
-def run(frame, out, p, source, sweeps_folder=None, title="Twin validation", log=print):
+def run(frame, out, p, source, sweeps_folder=None, title="Twin validation", log=print,
+        wind_column="wind"):
     """Validate on an ingested frame; writes report.md, per_day.csv, rows.csv and a figure
-    to `out`. Returns the statistics."""
+    to `out`. Returns the statistics. wind_column: see fit.thermal_arrays."""
     out = pathlib.Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    table, has_wind = replay(frame, p)
+    table, has_wind = replay(frame, p, wind_column)
     stats, days = summarise(table)
     sweeps = sweep_check(sweeps_folder, p) if sweeps_folder else None
-    (out / "report.md").write_text(report(stats, days, sweeps, p, source, has_wind, title),
-                                   encoding="utf-8")
+    (out / "report.md").write_text(report(stats, days, sweeps, p, source, has_wind, title,
+                                          wind_column), encoding="utf-8")
     days.to_csv(out / "per_day.csv", index=False)
     table.to_csv(out / "rows.csv", index=False)
     figure(table, out / "example_day.png", title)
@@ -214,9 +224,17 @@ def run(frame, out, p, source, sweeps_folder=None, title="Twin validation", log=
     return {**stats, "sweeps": sweeps, "has_wind": has_wind}
 
 
-def run_folder(folder, out, p, source, **kw):
+def run_folder(folder, out, p, source, model_wind=False, **kw):
+    """model_wind: join Open-Meteo MODEL wind (wxref, docs/weather-reference.md) and drive
+    the twin with it instead of the logger's wind column."""
     from analysis import ingest
-    return run(ingest.read_logger(folder), out, p, source, sweeps_folder=folder, **kw)
+    frame = ingest.read_logger(folder)
+    if model_wind:
+        from wxref import analysis as wxa
+        frame = wxa.frame_with_model(frame, wxa.model_for(frame, log=kw.get("log", print)))
+        kw["wind_column"] = MODEL_WIND
+        source += "; wind: Open-Meteo MODEL wind at 10 m"
+    return run(frame, out, p, source, sweeps_folder=folder, **kw)
 
 
 # --- the synthetic demo -------------------------------------------------------------------------
@@ -294,6 +312,9 @@ def main():
     ap.add_argument("--demo", action="store_true", help="run on synthetic files")
     ap.add_argument("--seed", type=int, default=11)
     ap.add_argument("--days", type=int, default=10)
+    ap.add_argument("--wx-model-wind", action="store_true",
+                    help="drive the twin with Open-Meteo MODEL wind at 10 m (wxref; needs "
+                         "config.WX_SITE_LAT/LON) instead of the files' wind column")
     a = ap.parse_args()
     if a.demo:
         demo(a.out + "_demo" if a.out == "out/twin/validation" else a.out, a.seed, a.days)
@@ -303,7 +324,7 @@ def main():
         ap.error("give --data <folder>, or --demo")
     p = params.load(a.params, None) if a.params else params.load()
     kind = "REAL rig files" if a.real else "logger files (not declared real)"
-    run_folder(a.data, a.out, p, f"{kind} in {a.data}")
+    run_folder(a.data, a.out, p, f"{kind} in {a.data}", model_wind=a.wx_model_wind)
 
 
 if __name__ == "__main__":

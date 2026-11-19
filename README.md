@@ -27,6 +27,10 @@ Power BI tables (daily summary, spikes, sweeps, alarms) from the SD-card files:
 `python -m analysis.powerbi --data <folder>` -> `out/powerbi/`; see
 [docs/powerbi.md](docs/powerbi.md).
 
+Optional weather reference (off by default, `config.WX_ENABLED`): Open-Meteo **model**
+irradiance, temperature and wind as a daily cross-check of the PYR20 and as a model wind
+column for analysis and the twin; see [docs/weather-reference.md](docs/weather-reference.md).
+
 Seeds 0-4 are **burned**: their test results were seen while designing the
 current NASIM-GBT, so the current version is judged on seeds 5-9 only.
 

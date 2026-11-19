@@ -24,6 +24,12 @@ never reads or writes the historian of the real module (scada/sim_source.py):
 The 3D view of /rooftop (rooftop3d.js) also reads GET /api/state, only to draw our real
 module apart from the rooftop and labelled as the only measured one; nothing of it goes
 into the simulation, and no simulated value is drawn on it.
+
+Weather reference (wxref/, only when config.WX_ENABLED; docs/weather-reference.md):
+
+  GET  /api/wx         Open-Meteo MODEL data for today against the PYR20, the daily checks
+  GET  /wxref.js       its panel; the page loads it only then
+With the switch off these two paths answer 404 and the page is byte for byte the old one.
 """
 import json
 import math
@@ -52,6 +58,7 @@ SIM_OFF = {"available": False, "simulation": True,
 ROW_S = 10                      # the logger's sample period
 MAX_SPAN_S = 31 * 86400
 SERIES = ["T_module", "T_ambient", "irradiance", "power", "voltage", "current", "p", "D"]
+WX_SCRIPT = b'<script src="wxref.js"></script>\n</body>'    # added to "/" only when wx is on
 
 
 def _mean(values):
@@ -140,9 +147,15 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         url = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
+        wx = self.server.wx
         if url.path in STATIC:
             name, ctype = STATIC[url.path]
-            return self._send(200, (WEB / name).read_bytes(), ctype)
+            body = (WEB / name).read_bytes()
+            if url.path == "/" and wx is not None:
+                body = body.replace(b"</body>", WX_SCRIPT, 1)
+            return self._send(200, body, ctype)
+        if url.path == "/wxref.js" and wx is not None:
+            return self._send(200, (WEB / "wxref.js").read_bytes(), "text/javascript")
         if url.path.startswith("/api/sim/"):
             return self._sim_get(url.path, q)
         conn = historian.connect(self.server.db_path)
@@ -161,6 +174,11 @@ class Handler(BaseHTTPRequestHandler):
                 body = alarms.list_alarms(conn, "all" if q.get("which") == "all" else "open")
             elif url.path == "/api/journal":
                 body = alarms.journal(conn)
+            elif url.path == "/api/wx" and wx is not None:
+                try:
+                    body = wx(conn)
+                except Exception as e:          # noqa: BLE001 - the panel only, never the page
+                    return self._send(500, {"error": f"weather reference: {e}"})
             else:
                 return self._send(404, {"error": "not found"})
             self._send(200, body)
@@ -221,17 +239,20 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def make_server(db_path, info, port=8050, sim_db_path=None, sim_info=None,
-                notify_status=None, host="127.0.0.1"):
+                notify_status=None, host="127.0.0.1", wx=None):
     """info: {"mode": "live" | "replay", ...} shown by the HMI. port 0 = any free port.
     host: "127.0.0.1" (default, this PC only) or "0.0.0.0" (every network interface;
     scada.run --lan, trusted network only: there is no login).
     sim_db_path: the simulation file of scada/sim_source.py, or None (no simulation).
-    notify_status: callable giving the Telegram notifier's state (scada/notify.py), or None."""
+    notify_status: callable giving the Telegram notifier's state (scada/notify.py), or None.
+    wx: None (weather reference off: nothing of it is served), or a callable(conn) giving
+    the /api/wx answer (wxref/service.py; scada.run passes it only when WX_ENABLED)."""
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True
     server.db_path, server.info = str(db_path), info
     server.sim_db_path = None if sim_db_path is None else str(sim_db_path)
     server.sim_info = sim_info or {}
     server.notify_status = notify_status
+    server.wx = wx
     return server
 

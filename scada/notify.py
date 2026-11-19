@@ -19,9 +19,10 @@ What is sent
     ONE message; a new event waits GROUP_WAIT_S so alarms of the same fault arrive
     together;
   * a heartbeat every day at 08:00 Makkah time (UTC+3): last row, rows of the last 24 h,
-    the day's maximum module temperature, open alarms. If the SCADA stops, the heartbeat
-    does not come: its absence is the warning. After a restart that missed 08:00, the
-    heartbeat of that day is sent at once and marked late.
+    the day's maximum module temperature, open alarms, and -- only with the weather
+    reference switched on (config.WX_ENABLED) -- yesterday's PYR20/model check. If the
+    SCADA stops, the heartbeat does not come: its absence is the warning. After a restart
+    that missed 08:00, the heartbeat of that day is sent at once and marked late.
 
 What it never does
   * block the ingest: it runs in its own thread with its own short-lived SQLite
@@ -45,6 +46,7 @@ import urllib.request
 from contextlib import closing
 from dataclasses import dataclass
 
+import config
 from data.schema import BACK_SENSORS
 from scada import historian
 
@@ -262,6 +264,9 @@ def heartbeat_text(conn, now, label="PV rig", slot=None):
     alarms_ = open_alarms(conn)
     lines.append(f"Open alarms: {len(alarms_)}" + ("" if alarms_ else " (none)"))
     lines += [_open_line(a) for a in alarms_]
+    if config.WX_ENABLED:          # weather reference (wxref/): one line, only when switched on
+        from wxref.service import heartbeat_line
+        lines.append(heartbeat_line(conn, day_iso(slot - 1)))
     lines.append("Next heartbeat tomorrow 08:00. No heartbeat = the SCADA is not running.")
     return "\n".join(lines)
 

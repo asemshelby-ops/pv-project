@@ -36,6 +36,11 @@ Where the numbers come from:
 - Sweep parameters are those of `analysis/gamma.py`. Use `usable = TRUE` for any
   temperature trend (no firmware flag, steady irradiance, enough sun).
 
+Optional, off by default: with `config.WX_ENABLED` (or `--weather`) `daily_summary.csv`
+gets Open-Meteo MODEL columns (`wx_model_*`, `pyr20_*`: the daily PYR20 check) and a fifth
+table `wx_model_hourly.csv` appears. Model data, never measurements; attribution and
+caveats in [weather-reference.md](weather-reference.md).
+
 ## Loading the folder in Power BI Desktop
 
 1. **Get data -> Folder**, choose `out/powerbi`, then **Transform data** (not Combine:
