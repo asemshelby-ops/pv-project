@@ -26,6 +26,7 @@
 // The alarms are only logged; NASIM is trained and the baselines are tuned on SYNTHETIC
 // data: all must be redone on real data before they drive anything. The load never acts
 // on an alarm.
+#include <Preferences.h>
 #include <PvDaq.h>
 #include <esp_task_wdt.h>
 #include <pv_load.h>
@@ -56,12 +57,16 @@ static const uint8_t RESYNC_EVERY = 6;        // re-find the RTC second edge eve
 // generated nasim_config.h: the offline analysis (analysis/ingest.py) uses the same one.
 static const uint8_t DET_RESET_AFTER_FAILS = NASIM_DET_RESET_AFTER_FAILS;
 
-// Back-sheet sensors T1..T5 by ROM (row 0 = T1 ... row 4 = T5).
-// TODO(user): fill in all five rows after the water-bath cross-calibration and mounting.
-// The ROMs are printed on Serial at every boot and appended to /rom_scan.txt on the card,
-// e.g. 28-FF-64-1E-0F-00-00-A1 -> {0x28, 0xFF, 0x64, 0x1E, 0x0F, 0x00, 0x00, 0xA1}.
-// Until ALL five rows are filled, T1..T5 take the sensors in bus-scan order (not tied to a
-// position on the module) and every row carries the ST_TROM_UNMAPPED status bit.
+// Back-sheet sensors T1..T5 by ROM (row 0 = T1 ... row 4 = T5). Three sources, in this order:
+//  1. this table, when ALL five rows are filled in (the permanent record: it is in git).
+//     TODO(user): fill in after the water-bath cross-calibration and mounting. The ROMs are
+//     printed on Serial at every boot and appended to /rom_scan.txt on the card,
+//     e.g. 28-FF-64-1E-0F-00-00-A1 -> {0x28, 0xFF, 0x64, 0x1E, 0x0F, 0x00, 0x00, 0xA1}.
+//  2. the map stored in the ESP32's flash (NVS) by the serial commands TROM SAVE / TROM SET,
+//     when it holds five different ROMs. No rebuild needed; it survives resets and power
+//     cuts, but NOT "erase flash" and not a change of board: copy it into the table above.
+//  3. bus-scan order (not tied to a position on the module, and not the same after a boot
+//     with a sensor missing); every row then carries the ST_TROM_UNMAPPED status bit.
 static const uint8_t T_ROM[5][8] = {{0}, {0}, {0}, {0}, {0}};
 
 // Measurement load (used only with HAS_LOAD 1). DS18B20 on the resistor heatsink, by ROM,
@@ -93,7 +98,10 @@ int det_doy = -1;                 // day the state of the three detectors belong
 uint8_t det_fails = 0;            // rows skipped by the detector in a row
 
 uint8_t t_map[5][8] = {{0}};      // ROM behind each of T1..T5 in use (all zero = none yet)
-bool t_rom_unmapped = true;       // true while t_map comes from the scan order, not T_ROM
+uint8_t t_saved[5][8] = {{0}};    // the map stored in NVS (TROM commands); all zero = none
+bool t_rom_unmapped = true;       // true while t_map comes from the scan order
+const char *t_map_source = "scan order";  // for the boot report
+Preferences nvs;                  // namespace "pvdaq", key "t_rom" = 5 x 8 bytes
 char day_path[16] = "/nodate.csv";  // file of the last row that had a valid RTC time
 
 PvLoad load(panel);               // serviced only with HAS_LOAD 1
@@ -138,15 +146,27 @@ bool romIsZero(const uint8_t *r) {
 // the next row, so one bad read costs one row (the I2C devices are also re-begun, above).
 bool readable(const PvDevice &d) { return d.ok() || d.status() == PvStatus::ReadError; }
 
-// Decides which ROM is behind each of T1..T5. With T_ROM filled in: exactly T_ROM.
-// Otherwise by scan order, and the choice is then KEPT: a column that has a ROM never
-// changes it, so a sensor that drops off the bus leaves its own column empty instead of
-// shifting the others. Columns still free take the next ROM not used yet.
+// True if the table holds five ROMs, all different.
+bool mapComplete(const uint8_t m[5][8]) {
+  for (int k = 0; k < 5; k++) {
+    if (romIsZero(m[k])) return false;
+    for (int j = 0; j < k; j++)
+      if (memcmp(m[k], m[j], 8) == 0) return false;
+  }
+  return true;
+}
+
+// Decides which ROM is behind each of T1..T5. With T_ROM filled in: exactly T_ROM. Else
+// with a complete saved map (NVS): exactly that. Otherwise by scan order, and the choice
+// is then KEPT for this boot: a column that has a ROM never changes it, so a sensor that
+// drops off the bus leaves its own column empty instead of shifting the others. Columns
+// still free take the next ROM not used yet.
 void mapProbes() {
-  t_rom_unmapped = false;
-  for (int k = 0; k < 5; k++) t_rom_unmapped |= romIsZero(T_ROM[k]);
-  if (!t_rom_unmapped) {
-    memcpy(t_map, T_ROM, sizeof(t_map));
+  const uint8_t (*fixed)[8] = mapComplete(T_ROM) ? T_ROM : mapComplete(t_saved) ? t_saved : nullptr;
+  t_rom_unmapped = !fixed;
+  t_map_source = fixed == T_ROM ? "T_ROM table" : fixed ? "saved map (TROM command)" : "scan order";
+  if (fixed) {
+    memcpy(t_map, fixed, sizeof(t_map));
     return;
   }
   for (uint8_t i = 0; i < probes.count; i++) {
@@ -183,8 +203,13 @@ void reportRomScan() {
   } else {
     snprintf(when, sizeof(when), "unknown (RTC)");
   }
-  snprintf(line, sizeof(line), "boot ROM scan, UTC %s: %u DS18B20, T_ROM %s", when,
-           probes.count, t_rom_unmapped ? "NOT filled in -> T1..T5 by scan order" : "used");
+  if (t_rom_unmapped) {
+    snprintf(line, sizeof(line), "boot ROM scan, UTC %s: %u DS18B20, T_ROM NOT filled in -> "
+             "T1..T5 by scan order", when, probes.count);
+  } else {
+    snprintf(line, sizeof(line), "boot ROM scan, UTC %s: %u DS18B20, T1..T5 from the %s", when,
+             probes.count, t_map_source);
+  }
   scanLine(line);
   for (uint8_t i = 0; i < probes.count; i++) {
     char col[12] = "-";  // "T1".."T5"
@@ -199,7 +224,7 @@ void reportRomScan() {
   for (int k = 0; k < 5; k++) {
     if (probes.indexOf(t_map[k]) >= 0) continue;
     snprintf(line, sizeof(line), "T%d: %s", k + 1,
-             t_rom_unmapped ? "no sensor for this column" : "its T_ROM address is NOT on the bus");
+             t_rom_unmapped ? "no sensor for this column" : "its address is NOT on the bus");
     scanLine(line);
   }
 }
@@ -544,18 +569,96 @@ void loadCommand(const char *c) {
     load_manual_off(&load.L, millis(), 0);
     loadLog("command LOAD ON");
   } else {
-    Serial.println("# commands: GAMMA <minutes> | LOAD OFF | LOAD ON");
+    Serial.println("# commands: GAMMA <minutes> | LOAD OFF | LOAD ON | TROM ...");
   }
 }
 
+// ---- T1..T5 map in NVS ------------------------------------------------------------------------
+void loadSavedMap() {
+  memset(t_saved, 0, sizeof(t_saved));
+  if (!nvs.begin("pvdaq", /*readOnly=*/false)) {
+    Serial.println("# TROM: NVS not available, no saved map");
+    return;
+  }
+  if (nvs.getBytesLength("t_rom") == sizeof(t_saved)) nvs.getBytes("t_rom", t_saved, sizeof(t_saved));
+}
+
+bool storeSavedMap() { return nvs.putBytes("t_rom", t_saved, sizeof(t_saved)) == sizeof(t_saved); }
+
+// TROM                 print the sensors on the bus and the column of each
+// TROM SAVE            keep today's assignment for good (all five columns must have a sensor)
+// TROM SET <k> <ROM>   column Tk (1..5) = this sensor, e.g. TROM SET 3 28-FF-64-1E-0F-00-00-A1
+// TROM CLEAR           forget the saved map (back to scan order, unless T_ROM is filled in)
+void tromCommand(const char *c) {
+  while (*c == ' ') c++;
+  if (!*c) {
+    reportRomScan();
+  } else if (!strcmp(c, "SAVE")) {
+    for (int k = 0; k < 5; k++) {
+      if (probes.indexOf(t_map[k]) < 0) {
+        Serial.printf("# TROM SAVE refused: T%d has no sensor on the bus now\n", k + 1);
+        return;
+      }
+    }
+    memcpy(t_saved, t_map, sizeof(t_saved));
+    Serial.println(storeSavedMap() ? "# TROM: assignment saved" : "# TROM: NVS write FAILED");
+    mapProbes();
+    reportRomScan();
+  } else if (!strncmp(c, "SET", 3)) {
+    unsigned k = 0, b[8];
+    if (sscanf(c + 3, " %u %2x-%2x-%2x-%2x-%2x-%2x-%2x-%2x", &k, &b[0], &b[1], &b[2], &b[3], &b[4],
+               &b[5], &b[6], &b[7]) != 9 || k < 1 || k > 5) {
+      Serial.println("# TROM SET <1..5> <ROM as 28-xx-xx-xx-xx-xx-xx-xx>");
+      return;
+    }
+    uint8_t rom[8];
+    for (int i = 0; i < 8; i++) rom[i] = (uint8_t)b[i];
+    if (rom[0] != 0x28 || !PvDs18b20::romCrcOk(rom)) {  // a typing error breaks the CRC
+      Serial.println("# TROM SET refused: not a DS18B20 address (family 28) or its CRC is wrong");
+      return;
+    }
+    for (int j = 0; j < 5; j++) {
+      if (j != (int)k - 1 && memcmp(t_saved[j], rom, 8) == 0) {
+        Serial.printf("# TROM SET refused: that sensor is already T%d\n", j + 1);
+        return;
+      }
+    }
+    memcpy(t_saved[k - 1], rom, 8);
+    if (!storeSavedMap()) Serial.println("# TROM: NVS write FAILED");
+    int n_set = 0;
+    for (int j = 0; j < 5; j++) n_set += !romIsZero(t_saved[j]);
+    Serial.printf("# TROM: T%u set, %d of 5 columns set%s%s\n", k, n_set,
+                  n_set < 5 ? " (the map is used once all five are set)" : "",
+                  probes.indexOf(rom) < 0 ? "; WARNING: that sensor is not on the bus now" : "");
+    if (n_set == 5) {
+      mapProbes();
+      reportRomScan();
+    }
+  } else if (!strcmp(c, "CLEAR")) {
+    memset(t_saved, 0, sizeof(t_saved));
+    nvs.remove("t_rom");
+    memset(t_map, 0, sizeof(t_map));
+    mapProbes();
+    reportRomScan();
+  } else {
+    Serial.println("# commands: TROM | TROM SAVE | TROM SET <1..5> <ROM> | TROM CLEAR");
+  }
+}
+
+void command(const char *c) {
+  if (!strncmp(c, "TROM", 4)) tromCommand(c + 4);
+  else if (HAS_LOAD) loadCommand(c);
+  else Serial.println("# commands: TROM | TROM SAVE | TROM SET <1..5> <ROM> | TROM CLEAR");
+}
+
 void readCommands() {
-  static char buf[24];
+  static char buf[48];  // the longest command: TROM SET <k> <ROM>, 35 characters
   static uint8_t n = 0;
   while (Serial.available()) {
     const char c = (char)Serial.read();
     if (c == '\n' || c == '\r') {
       buf[n] = 0;
-      if (n) loadCommand(buf);
+      if (n) command(buf);
       n = 0;
     } else if (n < sizeof(buf) - 1) {
       buf[n++] = (char)toupper(c);
@@ -594,7 +697,6 @@ void noteLoad() {
 // One pass of the load: commands, the logic (hold step, faults), a sweep if one is due and
 // fits before the next row, and the DS18B20 conversion started 800 ms ahead of the row.
 void loadLoop(uint32_t next_row_ms) {
-  readCommands();
   load.service(last_g, heatsinkTemp());
   noteLoad();
   int32_t to_row = (int32_t)(next_row_ms - millis());
@@ -638,6 +740,7 @@ void setup() {
     if (d != &panel) d->begin();
   }
   if (hub.ok()) panel.begin();  // the INA226 needs the PaHub
+  loadSavedMap();
   mapProbes();
   reportRomScan();
   if (HAS_LOAD) {
@@ -655,6 +758,7 @@ void loop() {
   static uint32_t next = millis();
   static uint32_t n = 0;
   if (mark_ms) logMarker();
+  readCommands();
   if (HAS_LOAD) loadLoop(next);
   if ((int32_t)(millis() - next) < 0) return;
   next += SAMPLE_PERIOD_MS;                 // fixed grid: no drift from the sampling time

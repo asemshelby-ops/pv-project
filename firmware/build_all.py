@@ -32,7 +32,7 @@ def compile_sketch(sketch, name, define):
     r = subprocess.run(cmd, capture_output=True, text=True)
     out = r.stdout + r.stderr
     warnings = [l for l in out.splitlines() if "warning:" in l]
-    own = [l for l in warnings if "Arduino15" not in l]   # third-party code lives in Arduino15
+    own = [l for l in warnings if "arduino15" not in l.lower()]   # third-party: (.)arduino15
     flash = re.search(r"Sketch uses (\d+) bytes \((\d+)%\)", out)
     ram = re.search(r"Global variables use (\d+) bytes \((\d+)%\)", out)
     return r.returncode == 0, out, own, len(warnings) - len(own), flash, ram
