@@ -48,7 +48,7 @@ static const real CUSUM_H_C = NASIM_TUNED_CUSUM_H_C;          // CUSUM alarm lev
 static const int NASIM_START_MIN = 6 * 60;    // detector window = synthetic day window,
 static const int NASIM_END_MIN = 18 * 60;     // config.DAY_START / DAY_END (local time)
 static const int32_t UTC_OFFSET_S = 3 * 3600; // Makkah = UTC+3: NASIM's time inputs are local
-static const uint8_t RETRY_EVERY = 6;         // retry missing devices every 6 samples (60 s)
+static const uint8_t RETRY_EVERY = 6;         // slow devices (1-Wire, PYR20, SD): retry every 60 s
 static const uint8_t RESYNC_EVERY = 6;        // re-find the RTC second edge every 60 s
 // A row with a missing detector input is skipped by the detector, which keeps its state.
 // Only this many skipped rows in a row clear the state (the 10 s spacing the features
@@ -83,6 +83,8 @@ PvDs18b20 probes(pins::ONEWIRE);
 PvPyr20Modbus pyr(Serial2, pins::RS485_RX, pins::RS485_TX);
 PvSdCard sd;
 PvDevice *const DEVICES[] = {&rtc, &env, &hub, &panel, &probes, &pyr, &sd};
+PvDevice *const I2C_RETRY[] = {&rtc, &env, &hub};   // re-begun at every row while not Ok (+ panel)
+PvDevice *const SLOW_RETRY[] = {&probes, &pyr, &sd}; // re-begun every RETRY_EVERY rows
 
 gbt_detector_t det;               // NASIM-GBT
 thr_detector_t det_thr;           // baseline: temperature-rise threshold
@@ -133,7 +135,7 @@ bool romIsZero(const uint8_t *r) {
 }
 
 // True if the device can be read now. A device whose last read failed is read again at
-// the next row (not only after the 60 s re-begin), so one bad read costs one row.
+// the next row, so one bad read costs one row (the I2C devices are also re-begun, above).
 bool readable(const PvDevice &d) { return d.ok() || d.status() == PvStatus::ReadError; }
 
 // Decides which ROM is behind each of T1..T5. With T_ROM filled in: exactly T_ROM.
@@ -226,15 +228,24 @@ void resetDetectors() {
 // ---- one sample ---------------------------------------------------------------------------
 void sample(uint32_t n) {
   uint32_t status = 0;
-  if (n % RETRY_EVERY == 0) {
-    bool retried = false;
-    for (PvDevice *d : DEVICES) {
-      if (!d->ok() && d != &panel) retried |= d->begin();
-    }
-    if (!panel.ok() && hub.ok()) retried |= panel.begin();  // the INA226 needs the PaHub
-    mapProbes();  // a re-scan may have found a sensor for a column that had none
-    if (retried || n == 0) printStatus();
+  // Devices that are not Ok are started again before the row. The I2C devices (RTC, BME280,
+  // PaHub, INA226) at EVERY row: begin() on a silent address fails in a few ms [EST], so a
+  // glitch costs one row, not six. This also covers the cases a plain re-read cannot: a
+  // BME280 that lost its settings in a brown-out, and an INA226 marked "not found" because
+  // the PaHub did not answer once. The slow ones (1-Wire scan, PYR20 time-out, SD mount)
+  // keep the 60 s rhythm; the SD card is re-mounted at the row's write anyway.
+  bool retried = false;
+  for (PvDevice *d : I2C_RETRY) {
+    if (!d->ok()) retried |= d->begin();
   }
+  if (!panel.ok() && hub.ok()) retried |= panel.begin();  // the INA226 needs the PaHub
+  if (n % RETRY_EVERY == 0) {
+    for (PvDevice *d : SLOW_RETRY) {
+      if (!d->ok()) retried |= d->begin();
+    }
+    mapProbes();  // a re-scan may have found a sensor for a column that had none
+  }
+  if (retried || n == 0) printStatus();
 
   // Read order: the timestamp, then at once the irradiance (the fastest-changing input,
   // one short Modbus exchange), then the slower devices; the DS18B20 conversion (750 ms)
