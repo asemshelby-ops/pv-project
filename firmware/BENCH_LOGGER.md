@@ -53,6 +53,10 @@ power while the segments are being copied. After the restart the day file may ho
 | `TROM SET 2 28-00-00-00-00-00-00-00` | refused: wrong CRC | |
 | `TROM CLEAR` | list with `T_ROM NOT filled in -> T1..T5 by scan order`; `status` has 32 again | |
 
-Leave the map cleared: the final one is set after the sensors are mounted on the panel
+## 4. Later, not tomorrow: charge controller go/no-go
+
+When the controller, battery and lamp exist: BRINGUP §12 (module ≈ 15–18 V at clear midday and ≥ 2 V above the battery voltage). No γ data is used before it passes.
+
+About §3 — leave the map cleared: the final one is set after the sensors are mounted on the panel
 (then `TROM SAVE` or `TROM SET`, and the five addresses with their positions go into
 `T_ROM` in `logger.ino`).

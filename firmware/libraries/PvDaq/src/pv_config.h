@@ -5,7 +5,9 @@
 
 // ---- Build switches (decisions 2026-11-10) --------------------------------------------
 #ifndef ENABLE_PUMP
-#define ENABLE_PUMP 0      // cooling and pump deferred: the pump is never driven
+#define ENABLE_PUMP 0      // 0 until the bucket test has replaced the assumed thresholds
+                           // below (cooling is back in the paper since 2026-11-14, but the
+                           // pump is not bought or characterised): the pump is never driven
 #endif                     // (pvOutputsOff still holds PUMP_PWM LOW: safety, not pump code).
                            // 1 = the pump driver with its protection (pv_pump.h) runs and the
                            // logger takes the PUMP serial commands (bucket test). Nothing in
@@ -58,6 +60,10 @@ constexpr uint8_t PAHUB_CHANNELS = 8;          // all chip channels, for scans a
 constexpr uint8_t PAHUB_CH_PANEL = 0;          // panel unit in port "0" (verified)
 constexpr uint8_t PAHUB_CH_PUMP = 1;           // pump unit in port "1" (verified); only
                                                // talked to with ENABLE_PUMP 1
+constexpr uint8_t PAHUB_CH_BATTERY = 2;        // RESERVED (2026-11-21): third INA226-10A, on
+                                               // the battery, in port "2". Not bought; no
+                                               // code reads it yet. Same fixed address 0x41
+constexpr uint8_t PAHUB_CH_REFCELL = 3;        // RESERVED: fourth unit, reference cell (Stage 2)
 constexpr uint8_t INA226_ADDR = 0x41;          // M5Stack Unit INA226-10A, fixed (M5 docs)
 constexpr float INA226_10A_SHUNT_OHM = 0.005f; // 5 mOhm (M5 docs; also their ESPHome config)
 constexpr float INA226_10A_MAX_A = 10.0f;      // +/-10 A rating (M5 docs)

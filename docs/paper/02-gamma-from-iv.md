@@ -162,23 +162,33 @@ temperature, collected over many days instead of inside one 20-min run. It is Me
    module to the battery through a switch (PWM type). The module is then held near the
    battery voltage (≈ 12–14.5 V for a 12 V battery), on the flat part of the I-V curve
    where the current barely depends on temperature, and **γ cannot be seen at all**.
-   Check, one clear midday hour: the logged module voltage must sit well above the
-   battery voltage and near the listed `V_mp` (18 V at 25 °C; lower when hot), and must
-   move when the module is shaded and uncovered. If it follows the battery voltage,
-   Method C is dead and the supervisor should be told that day.
+   **Go/no-go, before any row is used for γ** (procedure: `firmware/BRINGUP.md` §12): at
+   clear midday with the lamp on, the logged module voltage must sit near the listed
+   `V_mp` (18 V at 25 °C; ≈ 15–18 V on a hot module `[EST]`) and at least 2 V above the
+   battery voltage. If it follows the battery voltage, Method C is dead and the supervisor
+   is told that day. The controller is **not bought yet**: it must be a real MPPT, chosen
+   for that (a datasheet that states the tracking method and the PV input voltage range),
+   not for the word on the label.
 2. *The controller is not curtailing.* When the battery is full (absorption / float) or
    the lamp draws less than the module can give, the controller moves the module off the
    MPP toward `V_oc`: power falls for a reason that has nothing to do with temperature.
-   Those rows must be removed (rule below). The lamp should therefore draw at least the
-   module's midday power, or the battery must be large enough to stay in bulk charge until
-   mid-afternoon `[to size once the lamp and battery are known]`.
+   Those rows must be removed (rule below). Requirement on the lamp (not chosen yet): it
+   draws **at least the module's midday power, ≈ 80–100 W**, so the battery never fills
+   while the sun is high. The battery (planned: QSSUN AGM 12 V 18 Ah, not bought) is then
+   only a buffer: 18 Ah × 12 V ≈ 216 Wh `[EST, nominal]`, about two hours of a 100 W lamp
+   with no sun. Two consequences to design for `[OPEN]`: the lamp must be switched off
+   outside the sun hours (timer, or the controller's load output with its low-voltage
+   cut-off) or it empties the battery every evening; and the charge current the module
+   can deliver (≈ 6–7 A) must be within what the battery's datasheet allows.
 
 **Row selection.** A row is used when all hold:
 - controller state = bulk (not absorption, float or off). Source, in this order: the
-  controller's own state if it exposes one; otherwise battery voltage and current from our
-  second INA226 unit (free now that the pump is deferred): bulk = battery voltage below
-  the controller's absorption setpoint and still rising, battery current > 0; otherwise
-  the module-side test alone: `V_module` below 0.9 · `V_oc,expected` `[ASSUMPTION]`;
+  controller's own state if the unit that is bought exposes one; otherwise battery
+  voltage and current from a **third INA226-10A** on PaHub channel 2 (to buy; the second
+  unit stays on the pump, the reference cell will be a fourth in Stage 2): bulk = battery
+  voltage below the controller's absorption setpoint; otherwise the module-side test
+  alone: `V_module` below the curtailed voltage found in the go/no-go check
+  `[ASSUMPTION until that check]`;
 - G within 850–950 W/m², stable to ± 2 % over the last 10 min; clear sky, within ± 2 h of
   solar noon (limits the angle-of-incidence and spectrum changes the PYR20 does not see
   the way the module does);
@@ -214,12 +224,14 @@ convincing subset: same sun angle, warmer module in the afternoon.
    above? The alternative is one borrowed I-V tracer for a few Method A runs.
 2. His 2026-11-03 direction was no battery and no charge controller. Does the new load
    (controller + battery + lamp) have his agreement?
-3. May the second INA226 be put on the battery side to detect bulk / float?
+3. May a third INA226 be bought for the battery side, to detect bulk / float?
 
-**Needed before any of this can be coded.** The controller's make and model (the BOM lists
-an Anern 30 A "MPPT"; whether that unit tracks, and whether it has any data port, has not
-been checked and must not be assumed), the battery type and capacity, and the lamp's power.
-The logger gains a controller-state column only once it is known where the state comes from.
+**Status of the hardware (2026-11-21).** Controller: not bought; must be a real MPPT (the
+Anern 30 A unit in the old BOM has not been checked for tracking or for a data port, and
+neither may be assumed). Battery: planned QSSUN AGM 12 V 18 Ah, not bought. Lamp: not
+chosen, ≥ 80–100 W. Third INA226-10A for the battery: to buy, PaHub channel 2, address
+0x41 (`firmware/PINMAP.md`). The logger gains battery columns and a charge-state column
+only once the unit is on the bench and the supervisor has approved the method.
 
 ## Sources (accessed 2026-11-11)
 

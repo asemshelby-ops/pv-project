@@ -401,9 +401,11 @@ date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,win
 | `# warning: sample period overrun` | A device is blocking for too long: look at the status line |
 | T1..T5 in the wrong order, status has 32 | no T1..T5 map yet: `TROM SAVE` / `TROM SET` on Serial, then copy the addresses into `T_ROM` (step 5) |
 
-## 11. Pump and flow sensor — `logger_pump` build (deferred hardware; compiled, never run)
+## 11. Pump and flow sensor — `logger_pump` build (hardware not bought yet; compiled, never run)
 
-`ENABLE_PUMP` and `HAS_FLOW` are 0 in `pv_config.h`: the logger as flashed today never drives
+Cooling is back in the paper (supervisor, 2026-11-14) and the second INA226 stays on the pump.
+`ENABLE_PUMP` and `HAS_FLOW` are still 0 in `pv_config.h` until the pump is bought and the bucket
+test has replaced the assumed thresholds: the logger as flashed today never drives
 GPIO32 and does not count on GPIO35. The code exists so the bucket test can start the day the
 pump arrives: `python firmware/build_all.py logger_pump`, upload from
 `out/firmware_build/logger_pump`.
@@ -443,3 +445,26 @@ wire connected to nothing, rotor still (blow gently until the reading is the hig
 
 Do not add a 10 kΩ pull-up to 5 V in front of the 10k/20k divider: the high level at the pin
 would be 5 V × 20/40 = 2.5 V, at the ESP32's input threshold (0.75 × 3.3 V = 2.475 V).
+
+## 12. Charge controller go/no-go — before ANY data is used for γ (Method C)
+
+γ Method C (`docs/paper/02` §9) needs a controller that really tracks the maximum-power
+point. A PWM-type unit (also when its label says "MPPT") holds the module near the battery
+voltage and makes γ invisible. Do this on the first clear day with the controller, the
+battery and the lamp connected, and again after any change of controller, battery or lamp.
+
+Conditions: within ± 1 h of solar noon, clear sky, G ≥ 800 W/m², module cleaned, lamp ON,
+logger running. Multimeter on the battery terminals (or the third INA226 once fitted).
+
+| Step | Do | GO | NO-GO |
+|---|---|---|---|
+| 1 | Read module voltage (column `voltage`) and battery voltage, 10 min | module ≈ 15–18 V (the listing's `V_mp` is 18 V at 25 °C; a hot module sits lower `[EST]`) **and at least 2 V above the battery voltage** | module within ≈ 1 V of the battery voltage (≈ 12–14.5 V): the controller is switching, not tracking |
+| 2 | Read module power against irradiance | power ÷ G roughly constant over the 10 min | power far below the listing's 100 W × G/1000 with the lamp on and the battery not full |
+| 3 | Shade the module with the 20 % mesh for 2 min, remove it | module voltage stays in the same band while the current falls and returns | voltage collapses to the battery voltage, or stays pinned whatever the light |
+| 4 | Switch the lamp OFF for 5 min with the battery near full, then ON | voltage rises toward `V_oc` (≈ 21 V listing) when the controller curtails, and comes back down with the lamp: this is what a curtailed row looks like — note the voltage, it sets the rejection rule | — |
+| 5 | Disconnect the module at the controller for 10 s (controller's manual first) | `V_oc` on the logger, for the record | — |
+
+Write the four voltages (module, battery, curtailed, `V_oc`), G and the back-sheet
+temperature in the day's log sheet. **NO-GO in step 1 or 3 = no γ from this controller**:
+tell the supervisor the same day; rows logged with it are still good for temperatures and
+spike detection, not for power cost.

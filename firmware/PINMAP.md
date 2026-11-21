@@ -44,12 +44,24 @@ Spare pins (kept free on purpose):
 ```
 ESP32 (21/22) ── [level shifter if the M5 side idles near 5 V — measure first] ── PaHub V2.1 (0x70)
    │                                                                              ├─ port "0" = ch0: INA226-10A, panel (0x41)
-   │                                                                              └─ port "1" = ch1: INA226-10A, pump  (0x41), read only with ENABLE_PUMP 1
+   │                                                                              ├─ port "1" = ch1: INA226-10A, pump  (0x41), read only with ENABLE_PUMP 1
+   │                                                                              ├─ port "2" = ch2: INA226-10A, battery (0x41) — RESERVED, unit not bought, not read yet
+   │                                                                              └─ port "3" = ch3: INA226-10A, reference cell (0x41) — RESERVED, Stage 2
    ├─ DS3231 RTC (0x68) + its AT24C32 EEPROM (0x57)
    └─ BME280 (0x76 or 0x77, set by SDO on the breakout)
 ```
 
 - The two INA226-10A units both have the fixed address 0x41 (M5Stack docs), so each sits on its own PaHub channel; the firmware selects a channel before talking to that unit and deselects afterwards. PaHub channel selection follows the PCA9548A command byte (TI/NXP datasheet: bit *n* = 1 enables channel *n*).
+- **PaHub channel plan (2026-11-21).** `pv_config.h`: `PAHUB_CH_PANEL` 0, `PAHUB_CH_PUMP` 1, `PAHUB_CH_BATTERY` 2, `PAHUB_CH_REFCELL` 3; ports "4" and "5" free. Every M5Stack INA226-10A has the same fixed address **0x41**, so a third and a fourth unit need nothing but their own port; the PaHub itself stays at 0x70. No GPIO is used.
+
+  | Port / channel | Unit | Measures | Status |
+  |---|---|---|---|
+  | 0 | INA226-10A #1 | module → charge controller (V, I, P of the module) | fitted, read in every row |
+  | 1 | INA226-10A #2 | pump supply line (protection, pump power) | owned; read with `ENABLE_PUMP 1` |
+  | 2 | INA226-10A #3 | battery: voltage at the terminals, charge / discharge current (the unit reads both signs) → bulk / float for γ Method C (`docs/paper/02` §9) | **to buy**; channel reserved, no code yet |
+  | 3 | INA226-10A #4 | reference cell (Stage 2) | later |
+
+  Battery unit, to check before wiring `[OPEN]`: the unit's range is ± 10 A and 0–30 V. The battery current is the controller's charge current minus the lamp's draw only if the lamp is fed from the battery terminals through the shunt; a lamp of ≈ 100 W at 12 V draws ≈ 8 A `[EST]`, inside the range but close to it, so the lamp's real current must be known before the shunt position is fixed. Fuse at the battery terminal.
 - **Port label = chip channel.** Bench check 2026-11-05, moving one unit between ports and then testing the second unit alone: the PaHub port printed "*n*" is PCA9548A channel *n* ("0" → 0, "1" → 1). Both INA226-10A units answer. The scan in `tests/ina226` covers all 8 chip channels; M5 brings out ports 0–5.
 - RTC and BME280 are on the main (upstream) bus, always reachable; none of 0x57, 0x68, 0x76/0x77 collide with 0x41 or 0x70.
 - 100 kHz bus clock (long leads, several modules with their own pull-ups).
