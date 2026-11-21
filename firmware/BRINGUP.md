@@ -446,88 +446,79 @@ wire connected to nothing, rotor still (blow gently until the reading is the hig
 Do not add a 10 kΩ pull-up to 5 V in front of the 10k/20k divider: the high level at the pin
 would be 5 V × 20/40 = 2.5 V, at the ESP32's input threshold (0.75 × 3.3 V = 2.475 V).
 
-## 12. Charge controller go/no-go — before ANY data is used for γ (Method C)
+## 12. Fixed resistor load — install and first check (decision 2026-11-21, replaces the charge-controller go/no-go)
 
-γ Method C (`docs/paper/02` §9) needs a controller that really tracks the maximum-power
-point. A PWM-type unit (also when its label says "MPPT") holds the module near the battery
-voltage and makes γ invisible. Do this on the first clear day with the controller, the
-battery and the lamp connected, and again after any change of controller, battery or lamp.
+The supervisor's 3 Nov instruction stands again: **no battery, no charge controller, no lamp.**
+The module feeds a fixed power resistor and nothing else. No GPIO, no firmware change:
+`HAS_LOAD` stays 0, rows carry `load_mode = none`; the daily log sheet records
+"fixed resistor, R_total = … Ω".
 
-Conditions: within ± 1 h of solar noon, clear sky, G ≥ 800 W/m², module cleaned, lamp ON,
-logger running. Multimeter on the battery terminals (or the third INA226 once fitted).
+**Parts.** Two 1.5 Ω, 100 W aluminium-housed resistors in series (≈ 3.0 Ω, total rating
+≥ 200 W) bolted with thermal paste to an aluminium plate; MC4 extension cable (kept from the
+teammates' list); 10 A blade fuse (holder already bought; the listing's max series fuse is
+10 A). Dissipation at the listing's I_mp ≈ 5.5 A: ≈ 45 W per resistor, ≈ 90 W in all `[EST]`.
+The 100 W rating of such a resistor holds only on the heatsink and at the ambient its
+datasheet states: **read the derating curve and heatsink size of the resistors actually
+bought before mounting** `[OPEN]`.
 
-| Step | Do | GO | NO-GO |
-|---|---|---|---|
-| 1 | Read module voltage (column `voltage`) and battery voltage, 10 min | module ≈ 15–18 V (the listing's `V_mp` is 18 V at 25 °C; a hot module sits lower `[EST]`) **and at least 2 V above the battery voltage** | module within ≈ 1 V of the battery voltage (≈ 12–14.5 V): the controller is switching, not tracking |
-| 2 | Read module power against irradiance | power ÷ G roughly constant over the 10 min | power far below the listing's 100 W × G/1000 with the lamp on and the battery not full |
-| 3 | Shade the module with the 20 % mesh for 2 min, remove it | module voltage stays in the same band while the current falls and returns | voltage collapses to the battery voltage, or stays pinned whatever the light |
-| 4 | Switch the lamp OFF for 5 min with the battery near full, then ON | voltage rises toward `V_oc` (≈ 21 V listing) when the controller curtails, and comes back down with the lamp: this is what a curtailed row looks like — note the voltage, it sets the rejection rule | — |
-| 5 | Disconnect the module at the controller for 10 s (controller's manual first) | `V_oc` on the logger, for the record | — |
+**Wiring.** Module → MC4 cable → fuse → INA226 (PaHub port "0", panel channel) → resistor →
+back to the module's negative. Current ≤ I_sc ≈ 5.9 A, bus voltage ≤ V_oc ≈ 21.5 V if the
+resistor branch opens: both inside the unit's ± 10 A / 0–30 V.
 
-Write the four voltages (module, battery, curtailed, `V_oc`), G and the back-sheet
-temperature in the day's log sheet. **NO-GO in step 1 or 3 = no γ from this controller**:
-tell the supervisor the same day; rows logged with it are still good for temperatures and
-spike detection, not for power cost.
+**Placement.** In shade, **≥ 1.5 m from the module and from the BME280, downwind** of both
+(its warm plume must not reach the air-temperature sensor or the module), nothing flammable
+under or beside it, plate vertical with fins/edges free for air.
 
-## 13. Lamp in the solar-noon window, switched by the ESP32 (decision 2026-11-21, replaces the earlier §13)
-
-Plan, nothing bought or coded: lamp 12 V, **80–100 W**, ON only in a window of about ± 2 h
-around solar noon (the same window as the row filter of γ Method C, `docs/paper/02` §9),
-OFF the rest of the day so the module recharges the battery. Switched by the ESP32 on
-GPIO33 (`pins::LAMP_RELAY`). Third INA226 in the battery lead (net current, PINMAP).
-
-**Wiring.** GPIO33 → active-HIGH switch with a 10 kΩ pull-down at its input (logic-level
-MOSFET module, or a relay module with its own driver transistor; not an active-LOW relay
-board). Switch in the lamp's positive lead, rated ≥ 10 A DC (100 W at 12 V ≈ 8.3 A), fed
-from the battery side of the shunt through a fuse. Battery shunt between the battery
-terminal and the node where controller and lamp meet.
-
-**Daily energy balance `[EST]` — every figure is an estimate from the seller listing and
-round assumptions, none is measured.** Assumptions: clear day; module ≈ 100 W × G/1000 ×
-0.86 (hot module, illustrative γ) × 0.95 (controller) ≈ 73 W at the window's mean
-G ≈ 900 W/m²; ≈ 5.5 peak-sun hours in the plane per clear day; 85 % of the energy sent to
-an AGM battery comes back; battery 26 Ah × 12 V = 312 Wh nominal, so 50 % = 156 Wh.
-
-| | Lamp 80 W | Lamp 100 W |
+| Step | Do | Accept |
 |---|---|---|
-| Lamp, 4 h window | 320 Wh | 400 Wh |
-| Module in the window, clear | ≈ 290 Wh | ≈ 290 Wh |
-| Taken from the battery in the window, clear | ≈ 30 Wh (10 %) | ≈ 110 Wh (35 %) |
-| Module outside the window, clear (≈ 450 − 290) | ≈ 160 Wh → ≈ 135 Wh stored | same |
-| Clear-day result | recharges fully; battery ≥ 90 % | just recharges (135 vs 110 Wh): **no margin** |
-| Battery falls below 50 % in one window if the module averages less than | ≈ 41 W (≈ 55 % of a clear day) | ≈ 61 W (≈ 85 % of a clear day) |
-| Hazy / cloudy window, module at 30 % (≈ 90 Wh), lamp left on | −230 Wh: battery to ≈ 25 % | −310 Wh: battery flat |
+| 1 | Bench: measure each resistor and the pair with the meter's leads shorted first (subtract the lead reading) | pair within the resistors' tolerance of 3.0 Ω; write R_total |
+| 2 | Install as above; fuse in; logger running | INA226 current positive and steady |
+| 3 | Clear noon, 10 min: compare logged `voltage` with a multimeter **at the module's terminals** | the difference is the module-side cable and fuse drop (≈ 0.2 V at 5.5 A `[EST]`); write it, it is a correction to logged power (`docs/paper/01`) |
+| 4 | Same: logged `voltage` ÷ `current` | ≈ R_total (plus the cable after the INA226) |
+| 5 | After 1 h at noon: plate temperature (a spare DS18B20 on the plate, or a contact thermometer) | below the limit in the resistor datasheet with margin `[OPEN until read]` |
+| 6 | Pull the fuse for 10 s, press the marker | logged `current` = 0 and `voltage` ≈ V_oc: write V_oc. Do not leave it open: an open-circuit module runs ≈ 4 °C hotter `[EST]` |
 
-**So: yes, a 26 Ah AGM can fall below 50 % state of charge**, in one day, whenever the lamp
-runs through a window with weak sun, and with the 100 W lamp also after two or three
-merely average days, because the recharge has no margin. A blind timer is therefore not
-enough. And the other way round: an 80 W lamp is below the module's peak (≈ 85–90 W at
-1000 W/m² `[EST]`), so on the clearest noons a full battery would still be curtailed for a
-while. Between the two, **≈ 100 W with the conditions below, or a larger battery**, is the
-consistent choice `[REC]`; the usable capacity at a 3–4 h discharge is also below the
-nominal (20 h) figure `[OPEN: battery datasheet, with its charge-current limit and cycle
-life at 35–50 % depth]`.
+**For the analysis (not coded):** a row with `current` ≈ 0 while G > ≈ 200 W/m² means the
+load is open (fuse, connector): those rows and the next ≈ 30 min are excluded from spike
+counts, because the module heats by about one spike's worth for an electrical reason.
 
-**Rules the firmware needs (not coded; to write when the hardware exists):**
-1. Window: solar noon ± 2 h from the RTC (solar noon computed for the date, as NASIM
-   already does for its features), plus ≈ 10 min before, so the controller has settled
-   when the first usable row comes.
-2. Sun: ON only while irradiance ≥ ≈ 800 W/m² for some minutes; OFF below ≈ 700 W/m²
-   `[ASSUMPTION, to tune]`. Rows below 850 W/m² are not used for γ anyway, so nothing is
-   lost, and the lamp never drains the battery under cloud or dust. PYR20 not readable → OFF.
-3. Battery: OFF below a voltage from the battery's datasheet (≈ 50 % under load;
-   `[OPEN]`), read by the third INA226; that reading missing → OFF. Not ON again the same
-   day after such a cut-off.
-4. Safe state: OFF after every reset until 1–3 hold; a watchdog reset or a dead ESP32
-   releases the pin and the pull-down switches the lamp off. A switch stuck ON is not
-   covered: choose a controller whose load output or own cut-off protects the battery.
-5. Every switch goes to a log file and into the 10 s rows (lamp state), with a few minutes
-   around it excluded from γ.
+**What this load does to the measurement (simulation, twin model with placeholder
+parameters, not our module):** a fixed 3.0 Ω sits on the maximum-power point only near
+≈ 950 W/m² on a hot module; at 500 W/m² it takes ≈ 0.56–0.65 of P_mp. So measured power is
+not P_mp, and γ is **not** measured with this load (`docs/paper/02` §9).
 
-**Side effect on the spike study — to tell the supervisor.** What the module is connected
-to changes its temperature: a module that delivers power runs cooler than one the
-controller has curtailed, by roughly G × 15 % ÷ (25 + 6.84 · v) ≈ 4 °C at 900 W/m² and
-1 m/s `[EST, Faiman defaults; the 15 % is a round figure]`. That is the size of a thermal
-spike. It will happen every time the battery fills outside the window (afternoon, lamp
-off) and can happen at the window's edges. These rises are electrical, not wind: they must
-be labelled from the lamp state and the battery state and kept out of the spike counts.
+## 13. Pump duty tests — flow-rate control (plan 2026-11-21; pump not bought)
+
+Paper focus: spike detection on the ESP32 + flow-rate control — pump PWM duty and burst
+duration against net energy (cooling gain minus pump energy). Three tests, in this order.
+Wiring, commands and protection: §11. **Note:** `PUMP_D_MIN` is 0.50 in `pv_config.h`
+(`[ASSUMPTION]`), so `PUMP 30` is refused: build the bucket-test firmware with it lowered
+to 0.30, and expect stalls and false dry-run trips at low duty until test 1 has replaced
+the assumed thresholds.
+
+**Test 1 — bucket (no module needed).** Real nozzles on their pipe, spraying into a bucket.
+At **30, 50, 70 and 100 % duty**, three 1-min runs each `[ASSUMPTION]`: flow = litres caught ÷
+time (and YF-S401 pulses → `FLOW_PULSES_PER_L`); pump V, I, P from the pump INA226 (port
+"1"); pressure at the nozzle pipe if a gauge is available; does the spray still cover the
+glass width. Then the lowest duty that starts the pump from rest. Output: one table, duty →
+flow, power, coverage; it also replaces the pump-curve placeholder of the twin
+(`twin/data/pump_curve_R385_measured.csv`).
+
+**Test 2 — flow step on the module.** Clear day, ± 2 h of solar noon, module cleaned in the
+morning (the first spray also washes: clean first, so washing and cooling stay separate),
+PYR20 out of the spray, tank water temperature logged. Module at a steady temperature
+(< ≈ 0.3 °C change in 10 min `[ASSUMPTION]`) → marker → one burst at duty *d* for *t* s →
+wait until the temperature is steady again (≈ 5 τ ≈ 30 min, τ ≈ 6.3 min `[LIT]`) → next.
+Grid: d = the duties of test 1 that cover the glass, t = 15 / 30 / 60 s `[ASSUMPTION]`; order
+shuffled, each pair twice. Record per burst: temperature drop of T1..T5 (mean), time back to
+steady, G and its change, T_water, tank weight before/after (evaporation + drift loss).
+About 6 bursts per noon → **≈ 3–4 clear days** `[EST]`.
+
+**Test 3 — the duty with the highest net gain (analysis, no new hardware).** For each burst:
+E_gain = ∫ |γ| · P_mp,est · ΔT(t) dt over the recovery, with P_mp,est = 100 W × G/1000 ×
+[1 + γ (T_cell − 25)] (seller listing, unverified) and ΔT(t) the measured drop below the
+no-spray course; E_pump = ∫ P_pump dt from the pump INA226; E_net = E_gain − E_pump.
+γ is the literature range (`docs/paper/02` §9): compute E_net at both ends and report the
+best (d, t) for each end — a result whose sign flips inside the range is reported as such.
+Measured power on the fixed resistor is used only as a cross-check, near ≈ 950 W/m²
+(simulation, above).

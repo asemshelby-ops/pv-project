@@ -53,9 +53,9 @@ power while the segments are being copied. After the restart the day file may ho
 | `TROM SET 2 28-00-00-00-00-00-00-00` | refused: wrong CRC | |
 | `TROM CLEAR` | list with `T_ROM NOT filled in -> T1..T5 by scan order`; `status` has 32 again | |
 
-## 4. Later, not tomorrow: charge controller go/no-go
+## 4. Later, not tomorrow: fixed resistor load
 
-When the controller, battery and lamp exist: BRINGUP §12 (module ≈ 15–18 V at clear midday and ≥ 2 V above the battery voltage). No γ data is used before it passes.
+When the two 1.5 Ω resistors and their plate exist: BRINGUP §12 (install ≥ 1.5 m away in shade, downwind; check R_total, cable drop, plate temperature). Controller, battery and lamp were cancelled on 2026-11-21.
 
 About §3 — leave the map cleared: the final one is set after the sensors are mounted on the panel
 (then `TROM SAVE` or `TROM SET`, and the five addresses with their positions go into

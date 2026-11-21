@@ -8,27 +8,41 @@ Team: 5 — 3 Mechatronics (Asim, lead) + 2 Mechanical. Most of the software wor
 on Asim; keep tasks for teammates small, dated and with one defined output.
 Supervisor: د. عبدالإله الحمياني. Lab access and purchase review: د. عبدالمجيد.
 
-Last synced: 2026-11-10; edited in the repo 2026-11-21 (pump, load) — sync the Project copy.
+Last synced: 2026-11-10; edited in the repo 2026-11-21 (pump; load = fixed resistor; gamma) — sync the Project copy.
 Full status, reasons and sources: ./PROJECT_STATE.md
 
 ## CURRENT PHASE — 2026-11-10 (overrides anything below that conflicts)
 - Priority: one published research paper, narrow and simple: characterize thermal
   spikes on our module in Makkah's hot-dry climate (frequency, size, cause, power
-  cost via gamma measured from I-V sweeps) and detect them in real time on the ESP32
-  (NASIM vs threshold vs CUSUM). Expansion (diagnose-before-spray, reference panel,
+  cost via gamma) and detect them in real time on the ESP32 (NASIM vs threshold vs
+  CUSUM), PLUS flow-rate control: pump PWM duty and burst duration vs net energy
+  (cooling gain minus pump energy). Plan: (1) bucket test, flow and pump power at
+  30/50/70/100 % duty; (2) flow steps on the module, temperature drop vs duty;
+  (3) the duty with the highest net gain (firmware/BRINGUP.md section 13). Expansion (diagnose-before-spray, reference panel,
   SCADA) only after the paper.
 - Cooling and the pump are NOT deferred (supervisor, 2026-11-14, reported by Asim
   2026-11-21): cooling is allowed in the paper. The second INA226 stays on the pump.
   ENABLE_PUMP stays 0 in the firmware only until the pump is bought and the bucket test
   has replaced the assumed protection thresholds. Still deferred: anemometer
   (HAS_ANEMOMETER 0, wind = NaN).
-- 2026-11-21 (Asim): the PWM resistor load below is DROPPED: charge controller (real
-  MPPT, not bought) + AGM battery >= 26 Ah (not bought) + 80-100 W lamp, switched by the
-  ESP32 only in the solar-noon window (about +/-2 h) and in strong sun.
-  No I-V sweeps; gamma by Method C (docs/paper/02 section 9), PENDING the supervisor.
-  HAS_LOAD stays 0; its build variant is kept and never flashed. GPIO33 = LAMP_RELAY
-  (reserved). Third INA226 (battery) on PaHub channel 2. Every "Load", "sweep" and
-  "option C" paragraph below is history, kept for reference.
+- LOAD (2026-11-21, final, back to the supervisor's 3 Nov note): NO battery, NO charge
+  controller, NO lamp. Fixed power resistor ~3 ohm = two 1.5 ohm 100 W aluminium-housed
+  resistors in series (total rating >= 200 W) on an aluminium plate, in shade, >= 1.5 m
+  from the module and the BME280, downwind, away from anything flammable. Wiring: module
+  -> MC4 cable -> fuse -> INA226 (panel channel) -> resistor. No GPIO, no firmware:
+  HAS_LOAD stays 0 (its build is kept, never flashed). GPIO33 FREE; PaHub port 2 free.
+  CANCELLED: MPPT controller, battery, lamp, LAMP_RELAY, third INA226. The teammates'
+  list (Victron PWM controller + 9 Ah AGM + H4 halogen lamps) was rejected: PWM pins the
+  module near battery voltage and hides the temperature effect; it contradicts the
+  3 Nov note; 120 W of lamps exceed the module. Only its MC4 extension cable is kept.
+  The fixed resistor is on the MPP only near ~950 W/m2 (twin simulation), so logged
+  power is NOT P_mp and gives no gamma. Install check: firmware/BRINGUP.md section 12.
+- GAMMA (2026-11-21): literature value for mono c-Si with a stated range (0.30-0.45 %/degC
+  abs., Kaldellis et al. 2014, abstract level; central -0.40 assumed) and a sensitivity
+  analysis over -0.30..-0.50 %/degC in the paper; our own gamma (Method A) only if an
+  I-V tracer is borrowed for 2-3 days. Method C is a note only (docs/paper/02 section 9;
+  supervisor questions: docs/paper/13).
+- Every "Load", "sweep" and "option C" paragraph below is history, kept for reference.
 - Spike definition (supervisor): the rise when the sun returns after a cloud COUNTS.
   Do not require stable irradiance; label the cause (irradiance step vs. other).
 - Load (decision 2026-11-11): two 1.5 ohm branches, each with its own MOSFET. Branch A
@@ -122,8 +136,9 @@ PV module (BOUGHT, 2026-11): BANINUAN 100 W monocrystalline, 12 V class. Seller 
 1200 x 540 x 30 mm, 4 kg, max series fuse 10 A. Read the module label to confirm.
 NO 30 W module exists (correction 2026-11-04; older notes saying one was bought were
 wrong). Tilt ~21 deg (near Makkah latitude), facing the sun.
-CRITICAL: temperature coefficients, NOCT and cell count are UNKNOWN. gamma is measured
-from I-V sweeps. Never invent datasheet values; if a calculation needs them, say so.
+CRITICAL: temperature coefficients, NOCT and cell count are UNKNOWN. gamma comes from the
+literature with a range (2026-11-21; measured only if an I-V tracer is borrowed). Never
+invent datasheet values or present a literature gamma as ours; if a calculation needs them, say so.
 
 Bought or ordered (orders 18-20 Oct, ~643 SAR):
 - M5Stack Unit INA226-10A x2 (panel + pump channels): 5 mOhm shunt, +/-10 A, bus
@@ -147,7 +162,7 @@ Bought or ordered (orders 18-20 Oct, ~643 SAR):
 - Listed as bought but not seen in the order screenshots — confirm: BME280, microSD
   module, terminal blocks.
 Still missing: 12 V mains adapter (size it for pump + electronics, ~5 A [EST]), ESP32
-(if none), load parts (resistors, capacitors, MOSFET + gate driver, heatsink),
+(if none), load: two 1.5 ohm 100 W aluminium-housed resistors + aluminium plate, MC4 cable,
 enclosure, radiation shield for the BME280, 4.7 kOhm pull-up, pump MOSFET driver,
 nozzles, pump (+ one spare), tubing, gutter, tank, inline filter.
 Anemometer: pending supervisor approval, priority raised (wind lulls = likely spike
@@ -195,7 +210,7 @@ for switching, INA226 readings and sweep logic, not MPP accuracy — then the 10
 
 ## Detection signal
 
-1. Measure gamma from I-V sweeps (verify the IEC procedure before citing it).
+1. gamma: literature range + sensitivity (2026-11-21); from I-V sweeps only if a tracer is borrowed.
 2. P_25 = P_mp,meas / [1 + gamma * (T_cell - 25)];  dP_T = P_25 - P_mp,meas.
 3. A spike = a rapid rise of T_cell and dP_T while irradiance-normalized P_25 stays
    steady. A power drop or temperature rise NOT explained by a wind lull (irradiance
@@ -232,7 +247,7 @@ I2C (via PaHub) - INA226 x2 (0x41 each, separate channels), BME280, RTC
 1-Wire          - DS18B20 T1..T5 on the back sheet (+ water/tank)
 RS485           - PYR20, Modbus RTU (study frames, function codes and CRC before coding)
 SPI             - SD card
-PWM             - measurement load and pump
+PWM             - pump only (the load is a fixed resistor, no PWM)
 
 ## Data format
 

@@ -22,7 +22,8 @@
 #define HAS_LOAD 0         // 0 = no load hardware fitted: both load pins stay LOW, rows carry
 #endif                     // D = NaN, load_mode = none.
                            // DROPPED 2026-11-21 (Asim): the PWM resistor load is not being
-                           // built (charge controller + battery + lamp instead), so this
+                           // built. Since 2026-11-21 the module feeds a FIXED ~3 ohm
+                           // resistor (no battery, no controller, no lamp; no GPIO), so this
                            // stays 0. With 0 the compiler removes the load and I-V sweep
                            // code from the logger: tests/test_load_logic.py checks that no
                            // sweep function is in the built firmware. The code is kept,
@@ -46,10 +47,8 @@ constexpr int FLOW_PULSE = 35;    // flow sensor pulses -> PCNT; input-only, NO 
                                   // external pull-up to 3.3 V or a divider (PINMAP.md)
 constexpr int LOAD_A_PWM = 33;     // load branch A gate driver (MPP hold): load DROPPED,
                                    // only the never-flashed HAS_LOAD variant uses it
-constexpr int LAMP_RELAY = 33;     // RESERVED 2026-11-21: lamp switch (relay or MOSFET module),
-                                   // HIGH = lamp on. Same pin as LOAD_A_PWM on purpose: the
-                                   // load is gone. No code drives it yet; pvOutputsOff()
-                                   // holds it LOW = lamp off (PINMAP.md)
+                                   // GPIO33 is otherwise FREE (2026-11-21: lamp and
+                                   // LAMP_RELAY cancelled); pvOutputsOff() holds it LOW
 constexpr int LOAD_B_PWM = 14;     // load branch B gate driver (sweeps only); toggles at boot
                                    // (JTAG MTMS) -> 10 kOhm pull-down on the driver input
 constexpr int MARKER_BUTTON = 27;  // to GND, internal pull-up
@@ -65,9 +64,8 @@ constexpr uint8_t PAHUB_CHANNELS = 8;          // all chip channels, for scans a
 constexpr uint8_t PAHUB_CH_PANEL = 0;          // panel unit in port "0" (verified)
 constexpr uint8_t PAHUB_CH_PUMP = 1;           // pump unit in port "1" (verified); only
                                                // talked to with ENABLE_PUMP 1
-constexpr uint8_t PAHUB_CH_BATTERY = 2;        // RESERVED (2026-11-21): third INA226-10A, on
-                                               // the battery, in port "2". Not bought; no
-                                               // code reads it yet. Same fixed address 0x41
+                                               // port "2" free: battery unit cancelled
+                                               // 2026-11-21 (no battery any more)
 constexpr uint8_t PAHUB_CH_REFCELL = 3;        // RESERVED: fourth unit, reference cell (Stage 2)
 constexpr uint8_t INA226_ADDR = 0x41;          // M5Stack Unit INA226-10A, fixed (M5 docs)
 constexpr float INA226_10A_SHUNT_OHM = 0.005f; // 5 mOhm (M5 docs; also their ESPHome config)

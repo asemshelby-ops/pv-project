@@ -29,14 +29,15 @@ on the Freenove GPIO extension board. Facts about the GPIOs are from the ESP-IDF
 | Pump MOSFET gate (PWM) | **32** | O (LEDC channel 2) | Not strapping; high-impedance during reset, so the gate pull-down (10 kΩ) keeps the pump OFF until the firmware drives it LOW. Driven only with `ENABLE_PUMP 1` (`pv_pump.h`: soft start, cut-off from the pump INA226); held LOW otherwise. |
 | Flow sensor pulse output | **35** | I (PCNT) | Added 2026-11-21. Input-only pin, so it cannot be driven by mistake; the pulse counter (PCNT) accepts any GPIO. **No internal pull-up or pull-down**: an open-collector output needs an external pull-up to 3.3 V (≈ 10 kΩ); a sensor that drives 5 V needs a divider to ≤ 3.3 V. Sensor: **YF-S401** (2026-11-21). Vendor sheet (DFRobot SEN0216): 5–12 V supply, high level > 4.5 V and low < 0.5 V at 5 V, duty 50 ± 10 %, 0.3–6 L/min, "1 L = 5880 pulses" (≈ 590 Hz at 6 L/min, far below the counter's limits). The sheet does **not** say whether the output is open-collector or driven, and gives no internal pull-up value → measure before wiring (BRINGUP §11). `FLOW_PULSES_PER_L` stays 0 until our own bucket calibration. Counted only with `HAS_FLOW 1`; with nothing wired the pin floats and would count noise. |
 | ~~Measurement-load branch B gate driver~~ — **not fitted: the PWM load was dropped 2026-11-21**; pin held LOW, reserved | **14** | O (LEDC) | Decision 2026-11-12 (Asim). The only free output pin. It is a JTAG pin (MTMS) and toggles during boot, so the driver input has a **10 kΩ pull-down**; a toggle would at most connect one 1.5 Ω branch for a few ms `[EST]`. Checked on the scope in bench step B1. |
-| **LAMP_RELAY** — reserved 2026-11-21 (was measurement-load branch A, dropped) | **33** | O | Switches the lamp (80–100 W) ON in the solar-noon window only, about ± 2 h, and only in strong sun with the battery above its cut-off (decision 2026-11-21; rules and energy balance in BRINGUP §13). Switch rated ≥ 10 A DC. HIGH = lamp on. Not strapping; floats during reset, so the switch input needs a **10 kΩ pull-down** and must be **active-HIGH**: many relay modules are active-LOW and would switch the lamp ON at every reset and while the pin is held LOW. A 5 V relay coil must not be driven from the pin itself (module with its own transistor, or a logic-level MOSFET module, which also suits a 5–7 A DC lamp better than small relay contacts `[REC]`). Every sketch holds the pin LOW at boot; **no code drives it yet**. The never-flashed `HAS_LOAD` variant still uses this pin as `LOAD_A_PWM`: one more reason not to flash it. |
+| ~~LAMP_RELAY~~ — **cancelled 2026-11-21 (second change that day): no lamp, no battery, no controller; the module feeds a fixed ≈ 3 Ω resistor that needs no GPIO** (was measurement-load branch A, dropped) | **33** | — | **Free.** Every sketch still holds it LOW at boot (`pvOutputsOff()`), harmless while nothing is connected. The never-flashed `HAS_LOAD` variant uses it as `LOAD_A_PWM`: do not flash that build. |
 | test_marker button (to GND) | **27** | I, internal pull-up | Needs an internal pull-up (34–39 have none); not strapping. Press = LOW. |
 
 Spare pins (kept free on purpose):
 
 | GPIO | Note |
 |---|---|
-| 36 (VP), 39 (VN) | ADC1, input-only: anemometer (pulse or analog, if approved) or a second analog channel. Need external pull-ups for a reed/pulse output. GPIO35 went to the flow sensor (2026-11-21), so two input-only pins remain and **no free output pin**. |
+| 36 (VP), 39 (VN) | ADC1, input-only: anemometer (pulse or analog, if approved) or a second analog channel. Need external pull-ups for a reed/pulse output. GPIO35 went to the flow sensor (2026-11-21), so two input-only pins remain. |
+| 33 | Output-capable, free again since the lamp was cancelled (2026-11-21). Not strapping; floats during reset, so whatever is connected later needs its own pull-down. |
 | 0, 2, 5, 12, 15 | Strapping — avoided. GPIO12 HIGH at reset selects 1.8 V flash and stops the board from booting. |
 
 ## I2C bus
@@ -45,23 +46,23 @@ Spare pins (kept free on purpose):
 ESP32 (21/22) ── [level shifter if the M5 side idles near 5 V — measure first] ── PaHub V2.1 (0x70)
    │                                                                              ├─ port "0" = ch0: INA226-10A, panel (0x41)
    │                                                                              ├─ port "1" = ch1: INA226-10A, pump  (0x41), read only with ENABLE_PUMP 1
-   │                                                                              ├─ port "2" = ch2: INA226-10A, battery (0x41) — RESERVED, unit not bought, not read yet
+   │                                                                              ├─ port "2" = ch2: free (battery unit cancelled 2026-11-21: no battery)
    │                                                                              └─ port "3" = ch3: INA226-10A, reference cell (0x41) — RESERVED, Stage 2
    ├─ DS3231 RTC (0x68) + its AT24C32 EEPROM (0x57)
    └─ BME280 (0x76 or 0x77, set by SDO on the breakout)
 ```
 
 - The two INA226-10A units both have the fixed address 0x41 (M5Stack docs), so each sits on its own PaHub channel; the firmware selects a channel before talking to that unit and deselects afterwards. PaHub channel selection follows the PCA9548A command byte (TI/NXP datasheet: bit *n* = 1 enables channel *n*).
-- **PaHub channel plan (2026-11-21).** `pv_config.h`: `PAHUB_CH_PANEL` 0, `PAHUB_CH_PUMP` 1, `PAHUB_CH_BATTERY` 2, `PAHUB_CH_REFCELL` 3; ports "4" and "5" free. Every M5Stack INA226-10A has the same fixed address **0x41**, so a third and a fourth unit need nothing but their own port; the PaHub itself stays at 0x70. No GPIO is used.
+- **PaHub channel plan (2026-11-21).** `pv_config.h`: `PAHUB_CH_PANEL` 0, `PAHUB_CH_PUMP` 1, `PAHUB_CH_REFCELL` 3; ports "2", "4" and "5" free (the battery unit planned for port "2" was cancelled on 2026-11-21 with the battery). Every M5Stack INA226-10A has the same fixed address **0x41**, so a further unit needs nothing but its own port; the PaHub itself stays at 0x70. No GPIO is used.
 
   | Port / channel | Unit | Measures | Status |
   |---|---|---|---|
-  | 0 | INA226-10A #1 | module → charge controller (V, I, P of the module) | fitted, read in every row |
+  | 0 | INA226-10A #1 | module → fixed ≈ 3 Ω resistor (V, I, P of the module); wiring: module → MC4 cable → fuse → this unit → resistor | fitted, read in every row |
   | 1 | INA226-10A #2 | pump supply line (protection, pump power) | owned; read with `ENABLE_PUMP 1` |
-  | 2 | INA226-10A #3 | battery: voltage at the terminals, charge / discharge current (the unit reads both signs) → bulk / float for γ Method C (`docs/paper/02` §9) | **to buy**; channel reserved, no code yet |
+  | 2 | — | ~~battery~~ — **cancelled 2026-11-21** (no battery, no controller) | free |
   | 3 | INA226-10A #4 | reference cell (Stage 2) | later |
 
-  Battery unit, to check before wiring `[OPEN]`: the unit's range is ± 10 A and 0–30 V. Put the shunt in the battery lead itself, between the battery terminal and the point where controller and lamp meet: it then reads the battery's NET current (charge minus lamp), positive when charging. Lamp 80–100 W (decision 2026-11-21) = 6.7–8.3 A at 12 V `[EST]`: the worst case is the lamp on with no sun, −8.3 A, inside ± 10 A; in the window the net current is near zero, and charging adds at most ≈ 7 A `[EST]`. Fuse at the battery terminal.
+  Panel unit with the fixed resistor `[EST]`: current at most I_sc ≈ 5.9 A (listing), inside ± 10 A; bus voltage at most V_oc ≈ 21.5 V if the resistor branch opens, inside 0–30 V. No capacitor and no PWM pulses any more, so the unit sees only the module's DC current.
 - **Port label = chip channel.** Bench check 2026-11-05, moving one unit between ports and then testing the second unit alone: the PaHub port printed "*n*" is PCA9548A channel *n* ("0" → 0, "1" → 1). Both INA226-10A units answer. The scan in `tests/ina226` covers all 8 chip channels; M5 brings out ports 0–5.
 - RTC and BME280 are on the main (upstream) bus, always reachable; none of 0x57, 0x68, 0x76/0x77 collide with 0x41 or 0x70.
 - 100 kHz bus clock (long leads, several modules with their own pull-ups).
@@ -79,7 +80,7 @@ LEDC, 20 kHz, 11-bit resolution since 2026-11-13 (20 kHz is above hearing; 20 kH
 
 | Output | GPIO | LEDC channel (timer) | Driven when |
 |---|---|---|---|
-| Load branch A | 33 | 0 (timer 0) | never: load dropped 2026-11-21, `HAS_LOAD` stays 0. The pin is now `LAMP_RELAY` (plain on/off, no PWM) |
+| Load branch A | 33 | 0 (timer 0) | never: load dropped 2026-11-21, `HAS_LOAD` stays 0. GPIO33 is free since the lamp was cancelled (2026-11-21) |
 | Load branch B | 14 | 1 (timer 0) | never, as above |
 | Pump | 32 | 2 (timer 1) | `ENABLE_PUMP 1`, and only after a typed `PUMP` command |
 
