@@ -371,7 +371,10 @@ date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,win
 
 - Date and time are UTC (10:00 in Makkah = 07:00 in the log).
 - One row every 10 s; the time column steps by 10 s with no drift (millis schedule).
-- Missing devices → empty fields, and the logger keeps running. Missing devices are retried every 60 s.
+- Missing devices → empty fields, and the logger keeps running. RTC, BME280, PaHub and INA226 are started again at the next 10 s row; the DS18B20 scan, the PYR20 and the SD mount every 60 s.
+- `# start: date,time,code,reason` at boot (also in `/boot_log.csv`): why the chip started. `task watchdog` = the loop stalled for 15 s and the chip reset itself; `brown-out` = the supply dipped.
+- `# flash buffer: ok, 0 segments waiting, …` at boot. If the card is pulled or fails, rows go to the ESP32's flash (status bit 512) and are copied to the day files, in order, when the card is back (`# flash buffer: all rows copied to the SD card`). Room for roughly 18 h `[EST, not measured]`; beyond that the oldest 10 min go first. Markers, sweeps and logs are NOT buffered.
+- Serial commands (115200, line end = newline): `TROM` lists the DS18B20 and their columns; `TROM SAVE` fixes today's assignment for good; `TROM SET 3 28-xx-xx-xx-xx-xx-xx-xx` puts one sensor on T3 (used once all five are set); `TROM CLEAR` forgets it. The saved map lives in the ESP32 (NVS): copy the five addresses into `T_ROM` in `logger.ino` as well, so they are in git.
 - Read order in a row: time, then irradiance at once, then air, panel V/I, and the
   DS18B20 conversion last (so the temperatures are ≈ 0.1–0.9 s after the timestamp `[EST]`).
 - `p` is empty outside 06:00–18:00 Makkah time (03:00–15:00 UTC in the log), during the first 10 min of data each day (warm-up),
@@ -391,6 +394,39 @@ date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,win
 |---|---|
 | Date/time empty, status odd | RTC missing or not set (step 2). The rows are kept; times are rebuilt from `uptime_ms` |
 | status has 256 | SD write needed a retry or rows were lost: check the card and its wiring |
+| status has 512 | the row waited in the ESP32's flash because the card did not take it; it is in the day file, nothing to repair. Check the card |
+| the same rows twice in a day file | power was cut between copying a flash segment and deleting it (≤ 60 rows): drop exact duplicate lines |
+| several `task watchdog` lines in `/boot_log.csv` | a device blocks the loop for more than 15 s: look at the status line before each reset |
 | Time 3 h ahead of UTC | RTC still on Makkah local time: re-run `set_rtc.py` (Before logging) |
 | `# warning: sample period overrun` | A device is blocking for too long: look at the status line |
-| T1..T5 in the wrong order, status has 32 | `T_ROM` not filled in yet (step 5) |
+| T1..T5 in the wrong order, status has 32 | no T1..T5 map yet: `TROM SAVE` / `TROM SET` on Serial, then copy the addresses into `T_ROM` (step 5) |
+
+## 11. Pump and flow sensor — `logger_pump` build (deferred hardware; compiled, never run)
+
+`ENABLE_PUMP` and `HAS_FLOW` are 0 in `pv_config.h`: the logger as flashed today never drives
+GPIO32 and does not count on GPIO35. The code exists so the bucket test can start the day the
+pump arrives: `python firmware/build_all.py logger_pump`, upload from
+`out/firmware_build/logger_pump`.
+
+Wiring (PINMAP.md): pump INA226 unit in PaHub port "1", in the pump's supply line; GPIO32 →
+100 Ω → gate of a logic-level N-MOSFET, 10 kΩ gate pull-down, flyback diode across the pump,
+fuse in the pump line; flow sensor pulse output → GPIO35 with a pull-up to 3.3 V or a divider
+(the pin has no internal pull).
+
+| Command | Does |
+|---|---|
+| `PUMP 60` | soft start to 60 % duty (1 s from 0 to 100 %); below `PUMP_D_MIN` (50 %) is refused |
+| `PUMP OFF` | stop now |
+| `PUMP` | state, duty, last V and I, trip reason |
+| `PUMP RESET` | clear a trip — after looking for the cause |
+
+The pump is cut off, and stays off until `PUMP RESET`, when its INA226 reads: more than
+`PUMP_I_TRIP_A` three times in a row (over-current); less than `PUMP_I_DRY_A` for 3 s once
+10 s have passed since the start (dry run); or nothing three times in a row. **Every one of
+these numbers is an assumption** (`pv_config.h`, pump block): the first job of the bucket
+test is to replace them — current at each duty with water, while still drawing air, and the
+lowest duty that starts the pump. Expect false dry-run trips until then.
+Files: `/pump_log.csv` (commands, starts, stops, trips), `/PPYYYYMMDD.csv` (per 10 s row in
+which the pump ran or water flowed: duty, V, I, P, state, `flow_pulses`, `flow_Lmin`).
+`flow_Lmin` stays empty until `FLOW_PULSES_PER_L` is measured (pulses counted ÷ litres caught).
+Nothing in the firmware starts the pump by itself.

@@ -28,7 +28,9 @@
 // With the pump (ENABLE_PUMP 1 in pv_config.h; PvDaq/src/pv_pump.h): the serial commands
 // PUMP <percent> | PUMP OFF | PUMP RESET drive it for the bucket test, with soft start and
 // the over-current / dry-run cut-off from the pump's INA226. /pump_log.csv = starts, stops
-// and trips; /PPYYYYMMDD.csv = one row per 10 s row in which the pump ran.
+// and trips; /PPYYYYMMDD.csv = one row per 10 s row in which the pump ran or water flowed.
+// With the flow sensor (HAS_FLOW 1; PvDaq/src/pv_flow.h): pulses on GPIO35 are counted by
+// the PCNT hardware and written to the same /PPYYYYMMDD.csv (flow_pulses, flow_Lmin).
 //
 // SAFETY: the pump output is held LOW while ENABLE_PUMP is 0; with ENABLE_PUMP 1 it starts
 // LOW, only a typed command turns it on, and nothing in this sketch pumps by itself (no
@@ -42,6 +44,7 @@
 #include <esp_system.h>
 #include <esp_task_wdt.h>
 #include <pv_flashring.h>
+#include <pv_flow.h>
 #include <pv_load.h>
 #include <pv_pump.h>
 #include <pv_status.h>
@@ -126,6 +129,7 @@ PvLoad load(panel);               // serviced only with HAS_LOAD 1
 PvIna226 pump_ina("INA226 pump", &hub, PAHUB_CH_PUMP);  // talked to only with ENABLE_PUMP 1
 PvPump pump(pump_ina);            // serviced only with ENABLE_PUMP 1
 bool pump_ran = false;            // the pump was on at some time since the last 10 s row
+PvFlow flow;                      // read only with HAS_FLOW 1
 float last_g = NAN;               // irradiance of the last row: input of the load's light rules
 double last_T[5] = {NAN, NAN, NAN, NAN, NAN};  // T1..T5 of the last row: stored with each sweep
 uint32_t row_sweep_id = 0;        // sweep_id column: id of the last finished sweep, 0 = none
@@ -139,7 +143,8 @@ volatile uint32_t mark_ms = 0;    // last button press (ISR), 0 = none pending
 // millis() at the moment the RTC second changes: UTC second anchor_s began at anchor_ms.
 uint32_t anchor_s = 0;            // 0 = no anchor (RTC missing or not set)
 uint32_t anchor_ms = 0;
-const char *PUMP_HEADER = "date,time,uptime_ms,pump_duty,pump_V,pump_I,pump_P,pump_state";
+const char *PUMP_HEADER =
+    "date,time,uptime_ms,pump_duty,pump_V,pump_I,pump_P,pump_state,flow_pulses,flow_Lmin";
 const char *HEADER =
     "date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,"
     "D,load_mode,sweep_id,uptime_ms,status";
@@ -504,7 +509,7 @@ void sample(uint32_t n) {
     if (!ring.flushOldest(sd, HEADER)) break;
     feedLoopWDT();
   }
-  if (ENABLE_PUMP) pumpRow(have_time, t, uptime_ms);
+  if (ENABLE_PUMP || HAS_FLOW) pumpRow(have_time, t, uptime_ms);
   if (ring.pending() != was_pending) {
     was_pending = ring.pending();
     Serial.printf("# flash buffer: %s (%s; %lu segments dropped for room since boot)\n",
@@ -648,10 +653,13 @@ void pumpLoop() {
   state = P.state;
 }
 
-// One line in /PPYYYYMMDD.csv for a 10 s row in which the pump ran: the duty at the row and
-// the last current reading of the protection (mean supply current, 16 averages). Raw values.
+// One line in /PPYYYYMMDD.csv for a 10 s row in which the pump ran or water flowed: the duty
+// at the row, the last current reading of the protection (mean supply current, 16
+// averages), and the flow pulses counted since the row before. Raw values; pump fields are
+// empty with ENABLE_PUMP 0, flow fields with HAS_FLOW 0, flow_Lmin while FLOW_PULSES_PER_L is 0.
 void pumpRow(bool have_time, const DateTime &t, uint32_t uptime_ms) {
-  if (!pump_ran) return;
+  const bool have_flow = HAS_FLOW && (flow.ok() || flow.begin()) && flow.read();
+  if (!pump_ran && !(have_flow && flow.pulses)) return;
   pump_ran = pump.P.d > 0.0f;
   char path[40] = "/PPnodate.csv";  // sized for the widest values the compiler can see
   String row;
@@ -667,12 +675,15 @@ void pumpRow(bool have_time, const DateTime &t, uint32_t uptime_ms) {
   }
   row += ',';
   row += uptime_ms;
-  addField(row, pump.P.d, 4);
+  addField(row, ENABLE_PUMP ? pump.P.d : NAN, 4);
   addField(row, pump.busV, 4);
   addField(row, pump.currentA, 4);
   addField(row, pump.powerW, 4);
   row += ',';
-  row += pump_state_text(pump.P.state);
+  if (ENABLE_PUMP) row += pump_state_text(pump.P.state);
+  row += ',';
+  if (have_flow) row += flow.pulses;
+  addField(row, have_flow ? flow.litresPerMin : NAN, 3);
   Serial.printf("# pump row: %s\n", row.c_str());
   if (sd.ok()) sd.appendLine(path, row.c_str(), PUMP_HEADER);
 }
@@ -943,6 +954,12 @@ void setup() {
     if (!pump.begin()) Serial.println("# pump: LEDC attach FAILED: the pump is held off");
     Serial.printf("# pump: enabled, off. INA226 pump = %s. Commands: PUMP <percent> | PUMP OFF | "
                   "PUMP RESET | PUMP\n", pump_ina.statusText());
+  }
+  if (HAS_FLOW) {
+    flow.begin();
+    Serial.printf("# flow sensor on GPIO%d: %s%s%s; %s\n", pins::FLOW_PULSE, flow.statusText(),
+                  flow.detail()[0] ? ", " : "", flow.detail(),
+                  FLOW_PULSES_PER_L > 0 ? "calibrated" : "NOT calibrated: raw pulses only");
   }
   esp_task_wdt_config_t wdt = {LOOP_WDT_MS, 0, true};  // time-out, no idle task, reset
   if (esp_task_wdt_reconfigure(&wdt) != ESP_OK) esp_task_wdt_init(&wdt);

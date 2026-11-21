@@ -217,7 +217,8 @@ two. A bit is never renumbered once data exists; new bits are added at the end.
 | 5 | 32 | `TROM_UNMAPPED` | `T_ROM` in `logger.ino` is not filled in: T1..T5 follow the bus-scan order, not positions on the module |
 | 6 | 64 | `DET_SKIPPED` | the row was not given to NASIM (an input or the time is missing); the detector keeps its state |
 | 7 | 128 | `DET_RESET` | NASIM's state was cleared at this row: `DET_RESET_AFTER_FAILS` (5) skipped rows in a row. `p` is empty for the next 10 min |
-| 8 | 256 | `SD_RETRY` | this row needed a second SD write attempt, or the row(s) just before it did not reach the card |
+| 8 | 256 | `SD_RETRY` | this row needed a second SD write attempt, or the row(s) just before it reached neither the card nor the flash buffer (lost) |
+| 9 | 512 | `BUFFERED` | added 2026-11-21: the card did not take this row (or older rows were still waiting), so it was kept in the ESP32's flash (LittleFS, `pv_flashring.h`) and copied to its day file later, in time order. The data in the row is unaffected |
 
 Example: `status = 33` = 32 + 1 = `TROM_UNMAPPED` + `RTC_INVALID`. Until `T_ROM` is
 filled in, a clean row reads `32`, not `0`. Rows outside the 06:00–18:00 window are not

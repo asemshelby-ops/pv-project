@@ -12,6 +12,10 @@
                            // the firmware decides by itself to pump. build_all.py compiles
                            // this variant too ("logger_pump").
 #define HAS_ANEMOMETER 0   // no anemometer in this phase: wind logged as NaN
+#ifndef HAS_FLOW
+#define HAS_FLOW 0         // 1 = a pulse-output flow sensor is wired to GPIO35 (pv_flow.h).
+#endif                     // Keep 0 while nothing is connected: the pin has no pull-up or
+                           // pull-down and would count noise.
 #ifndef HAS_LOAD
 #define HAS_LOAD 0         // 0 = no load hardware fitted: both load pins stay LOW, rows carry
 #endif                     // D = NaN, load_mode = none. Set to 1 only after bench B0-B7 pass
@@ -30,6 +34,8 @@ constexpr int RS485_TX = 25;      // ESP32 TX -> MAX3485 DI ("TXD" on most modul
 constexpr int RS485_RX = 26;      // ESP32 RX <- MAX3485 RO ("RXD")
 constexpr int PYR20_ANALOG = 34;  // ADC1_CH6
 constexpr int PUMP_PWM = 32;
+constexpr int FLOW_PULSE = 35;    // flow sensor pulses -> PCNT; input-only, NO internal pull:
+                                  // external pull-up to 3.3 V or a divider (PINMAP.md)
 constexpr int LOAD_A_PWM = 33;     // load branch A gate driver (MPP hold)
 constexpr int LOAD_B_PWM = 14;     // load branch B gate driver (sweeps only); toggles at boot
                                    // (JTAG MTMS) -> 10 kOhm pull-down on the driver input
@@ -132,6 +138,14 @@ constexpr float PUMP_I_DRY_A = 0.20f;          // [ASSUMPTION] below the listed 
 constexpr uint32_t PUMP_PRIME_MS = 10000;      // [ASSUMPTION] time allowed to draw water
 constexpr uint32_t PUMP_DRY_MS = 3000;         // [ASSUMPTION] low current this long = dry
 constexpr uint32_t PUMP_INA_FAIL_LIMIT = 3;    // failed readings in a row that stop the pump
+
+// ---- Flow sensor (pv_flow.h; used only with HAS_FLOW 1) ------------------------------------------
+constexpr float FLOW_PULSES_PER_L = 0.0f;      // NOT KNOWN: no sensor chosen. 0 = log raw
+                                               // pulses only. Fill in from a bucket
+                                               // calibration (pulses counted / litres caught)
+constexpr uint32_t FLOW_GLITCH_NS = 10000;     // PCNT ignores pulses shorter than 10 us; the
+                                               // ESP32 filter cannot go above ~12.7 us
+                                               // (1023 cycles of the 80 MHz clock)
 
 // ---- Logging -------------------------------------------------------------------------
 constexpr uint32_t SAMPLE_PERIOD_MS = 10000;   // one CSV row every 10 s (CLAUDE.md)

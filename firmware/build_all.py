@@ -6,7 +6,7 @@
 Compile only: nothing is flashed. The logger also compiles export/c (NASIM), so it
 gets the include paths to export/c and export/c/generated as extra compiler flags.
 The logger is compiled four times: as it is flashed today (HAS_LOAD 0, ENABLE_PUMP 0 in
-pv_config.h), with -DHAS_LOAD=1 ("logger_load"), with the pump switched on ("logger_pump")
+pv_config.h), with -DHAS_LOAD=1 ("logger_load"), with the pump and the flow sensor switched on ("logger_pump")
 and with all of them ("logger_full"), so the load and pump code are always build-checked.
 Prints, per sketch, OK / FAILED, the flash and RAM use, and every warning that
 comes from this project's own files (warnings inside the pinned third-party
@@ -22,8 +22,8 @@ ROOT = FW.parent
 SKETCHES = sorted(p.parent for p in FW.glob("tests/*/sketch.yaml")) + [FW / "logger"]
 BUILDS = [(s, s.name, "") for s in SKETCHES] + [
     (FW / "logger", "logger_load", " -DHAS_LOAD=1"),
-    (FW / "logger", "logger_pump", " -DENABLE_PUMP=1"),
-    (FW / "logger", "logger_full", " -DHAS_LOAD=1 -DENABLE_PUMP=1")]
+    (FW / "logger", "logger_pump", " -DENABLE_PUMP=1 -DHAS_FLOW=1"),
+    (FW / "logger", "logger_full", " -DHAS_LOAD=1 -DENABLE_PUMP=1 -DHAS_FLOW=1")]
 
 
 def compile_sketch(sketch, name, define):

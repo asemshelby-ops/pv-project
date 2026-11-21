@@ -1,6 +1,6 @@
 # Pin map — Freenove ESP32-WROVER, Phase 0 data logger
 
-Proposed 2026-11-05. The code reads every pin from one header,
+Proposed 2026-11-05; flow sensor on GPIO35 and the pump driver added 2026-11-21. The code reads every pin from one header,
 `firmware/libraries/PvDaq/src/pv_config.h`; change a pin there and in this table together.
 
 Board: Freenove ESP32-WROVER (ESP32-D0WD-V3 rev 3.1, 4 MB flash, 4 MB PSRAM), camera removed,
@@ -26,7 +26,8 @@ on the Freenove GPIO extension board. Facts about the GPIOs are from the ESP-IDF
 | RS485 TX → MAX3485 (DI / "TXD") | **25** | O | UART2 is remapped here because its default pins (16/17) are the PSRAM pins. Not strapping. |
 | RS485 RX ← MAX3485 (RO / "RXD") | **26** | I | As above. |
 | PYR20 0–2 V analog | **34** | I (ADC1_CH6) | ADC1 (works with Wi-Fi); input-only pin is fine for an analog input and cannot be driven by mistake. |
-| Pump MOSFET gate (PWM) | **32** | O (LEDC) | Not strapping; high-impedance during reset, so the gate pull-down (10 kΩ) keeps the pump OFF until the firmware drives it LOW. |
+| Pump MOSFET gate (PWM) | **32** | O (LEDC channel 2) | Not strapping; high-impedance during reset, so the gate pull-down (10 kΩ) keeps the pump OFF until the firmware drives it LOW. Driven only with `ENABLE_PUMP 1` (`pv_pump.h`: soft start, cut-off from the pump INA226); held LOW otherwise. |
+| Flow sensor pulse output | **35** | I (PCNT) | Added 2026-11-21. Input-only pin, so it cannot be driven by mistake; the pulse counter (PCNT) accepts any GPIO. **No internal pull-up or pull-down**: an open-collector output needs an external pull-up to 3.3 V (≈ 10 kΩ); a sensor that drives 5 V needs a divider to ≤ 3.3 V. Sensor model not chosen → output type, supply and pulses per litre are open. Counted only with `HAS_FLOW 1`; with nothing wired the pin floats and would count noise. |
 | Measurement-load branch B gate driver (PWM, sweeps only) | **14** | O (LEDC) | Decision 2026-11-12 (Asim). The only free output pin. It is a JTAG pin (MTMS) and toggles during boot, so the driver input has a **10 kΩ pull-down**; a toggle would at most connect one 1.5 Ω branch for a few ms `[EST]`. Checked on the scope in bench step B1. |
 | Measurement-load branch A gate driver (PWM, ~20 kHz) | **33** | O (LEDC) | Same reasoning; the gate driver input also needs a pull-down so the load stays off during reset. |
 | test_marker button (to GND) | **27** | I, internal pull-up | Needs an internal pull-up (34–39 have none); not strapping. Press = LOW. |
@@ -35,7 +36,7 @@ Spare pins (kept free on purpose):
 
 | GPIO | Note |
 |---|---|
-| 35, 36 (VP), 39 (VN) | ADC1, input-only: anemometer (pulse or analog, if approved) or a second analog channel. Need external pull-ups for a reed/pulse output. |
+| 36 (VP), 39 (VN) | ADC1, input-only: anemometer (pulse or analog, if approved) or a second analog channel. Need external pull-ups for a reed/pulse output. GPIO35 went to the flow sensor (2026-11-21), so two input-only pins remain and **no free output pin**. |
 | 0, 2, 5, 12, 15 | Strapping — avoided. GPIO12 HIGH at reset selects 1.8 V flash and stops the board from booting. |
 
 ## I2C bus
@@ -43,7 +44,7 @@ Spare pins (kept free on purpose):
 ```
 ESP32 (21/22) ── [level shifter if the M5 side idles near 5 V — measure first] ── PaHub V2.1 (0x70)
    │                                                                              ├─ port "0" = ch0: INA226-10A, panel (0x41)
-   │                                                                              └─ port "1" = ch1: INA226-10A, pump  (0x41)
+   │                                                                              └─ port "1" = ch1: INA226-10A, pump  (0x41), read only with ENABLE_PUMP 1
    ├─ DS3231 RTC (0x68) + its AT24C32 EEPROM (0x57)
    └─ BME280 (0x76 or 0x77, set by SDO on the breakout)
 ```
@@ -62,4 +63,19 @@ ESP32 (21/22) ── [level shifter if the M5 side idles near 5 V — measure fi
 
 ## PWM outputs
 
-LEDC, 20 kHz, 11-bit resolution since 2026-11-13 (20 kHz is above hearing; 20 kHz × 2¹¹ = 40.96 MHz is within the 80 MHz APB clock, 12 bits would not be; `pv_config.h` checks this at compile time). Both outputs are driven LOW (duty 0) at boot by every sketch in this folder; no sketch in Phase 0 turns them on. The pump and sweep logic come later.
+LEDC, 20 kHz, 11-bit resolution since 2026-11-13 (20 kHz is above hearing; 20 kHz × 2¹¹ = 40.96 MHz is within the 80 MHz APB clock, 12 bits would not be; `pv_config.h` checks this at compile time). All three outputs (pump 32, load A 33, load B 14) are driven LOW (duty 0) at boot by every sketch in this folder.
+
+| Output | GPIO | LEDC channel (timer) | Driven when |
+|---|---|---|---|
+| Load branch A | 33 | 0 (timer 0) | `HAS_LOAD 1` |
+| Load branch B | 14 | 1 (timer 0, same phase as A) | `HAS_LOAD 1`, sweeps only |
+| Pump | 32 | 2 (timer 1) | `ENABLE_PUMP 1`, and only after a typed `PUMP` command |
+
+As flashed today (`HAS_LOAD 0`, `ENABLE_PUMP 0`, `HAS_FLOW 0`) none of them is ever turned on. The loop watchdog (15 s, every build) resets the chip if the loop stalls; a reset releases the pins and the gate pull-downs switch everything off.
+
+## Internal flash (no pins)
+
+| Part of the 4 MB flash | Used for |
+|---|---|
+| `spiffs` partition (0x160000 B = 1408 kB, core default partition table) | LittleFS: rows the SD card did not take wait in `/rb/<number>.csv` and are copied back to the card (`pv_flashring.h`). Created at the first boot of this firmware; anything else in that partition is erased. |
+| `nvs` | namespace `pvdaq`, key `t_rom`: the T1..T5 map saved with the `TROM` commands. Lost by "erase flash". |
