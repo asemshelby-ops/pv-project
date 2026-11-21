@@ -19,7 +19,8 @@ What is sent
     ONE message; a new event waits GROUP_WAIT_S so alarms of the same fault arrive
     together;
   * a heartbeat every day at 08:00 Makkah time (UTC+3): last row, rows of the last 24 h,
-    the day's maximum module temperature, open alarms. If the SCADA stops, the heartbeat
+    the day's maximum module temperature, the SD card (lines waiting in the logger's
+    LittleFS ring, lines given up, SD events of the last 24 h), open alarms. If the SCADA stops, the heartbeat
     does not come: its absence is the warning. After a restart that missed 08:00, the
     heartbeat of that day is sent at once and marked late.
 
@@ -239,6 +240,32 @@ def _open_line(a):
             + ("" if a["acked_wall"] is None else ", acknowledged"))
 
 
+SD_EVENTS = ("sd_lost", "sd_back", "ring_full", "ring_error", "ring_flushed")
+
+
+def sd_lines(conn, now):
+    """The SD card in the heartbeat: the newest row's ring columns and the logger's SD
+    events of the last 24 h. An outage alarms by itself (SD_OUTAGE, RING_DROPPED); this
+    line is the daily summary."""
+    r = conn.execute("SELECT ring_rows, ring_dropped, t_utc FROM samples "
+                     "WHERE ring_rows IS NOT NULL ORDER BY t_utc DESC LIMIT 1").fetchone()
+    if r is None:
+        line = "SD card: not reported (no CSV v2 row in the historian)"
+    elif r["ring_rows"] == 0:
+        line = "SD card: up to date (0 lines waiting in the LittleFS ring)"
+    else:
+        line = f"SD card: NOT up to date, {r['ring_rows']} lines wait in the LittleFS ring"
+    if r is not None and r["ring_dropped"]:
+        line += f"; {r['ring_dropped']} lines given up"
+    counts = conn.execute(
+        f"SELECT event, COUNT(*) AS n FROM logger_events WHERE event IN "
+        f"({', '.join('?' * len(SD_EVENTS))}) AND COALESCE(t_utc, ingested_wall) > ? "
+        f"GROUP BY event", (*SD_EVENTS, now - 86400)).fetchall()
+    got = {c["event"]: c["n"] for c in counts}
+    events = ", ".join(f"{e} {got[e]}" for e in SD_EVENTS if e in got)
+    return [line, "SD events in the last 24 h: " + (events or "none")]
+
+
 def heartbeat_text(conn, now, label="PV rig", slot=None):
     slot = heartbeat_slot(now) if slot is None else slot
     due = day_start(slot) + HEARTBEAT_LOCAL_S
@@ -259,6 +286,7 @@ def heartbeat_text(conn, now, label="PV rig", slot=None):
         tm, t = max_module_temp(conn, day_start(d), end if end is not None else day_start(d + 1))
         lines.append(f"Max module temperature {name}: "
                      + (f"{tm:.1f} degC at {fmt_time(t, False)}" if tm is not None else "no data"))
+    lines += sd_lines(conn, now)
     alarms_ = open_alarms(conn)
     lines.append(f"Open alarms: {len(alarms_)}" + ("" if alarms_ else " (none)"))
     lines += [_open_line(a) for a in alarms_]

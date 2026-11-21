@@ -44,6 +44,10 @@ field and the text `NaN` are both stored as NULL.
 | `sweep_id` | counter | - |  | csv:sweep_id | Id of the last finished I-V sweep (Unix seconds of its start); 0 = none yet. |
 | `uptime_ms` | counter | ms |  | csv:uptime_ms | millis() at the row. A fall = the board restarted. Wraps after 49.7 days. |
 | `status` | bitfield | - | 0 .. 1023 | csv:status | Health bits of the row; 0 = nothing to report. Decoded into the ST.* tags. Not recorded in files written before 2026-11-12. |
+| `sens_fail` | bitfield | - | 0 .. 8191 | csv:sens_fail | One bit per sensor that failed at this row (data/schema.py SENSOR_BITS); bit 12 (4096) = sd: the row did not reach the card at once. CSV v2 only. |
+| `f_sd` | counter | rows |  | csv:f_sd | Rows since boot that did not reach the SD card at once. CSV v2 only. |
+| `ring_rows` | counter | lines | 0 .. 4096 | csv:ring_rows | Lines (rows, events, markers) waiting in the logger's LittleFS ring because the SD card is missing or failing; 0 = the card is up to date. Grows by at least one line per row while the card is away. CSV v2 only. |
+| `ring_dropped` | counter | lines |  | csv:ring_dropped | Lines the ring had to give up since it was last empty (ring full): data lost. CSV v2 only. |
 | `T_module` | analog | degC | 0 .. 90 | derived | Mean of the T1..T5 values present in the row (the detectors use the mean of all five). |
 | `dT_module_ambient` | analog | K | -10 .. 50 | derived | T_module - T_ambient. |
 | `ALM.NASIM` | discrete | 0/1 | 0 .. 1 | alarm bit 0 (value 1) | NASIM-GBT alarmed at this row. |
@@ -111,6 +115,8 @@ without the condition before the alarm counts as cleared.
 | `TROM_UNMAPPED` | 3 | system | `status` bit `TROM_UNMAPPED` | 3 | T_ROM not filled in: T1..T5 are not tied to module positions |
 | `DET_RESET` | 2 | system | `status` bit `DET_RESET` | 1 | Detectors reset after 5 unusable rows: no detection for 10 min |
 | `SD_ERROR` | 1 | system | `status` bit `SD_RETRY` | 3 | SD card write error: a retry was needed or rows were lost |
+| `SD_OUTAGE` | 1 | system | `ring_rows` >= 30 (off at 0) | 3 | SD card not taking rows: lines wait in the logger's LittleFS ring |
+| `RING_DROPPED` | 1 | system | `ring_dropped` >= 1 (off at 0) | 3 | Logger's LittleFS ring was full: lines were given up (data lost) |
 | `LOAD_TRIP` | 1 | system | `load_mode` = `trip` | 1 | Measurement load tripped: both branches off |
 | `NO_DATA` | 1 | system | no new row received for 60 s (PC clock) | 1 | No data arriving from the logger |
 

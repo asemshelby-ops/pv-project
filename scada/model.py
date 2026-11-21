@@ -14,12 +14,13 @@ import pathlib
 from dataclasses import asdict, dataclass
 
 from data.schema import (ALARM_BITS, BACK_SENSORS, COLUMNS, LOGGER_EXTRA_COLUMNS,
-                         LOGGER_V2_COLUMNS, STATUS_BITS)
+                         LOGGER_V2_COLUMNS, SENSOR_BITS, STATUS_BITS)
 
 # The row formats a file can have. The logger wrote FORMAT_OLD until 2026-11-12, FORMAT_NEW
 # from then on and writes FORMAT_V2 (CSV v2: 20 more columns appended) since 2026-11-21;
 # FORMAT_SCHEMA is the bare schema (synthetic day tables). The SCADA reads all of them; of
-# a FORMAT_V2 row it stores the FORMAT_NEW columns (the appended ones are not tags yet).
+# a FORMAT_V2 row it stores the FORMAT_NEW columns and the SD-card health columns
+# (sens_fail, f_sd, ring_rows, ring_dropped); the other appended ones are not tags yet.
 FORMAT_SCHEMA = list(COLUMNS)
 FORMAT_OLD = FORMAT_SCHEMA + ["p", "alarm"]
 FORMAT_NEW = FORMAT_OLD + list(LOGGER_EXTRA_COLUMNS)
@@ -92,6 +93,19 @@ def _tags():
         Tag("status", "bitfield", "-", 0, sum(1 << b for b in STATUS_BITS.values()), 0,
             "csv:status", "Health bits of the row; 0 = nothing to report. Decoded into the "
             "ST.* tags. Not recorded in files written before 2026-11-12.", "system"),
+        Tag("sens_fail", "bitfield", "-", 0, sum(1 << b for b in SENSOR_BITS.values()), 0,
+            "csv:sens_fail", "One bit per sensor that failed at this row (data/schema.py "
+            "SENSOR_BITS); bit 12 (4096) = sd: the row did not reach the card at once. CSV v2 "
+            "only.", "system"),
+        Tag("f_sd", "counter", "rows", None, None, 0, "csv:f_sd",
+            "Rows since boot that did not reach the SD card at once. CSV v2 only.", "system"),
+        Tag("ring_rows", "counter", "lines", 0, 4096, 0, "csv:ring_rows",
+            "Lines (rows, events, markers) waiting in the logger's LittleFS ring because the "
+            "SD card is missing or failing; 0 = the card is up to date. Grows by at least one "
+            "line per row while the card is away. CSV v2 only.", "system"),
+        Tag("ring_dropped", "counter", "lines", None, None, 0, "csv:ring_dropped",
+            "Lines the ring had to give up since it was last empty (ring full): data lost. "
+            "CSV v2 only.", "system"),
         Tag("T_module", "analog", "degC", 0, 90, 2, "derived",
             "Mean of the T1..T5 values present in the row (the detectors use the mean of "
             "all five).", "temperature"),
@@ -128,7 +142,8 @@ STATUS_TEXT = {  # meaning of each status bit (firmware: PvDaq/src/pv_status.h)
 TAGS = _tags()
 LOGGED = [t.name for t in TAGS if t.source.startswith("csv:") and t.kind != "time"]
 REAL_COLUMNS = [t.name for t in TAGS if t.source.startswith("csv:") and t.kind == "analog"]
-INT_COLUMNS = ["alarm", "sweep_id", "uptime_ms", "status"]
+INT_COLUMNS = ["alarm", "sweep_id", "uptime_ms", "status", "sens_fail", "f_sd", "ring_rows",
+               "ring_dropped"]
 
 
 # --- alarm definitions ---------------------------------------------------------------------
@@ -139,9 +154,12 @@ class AlarmDef:
     text: str
     priority: int        # 1 = high, 2 = medium, 3 = low
     group: str           # detector | sensor | system
-    field: str           # which row field carries the condition: alarm | status | load_mode
-    key: str             # bit name, or the load_mode value
+    field: str           # which row field carries the condition: alarm | status | load_mode,
+                         # or a counter column (with on_at)
+    key: str             # bit name, the load_mode value, or the unit of the counter
     clear_rows: int      # rows in a row without the condition before the alarm clears
+    on_at: int = 0       # counter alarms: on at field >= on_at, off at field == 0, and in
+                         # between the row neither raises nor clears (hysteresis)
 
 
 ALARM_DEFS = [
@@ -166,6 +184,10 @@ ALARM_DEFS = [
              2, "system", "status", "DET_RESET", 1),
     AlarmDef("SD_ERROR", "SD card write error: a retry was needed or rows were lost", 1,
              "system", "status", "SD_RETRY", 3),
+    AlarmDef("SD_OUTAGE", "SD card not taking rows: lines wait in the logger's LittleFS ring",
+             1, "system", "ring_rows", "lines", 3, on_at=30),
+    AlarmDef("RING_DROPPED", "Logger's LittleFS ring was full: lines were given up (data "
+             "lost)", 1, "system", "ring_dropped", "lines", 3, on_at=1),
     AlarmDef("LOAD_TRIP", "Measurement load tripped: both branches off", 1, "system",
              "load_mode", "trip", 1),
     AlarmDef("NO_DATA", "No data arriving from the logger", 1, "system", "pc_clock",
@@ -175,7 +197,16 @@ ALARM_DEFS = [
 # has been RECEIVED for longer than this (PC clock), and cleared by the next new row
 # (scada/alarms.py check_no_data). 60 s = six missed 10 s rows.
 NO_DATA_LIMIT_S = 60.0   # [ASSUMPTION] to be reviewed with the real logger and link
+# SD_OUTAGE: while the card is away the ring grows by at least one line per 10 s row (the
+# row itself; events add more), so it reaches 30 lines within 5 min of the outage; a row
+# that needed one retry, or a short hiccup, never gets there. It clears only when the ring
+# is EMPTY again (all lines on the card), not when it falls below 30. With the notifier's
+# 20 s group wait the phone message follows within about 6 min of the outage start, far
+# inside the hour asked for (2026-11-21) [EST: rows must reach the PC live, i.e. over
+# serial; a folder of card copies receives nothing while the card is out -> NO_DATA].
+RING_ALERT_LINES = 30
 ALARM_BY_CODE = {d.code: d for d in ALARM_DEFS}
+assert ALARM_BY_CODE["SD_OUTAGE"].on_at == RING_ALERT_LINES
 # DET_SKIPPED is deliberately not an alarm: it is the consequence of a sensor or RTC fault
 # that already alarms. The HMI shows it in the health panel.
 
@@ -213,7 +244,12 @@ def conditions(row):
         v = row.get(d.field)
         if v is None:
             continue
-        if d.field == "load_mode":
+        if d.on_at:
+            if v >= d.on_at:
+                out[d.code] = True
+            elif v == 0:
+                out[d.code] = False
+        elif d.field == "load_mode":
             out[d.code] = v == d.key
         else:
             table = ALARM_BITS if d.field == "alarm" else STATUS_BITS
@@ -231,6 +267,11 @@ def detail(code, row):
         return ", ".join(p for p in parts if p)
     if code == "TEMP_FAIL":
         return "no value: " + ", ".join(s for s in BACK_SENSORS if row.get(s) is None)
+    if code == "SD_OUTAGE":
+        return f"{row['ring_rows']} lines waiting; {row.get('f_sd') or 0} rows since boot " \
+               "missed the card at once"
+    if code == "RING_DROPPED":
+        return f"{row['ring_dropped']} lines given up"
     if code == "RTC_INVALID":
         return f"time of the row taken from: {row.get('time_source', '?')}"
     return ""
@@ -263,7 +304,9 @@ def health(row):
         item("ambient", "Ambient (BME280)", "AMBIENT_FAIL", row.get("T_ambient") is None),
         item("irradiance", "Irradiance (PYR20)", "IRRAD_FAIL", row.get("irradiance") is None),
         item("panel", "Panel V/I (INA226)", "PANEL_FAIL", row.get("voltage") is None),
-        item("sd", "SD card", "SD_RETRY", False),
+        item("sd", "SD card", "SD_RETRY", (row.get("ring_rows") or 0) > 0,
+             text=f"{row['ring_rows']} lines wait in the LittleFS ring (card missing or "
+                  "failing)" if (row.get("ring_rows") or 0) > 0 else ""),
         item("detectors", "Detectors fed this row", "DET_SKIPPED", False, warn=True),
     ]
     return out
@@ -319,7 +362,8 @@ def tag_list_markdown():
               "| Code | Priority | Group | Condition | Clears after | Text |",
               "|---|---|---|---|---|---|"]
     for d in ALARM_DEFS:
-        cond = (f"`load_mode` = `{d.key}`" if d.field == "load_mode"
+        cond = (f"`{d.field}` >= {d.on_at} (off at 0)" if d.on_at
+                else f"`load_mode` = `{d.key}`" if d.field == "load_mode"
                 else f"no new row received for {NO_DATA_LIMIT_S:g} s (PC clock)"
                 if d.field == "pc_clock" else f"`{d.field}` bit `{d.key}`")
         lines.append(f"| `{d.code}` | {d.priority} | {d.group} | {cond} | {d.clear_rows} | "

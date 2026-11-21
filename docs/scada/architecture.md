@@ -182,6 +182,7 @@ Definitions: `ALARM_DEFS` in `scada/model.py`, listed in [tag-list.md](tag-list.
 | detector | `DET_NASIM`, `DET_THRESHOLD`, `DET_CUSUM` | `alarm` bits 1, 2, 4 |
 | sensor | `TEMP_FAIL`, `AMBIENT_FAIL`, `IRRAD_FAIL`, `PANEL_FAIL` | `status` bits |
 | system | `RTC_INVALID`, `SD_ERROR`, `DET_RESET`, `TROM_UNMAPPED` | `status` bits |
+| system | `SD_OUTAGE`, `RING_DROPPED` | counters `ring_rows` (on at >= 30, off at 0), `ring_dropped` (on at >= 1, off at 0) |
 | system | `LOAD_TRIP` | `load_mode` = `trip` |
 | system | `NO_DATA` | PC clock: no new row received for 60 s |
 

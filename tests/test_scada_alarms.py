@@ -85,6 +85,9 @@ def test_det_skipped_alone_is_not_an_alarm(conn):
 
 def test_every_alarm_definition_names_a_real_bit_or_load_mode():
     for d in model.ALARM_DEFS:
+        if d.on_at:              # a counter alarm: a stored integer column, a positive limit
+            assert d.field in model.INT_COLUMNS and d.on_at > 0, d.code
+            continue
         table = {"alarm": ALARM_BITS, "status": STATUS_BITS, "load_mode": model.LOAD_MODES,
                  "pc_clock": {"NO_DATA_LIMIT_S": model.NO_DATA_LIMIT_S}}
         assert d.key in table[d.field], d.code

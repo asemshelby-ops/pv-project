@@ -11,13 +11,24 @@ sends, it does not take commands, and nothing can be acknowledged from the phone
 | Message | When | Content |
 |---|---|---|
 | Alarm | an alarm of priority 1 or 2 is RAISED or CLEARED | code, priority, text, row time (Makkah), the alarm's detail, how long it was active, the alarms active now |
-| Heartbeat | every day at 08:00 Makkah time (UTC+3) | time of the last row, rows of the last 24 h, the maximum module temperature today so far and yesterday, the open alarms |
+| Heartbeat | every day at 08:00 Makkah time (UTC+3) | time of the last row, rows of the last 24 h, the maximum module temperature today so far and yesterday, the SD card (lines waiting in the logger's LittleFS ring, lines given up, the logger's SD events of the last 24 h), the open alarms |
 
 Alarm codes of priority 1 or 2 today (scada/model.py): `NO_DATA`, `RTC_INVALID`,
-`TEMP_FAIL`, `AMBIENT_FAIL`, `IRRAD_FAIL`, `PANEL_FAIL`, `SD_ERROR`, `LOAD_TRIP`,
+`TEMP_FAIL`, `AMBIENT_FAIL`, `IRRAD_FAIL`, `PANEL_FAIL`, `SD_ERROR`, `SD_OUTAGE`,
+`RING_DROPPED`, `LOAD_TRIP`,
 `DET_RESET`, and the three detector alarms `DET_NASIM`, `DET_THRESHOLD`, `DET_CUSUM`.
 `TROM_UNMAPPED` (priority 3) is not sent. If a priority is changed in `scada/model.py`,
 the alerts follow it.
+
+**SD card outage (2026-11-21).** While the card is out, the logger keeps its lines in a
+LittleFS ring and writes how many wait in each row (`ring_rows`). `SD_OUTAGE` is raised
+when 30 or more wait (at least 5 min of outage: the ring grows by at least one line per
+row) and clears when the ring is empty again; a one-row write retry never reaches 30.
+In the PC test (`tests/test_scada_sd_alert.py`, logger C logic + fake card + serial
+ingest) the phone message came 5 min 10 s after the last row that reached the card.
+This needs the rows to arrive **live, over serial**: with `--folder` on copies of the
+card nothing new arrives while the card is out, and `NO_DATA` (60 s) is the alarm.
+`RING_DROPPED` is raised from the first line the full ring had to give up (data lost).
 
 Rules:
 

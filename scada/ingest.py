@@ -19,6 +19,8 @@ Rows without RTC time (date and time empty) are never dropped:
   * serial -> the PC's clock at reception (time_source "pc");
   * otherwise -> kept in `unplaced_rows` until a timed row of the same boot arrives, and
     reported as an RTC alarm. Rows of /nodate.csv usually stay there.
+/events.csv and the serial "# event:" lines go to logger_events (sd_lost, sd_back,
+ring_full, ... ; the same event from both sources is kept once).
 Sweep files (/SW*.csv, /SS*.csv), /load_log.csv and /rom_scan.txt are not ingested yet.
 """
 import calendar
@@ -31,6 +33,7 @@ from scada import alarms, historian, model
 
 DAY_FILE = re.compile(r"^\d{8}\.csv$")
 SERIAL_MARKER = re.compile(r"^# marker(?: \((.+?)\))?: (.*)$")
+SERIAL_EVENT = re.compile(r"^# event: (.*)$")
 POLL_S = 1.0
 
 
@@ -170,6 +173,25 @@ def _store_marker(conn, line, source, note=None):
     return True
 
 
+def _store_event(conn, line, source, wall):
+    """One /events.csv line ("date,time,uptime_ms,event,detail", UTC) -> logger_events.
+    Header, comments and lines that are not events are skipped. 1 if it was new."""
+    line = line.strip()
+    if not line or line.startswith(("#", "date,")):
+        return 0
+    f = line.split(",", 4)
+    if len(f) < 4 or not f[3]:
+        return 0
+    try:
+        t = _utc_seconds(f[0], f[1]) if f[0] and f[1] else None
+        up = _number(f[2], integer=True)
+    except ValueError:
+        return 0
+    return historian.insert_event(conn, {"t_utc": t, "uptime_ms": up, "event": f[3].strip(),
+                                         "detail": f[4].strip() if len(f) > 4 else "",
+                                         "source": source, "ingested_wall": wall})
+
+
 def _report_unplaced(conn, wall):
     """Rows that still have no time: raise (or keep) the RTC alarm when their number grew."""
     n = conn.execute("SELECT COUNT(*) FROM unplaced_rows").fetchone()[0]
@@ -248,19 +270,30 @@ class FolderIngest:
         self._save(key, offset, {}, wall)
         return n
 
+    def _tail_events(self, wall):
+        path = self.folder / "events.csv"
+        got = self._new_lines(path) if path.exists() else None
+        if got is None:
+            return 0
+        lines, _, offset, key = got
+        n = sum(_store_event(self.conn, line, path.name, wall) for line in lines)
+        self._save(key, offset, {}, wall)
+        return n
+
     def poll(self, wall=None):
         """Read everything new in the folder, evaluate the alarms, commit.
-        Returns {"rows": new samples, "markers": marker lines read}."""
+        Returns {"rows": new samples, "markers": marker lines read, "events": new events}."""
         wall = time.time() if wall is None else wall
         rows = sum(self._tail_rows(p, wall) for p in self.files())
         markers = self._tail_markers(wall)
+        events = self._tail_events(wall)
         _report_unplaced(self.conn, wall)
         alarms.evaluate(self.conn, wall)
         if rows:
             historian.set_meta(self.conn, "last_row_wall", wall)
         alarms.check_no_data(self.conn, wall)
         self.conn.commit()
-        return {"rows": rows, "markers": markers}
+        return {"rows": rows, "markers": markers, "events": events}
 
 
 class SerialIngest:
@@ -278,6 +311,11 @@ class SerialIngest:
             _store_marker(self.conn, m.group(2), self.source, note=m.group(1))
             self.conn.commit()
             return "marker"
+        m = SERIAL_EVENT.match(line.strip())
+        if m:
+            _store_event(self.conn, m.group(1), self.source, wall)
+            self.conn.commit()
+            return "event"
         kind, row, _ = self.parser.parse(line, wall, pc_time=wall)
         if kind == "row" and historian.insert_samples(self.conn, [row]):
             alarms.evaluate(self.conn, wall)

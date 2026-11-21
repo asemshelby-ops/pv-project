@@ -26,8 +26,11 @@ import time
 from data.schema import BACK_SENSORS
 from scada import historian, model
 
-ROW_COLUMNS = ", ".join(["t_utc", "time_source", "alarm", "status", "load_mode", "p",
-                         "irradiance", *BACK_SENSORS])
+# what a row's alarm conditions and details read: the fixed fields, every counter column an
+# alarm watches (ring_rows, ring_dropped), and f_sd for the SD_OUTAGE detail
+ROW_COLUMNS = ", ".join(dict.fromkeys(
+    ["t_utc", "time_source", "alarm", "status", "load_mode", "p", "irradiance", *BACK_SENSORS,
+     *(d.field for d in model.ALARM_DEFS if d.on_at), "f_sd"]))
 
 
 def _journal(conn, alarm_id, code, event, t_data, wall, detail=""):
