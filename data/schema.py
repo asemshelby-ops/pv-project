@@ -23,6 +23,7 @@ STATUS_BITS = {
     "DET_SKIPPED": 6,     # row not given to the on-board detector
     "DET_RESET": 7,       # on-board detector state cleared at this row
     "SD_RETRY": 8,        # second SD write attempt, or the row(s) before were lost
+    "BUFFERED": 9,        # row waited in the ESP32's flash, copied to the card later
 }
 
 # Bits of the `alarm` column: one bit per on-board detector, name -> bit number. A row

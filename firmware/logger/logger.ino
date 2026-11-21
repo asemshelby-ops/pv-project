@@ -19,6 +19,10 @@
 // A row is never dropped: without a valid RTC time it is written with empty date and time,
 // its uptime_ms and the ST_RTC_INVALID status bit (bits: PvDaq/src/pv_status.h), into the
 // last day file used since boot, or /nodate.csv if there was none.
+// SD card out or failing: the rows wait in the ESP32's own flash (PvDaq/src/pv_flashring.h,
+// status bit ST_BUFFERED) and are copied to their day files, in order, when the card is back.
+// Watchdog: in every build the chip resets if loop() stops coming round (LOOP_WDT_MS); the
+// reason of every start is printed and appended to /boot_log.csv.
 // Build: python firmware/build_all.py logger   (adds the include paths to export/c).
 //
 // SAFETY: the pump output is held LOW. Both load outputs are held LOW while HAS_LOAD is 0;
@@ -28,7 +32,9 @@
 // on an alarm.
 #include <Preferences.h>
 #include <PvDaq.h>
+#include <esp_system.h>
 #include <esp_task_wdt.h>
+#include <pv_flashring.h>
 #include <pv_load.h>
 #include <pv_status.h>
 
@@ -74,9 +80,12 @@ static const uint8_t T_ROM[5][8] = {{0}, {0}, {0}, {0}, {0}};
 // it). While it is all zero the load stays in TRIP ("heatsink sensor missing"): both
 // branches off, by design.
 static const uint8_t HEATSINK_ROM[8] = {0};
-// Loop watchdog: if loop() does not come round for this long the chip resets, the pins are
-// released and the gate pull-downs switch the load off. [ASSUMPTION] well above the longest
-// normal pass (device retries + a row + the RTC edge, a few seconds); check in bench B7.
+// Loop watchdog (esp_task_wdt on the loop task, every build): if the loop stalls for this
+// long the chip resets, the pins are released and the gate pull-downs switch the load and the
+// pump off; logging then starts again by itself. The watchdog is also fed between the stages
+// of a row, so the limit applies to ONE stage (a device retry, the reads, the card write,
+// one segment copied back), not to their sum. [ASSUMPTION] 15 s is well above the longest
+// stage (an SD mount that fails twice, a few seconds [EST]); check in bench B7.
 static const uint32_t LOOP_WDT_MS = 15000;
 
 // ---- devices -----------------------------------------------------------------------------
@@ -87,6 +96,7 @@ PvIna226 panel("INA226 panel", &hub, PAHUB_CH_PANEL);
 PvDs18b20 probes(pins::ONEWIRE);
 PvPyr20Modbus pyr(Serial2, pins::RS485_RX, pins::RS485_TX);
 PvSdCard sd;
+PvFlashRing ring;                 // rows wait here while the card cannot be written
 PvDevice *const DEVICES[] = {&rtc, &env, &hub, &panel, &probes, &pyr, &sd};
 PvDevice *const I2C_RETRY[] = {&rtc, &env, &hub};   // re-begun at every row while not Ok (+ panel)
 PvDevice *const SLOW_RETRY[] = {&probes, &pyr, &sd}; // re-begun every RETRY_EVERY rows
@@ -229,6 +239,36 @@ void reportRomScan() {
   }
 }
 
+const char *resetReasonText(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON: return "power on";
+    case ESP_RST_SW: return "software restart";
+    case ESP_RST_PANIC: return "crash (panic)";
+    case ESP_RST_INT_WDT: return "interrupt watchdog";
+    case ESP_RST_TASK_WDT: return "task watchdog (the loop stalled)";
+    case ESP_RST_WDT: return "other watchdog";
+    case ESP_RST_BROWNOUT: return "brown-out (supply voltage dipped)";
+    case ESP_RST_DEEPSLEEP: return "wake from deep sleep";
+    case ESP_RST_EXT: return "reset pin";
+    default: return "unknown";  // also what a reset through the USB-serial lines reads as
+  }
+}
+
+// One line per start in /boot_log.csv: when (UTC, if the RTC has it) and why the chip started.
+// A run of "task watchdog" or "brown-out" lines is the thing to look for after a field day.
+void reportBoot() {
+  const esp_reset_reason_t r = esp_reset_reason();
+  char line[96], when[40] = ",";
+  if (rtc.ok() && rtc.read() && rtc.timeValid) {
+    const DateTime t = rtc.time();
+    snprintf(when, sizeof(when), "%04u-%02u-%02u,%02u:%02u:%02u", t.year(), t.month(), t.day(),
+             t.hour(), t.minute(), t.second());
+  }
+  snprintf(line, sizeof(line), "%s,%d,%s", when, (int)r, resetReasonText(r));
+  Serial.printf("# start: %s\n", line);
+  if (sd.ok()) sd.appendLine("/boot_log.csv", line, "date,time,reset_code,reset_reason");
+}
+
 int dayOfYear(const DateTime &t) {
   return (int)((t.unixtime() - DateTime(t.year(), 1, 1).unixtime()) / 86400UL) + 1;
 }
@@ -271,6 +311,7 @@ void sample(uint32_t n) {
     mapProbes();  // a re-scan may have found a sensor for a column that had none
   }
   if (retried || n == 0) printStatus();
+  feedLoopWDT();
 
   // Read order: the timestamp, then at once the irradiance (the fastest-changing input,
   // one short Modbus exchange), then the slower devices; the DS18B20 conversion (750 ms)
@@ -397,21 +438,48 @@ void sample(uint32_t n) {
   if (have_time) {
     snprintf(day_path, sizeof(day_path), "/%04u%02u%02u.csv", t.year(), t.month(), t.day());
   }
-  // status is the last field, so a second write attempt can be flagged in the row itself.
-  static bool sd_lost = false;  // the row before this one did not reach the card
-  if (sd_lost) status |= ST_SD_RETRY;
-  const int attempts = sd.ok() ? 2 : 1;  // a card that was working gets one re-mount + retry
+  // status is the last field, so what happened to the write can be flagged in the row itself.
+  feedLoopWDT();
+  static bool row_lost = false;  // the row before this one is neither on the card nor in flash
+  if (row_lost) status |= ST_SD_RETRY;
+  const bool was_ok = sd.ok();
+  const bool card = was_ok || sd.begin();
   bool written = false;
   String line;
-  for (int a = 0; a < attempts && !written; a++) {
-    if (a > 0) status |= ST_SD_RETRY;
+  // Straight to the card, unless older rows still wait in the flash buffer: then this row
+  // queues behind them, so the day file stays in time order.
+  if (card && !ring.pending()) {
     line = row + String(status);
-    written = (a == 0 ? (sd.ok() || sd.begin()) : sd.begin()) &&
-              sd.appendLine(day_path, line.c_str(), HEADER);
+    written = sd.appendLine(day_path, line.c_str(), HEADER);
+    if (!written && was_ok) {  // a card that was working gets one re-mount + retry
+      status |= ST_SD_RETRY;
+      line = row + String(status);
+      written = sd.begin() && sd.appendLine(day_path, line.c_str(), HEADER);
+    }
   }
-  if (!written && !sd_lost) printStatus();
-  sd_lost = !written;
+  bool buffered = false;
+  if (!written) {
+    line = row + String(status | ST_BUFFERED);
+    buffered = ring.store(day_path, line.c_str());
+    if (!buffered) line = row + String(status);  // lost: only Serial has it
+  }
+  if (!written && !buffered && !row_lost) printStatus();
+  row_lost = !written && !buffered;
   Serial.println(line);
+  feedLoopWDT();
+
+  // Card back: copy waiting segments to it, oldest first, a few per row.
+  static bool was_pending = false;
+  for (uint32_t k = 0; k < RING_FLUSH_PER_ROW && sd.ok() && ring.pending(); k++) {
+    if (!ring.flushOldest(sd, HEADER)) break;
+    feedLoopWDT();
+  }
+  if (ring.pending() != was_pending) {
+    was_pending = ring.pending();
+    Serial.printf("# flash buffer: %s (%s; %lu segments dropped for room since boot)\n",
+                  was_pending ? "SD not writable, rows are kept in flash" : "all rows copied to the SD card",
+                  ring.detail(), (unsigned long)ring.droppedSegments);
+  }
 }
 
 // Polls the RTC until its second changes and records that edge (blocks up to ~1.1 s).
@@ -740,17 +808,22 @@ void setup() {
     if (d != &panel) d->begin();
   }
   if (hub.ok()) panel.begin();  // the INA226 needs the PaHub
+  // Before the watchdog is on: the first start creates the file system (seconds [EST]).
+  ring.begin(/*format_if_needed=*/true);
+  Serial.printf("# flash buffer: %s%s%s\n", ring.statusText(), ring.detail()[0] ? ", " : "",
+                ring.detail());
+  reportBoot();
   loadSavedMap();
   mapProbes();
   reportRomScan();
   if (HAS_LOAD) {
     if (probes.count) probes.read();  // a first heatsink temperature before the load may start
     if (!load.begin()) Serial.println("# load: LEDC attach FAILED: both branches are held off");
-    esp_task_wdt_config_t wdt = {LOOP_WDT_MS, 0, true};  // time-out, no idle task, reset
-    if (esp_task_wdt_reconfigure(&wdt) != ESP_OK) esp_task_wdt_init(&wdt);
-    enableLoopWDT();
     Serial.println("# load: active. Commands: GAMMA <minutes> | LOAD OFF | LOAD ON");
   }
+  esp_task_wdt_config_t wdt = {LOOP_WDT_MS, 0, true};  // time-out, no idle task, reset
+  if (esp_task_wdt_reconfigure(&wdt) != ESP_OK) esp_task_wdt_init(&wdt);
+  enableLoopWDT();  // the loop task joins the watchdog; fed after every loop() and by feedLoopWDT()
   Serial.println(HEADER);
 }
 

@@ -112,3 +112,15 @@ constexpr float SWEEP_MONO_TOL = 0.005f;       // [ASSUMPTION] NON_MONOTONIC ign
 
 // ---- Logging -------------------------------------------------------------------------
 constexpr uint32_t SAMPLE_PERIOD_MS = 10000;   // one CSV row every 10 s (CLAUDE.md)
+
+// Flash ring buffer for rows the SD card did not take (pv_flashring.h). The partition is
+// 0x160000 B = 1408 kB ("spiffs" in the core's default.csv). [EST] a row is ~130 B, so a
+// 60-row segment is ~8 kB and fills three 4 kB LittleFS blocks with its metadata: room
+// for roughly 110 segments = 18 h of rows. NOT measured: read the "flash buffer" status
+// line on the bench after an hour without the card.
+constexpr uint32_t RING_SEG_ROWS = 60;          // rows per segment file = 10 min
+constexpr uint32_t RING_RESERVE_BYTES = 65536;  // [ASSUMPTION] kept free: LittleFS needs
+                                                // spare blocks to move data when it writes
+constexpr uint32_t RING_MAX_SEGMENTS = 400;     // upper bound on files in /rb (boot scan time)
+constexpr uint32_t RING_FLUSH_PER_ROW = 3;      // segments copied back to the card per 10 s
+                                                // row: 30 min of backlog every 10 s

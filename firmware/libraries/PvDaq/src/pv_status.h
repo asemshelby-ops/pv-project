@@ -16,3 +16,6 @@
 #define ST_DET_RESET    (1u << 7)  // detector state cleared at this row (too many skipped in a row)
 #define ST_SD_RETRY     (1u << 8)  // SD: this row needed a second write attempt, or the row(s)
                                    // before it did not reach the card
+#define ST_BUFFERED     (1u << 9)  // SD: this row went to the ESP32's flash first (the card did
+                                   // not take it, or older rows were still waiting there) and
+                                   // was copied to the card later, in order

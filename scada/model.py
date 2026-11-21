@@ -117,6 +117,7 @@ STATUS_TEXT = {  # meaning of each status bit (firmware: PvDaq/src/pv_status.h)
     "DET_SKIPPED": "Row not given to the detectors (an input or the time is missing).",
     "DET_RESET": "Detector state cleared at this row (5 skipped rows in a row).",
     "SD_RETRY": "SD: second write attempt, or the row(s) before did not reach the card.",
+    "BUFFERED": "SD: row waited in the ESP32's flash and was copied to the card later.",
 }
 TAGS = _tags()
 LOGGED = [t.name for t in TAGS if t.source.startswith("csv:") and t.kind != "time"]

@@ -42,7 +42,7 @@ field and the text `NaN` are both stored as NULL.
 | `load_mode` | enum | none/off/hold/sweep/trip |  | csv:load_mode | State of the measurement load. |
 | `sweep_id` | counter | - |  | csv:sweep_id | Id of the last finished I-V sweep (Unix seconds of its start); 0 = none yet. |
 | `uptime_ms` | counter | ms |  | csv:uptime_ms | millis() at the row. A fall = the board restarted. Wraps after 49.7 days. |
-| `status` | bitfield | - | 0 .. 511 | csv:status | Health bits of the row; 0 = nothing to report. Decoded into the ST.* tags. Not recorded in files written before 2026-11-12. |
+| `status` | bitfield | - | 0 .. 1023 | csv:status | Health bits of the row; 0 = nothing to report. Decoded into the ST.* tags. Not recorded in files written before 2026-11-12. |
 | `T_module` | analog | degC | 0 .. 90 | derived | Mean of the T1..T5 values present in the row (the detectors use the mean of all five). |
 | `dT_module_ambient` | analog | K | -10 .. 50 | derived | T_module - T_ambient. |
 | `ALM.NASIM` | discrete | 0/1 | 0 .. 1 | alarm bit 0 (value 1) | NASIM-GBT alarmed at this row. |
@@ -57,6 +57,7 @@ field and the text `NaN` are both stored as NULL.
 | `ST.DET_SKIPPED` | discrete | 0/1 | 0 .. 1 | status bit 6 (value 64) | Row not given to the detectors (an input or the time is missing). |
 | `ST.DET_RESET` | discrete | 0/1 | 0 .. 1 | status bit 7 (value 128) | Detector state cleared at this row (5 skipped rows in a row). |
 | `ST.SD_RETRY` | discrete | 0/1 | 0 .. 1 | status bit 8 (value 256) | SD: second write attempt, or the row(s) before did not reach the card. |
+| `ST.BUFFERED` | discrete | 0/1 | 0 .. 1 | status bit 9 (value 512) | SD: row waited in the ESP32's flash and was copied to the card later. |
 
 ## Load modes (`load_mode`)
 
@@ -89,6 +90,7 @@ field and the text `NaN` are both stored as NULL.
 | 6 | 64 | `DET_SKIPPED` | Row not given to the detectors (an input or the time is missing). |
 | 7 | 128 | `DET_RESET` | Detector state cleared at this row (5 skipped rows in a row). |
 | 8 | 256 | `SD_RETRY` | SD: second write attempt, or the row(s) before did not reach the card. |
+| 9 | 512 | `BUFFERED` | SD: row waited in the ESP32's flash and was copied to the card later. |
 
 ## Alarm definitions
 
