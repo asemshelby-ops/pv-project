@@ -172,20 +172,21 @@ temperature, collected over many days instead of inside one 20-min run. It is Me
 2. *The controller is not curtailing.* When the battery is full (absorption / float) or
    the lamp draws less than the module can give, the controller moves the module off the
    MPP toward `V_oc`: power falls for a reason that has nothing to do with temperature.
-   Those rows must be removed (rule below). Hardware plan (decisions of 2026-11-21,
-   nothing bought): lamp **60–80 W**, on in daytime only (controller load output with
-   timer and low-voltage cut-off, else a switch on ESP32 GPIO33; `firmware/BRINGUP.md`
-   §13); AGM battery of **26 Ah or more**, so that the ≈ 6–7 A `[EST]` the module can
-   deliver is a smaller fraction of its capacity. `[OPEN]` the battery's datasheet limit
-   for charge current has still to be read against that figure.
-   **Consequence of a lamp below the module's midday power, to accept knowingly:** near
-   noon on a clear day the module can give ≈ 80–90 W `[EST, listing]`, so 10–30 W of
-   surplus goes into the battery, which fills after some hours and the controller then
-   curtails. How many usable (bulk) midday rows a day gives depends on how empty the
-   battery is in the morning; it is not known in advance and may be few on consecutive
-   clear days. This is why the battery's state must be logged (third INA226) and why the
-   count of usable rows per day is the first thing to look at in the first week. If it is
-   too low: a larger lamp, a second lamp switched on near noon, or a morning discharge.
+   Those rows must be removed (rule below). Hardware plan (decision of 2026-11-21,
+   replacing the 60–80 W plan of the same day; nothing bought): lamp **80–100 W**, at or
+   above the module's midday power, switched ON by the ESP32 (GPIO33) only in a window of
+   about ± 2 h around solar noon and only in strong sun, OFF otherwise so the module
+   recharges the battery (`firmware/BRINGUP.md` §13). AGM battery ≥ 26 Ah; third INA226
+   in the battery lead, reading net current. In the window the lamp takes everything the
+   module gives, the battery supplies the small difference and is never full: the
+   controller has no reason to curtail, which is exactly when the rows are used.
+   Energy balance `[EST, BRINGUP §13]`: on a clear day a 100 W lamp takes ≈ 110 Wh (35 %)
+   from a 26 Ah battery in the window and the rest of the day gives back about as much,
+   with no margin; an 80 W lamp takes ≈ 30 Wh but is below the module's peak. The battery
+   **can** fall below 50 % in a single window with weak sun, so the lamp is tied to
+   irradiance and battery voltage, not to the clock alone. `[OPEN]` battery datasheet
+   (charge-current limit, capacity at a 4 h discharge, cycle life).
+   Rows within a few minutes of a lamp switch are not used.
 
 **Row selection.** A row is used when all hold:
 - controller state = bulk (not absorption, float or off). Source, in this order: the
@@ -195,6 +196,7 @@ temperature, collected over many days instead of inside one 20-min run. It is Me
   voltage below the controller's absorption setpoint; otherwise the module-side test
   alone: `V_module` below the curtailed voltage found in the go/no-go check
   `[ASSUMPTION until that check]`;
+- lamp ON for at least 5 min `[ASSUMPTION]` (logged lamp state);
 - G within 850–950 W/m², stable to ± 2 % over the last 10 min; clear sky, within ± 2 h of
   solar noon (limits the angle-of-incidence and spectrum changes the PYR20 does not see
   the way the module does);
@@ -235,7 +237,7 @@ convincing subset: same sun angle, warmer module in the afternoon.
 **Status of the hardware (2026-11-21).** Controller: not bought; must be a real MPPT (the
 Anern 30 A unit in the old BOM has not been checked for tracking or for a data port, and
 neither may be assumed). Battery: AGM 12 V, 26 Ah or more, not bought (the 18 Ah QSSUN
-is no longer the plan). Lamp: 60–80 W, not chosen, daytime only. Third INA226-10A for the battery: to buy, PaHub channel 2, address
+is no longer the plan). Lamp: 80–100 W, not chosen, solar-noon window only. Third INA226-10A for the battery: to buy, PaHub channel 2, address
 0x41 (`firmware/PINMAP.md`). The logger gains battery columns and a charge-state column
 only once the unit is on the bench and the supervisor has approved the method.
 

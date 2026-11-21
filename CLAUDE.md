@@ -23,7 +23,8 @@ Full status, reasons and sources: ./PROJECT_STATE.md
   has replaced the assumed protection thresholds. Still deferred: anemometer
   (HAS_ANEMOMETER 0, wind = NaN).
 - 2026-11-21 (Asim): the PWM resistor load below is DROPPED: charge controller (real
-  MPPT, not bought) + AGM battery >= 26 Ah (not bought) + 60-80 W lamp, daytime only.
+  MPPT, not bought) + AGM battery >= 26 Ah (not bought) + 80-100 W lamp, switched by the
+  ESP32 only in the solar-noon window (about +/-2 h) and in strong sun.
   No I-V sweeps; gamma by Method C (docs/paper/02 section 9), PENDING the supervisor.
   HAS_LOAD stays 0; its build variant is kept and never flashed. GPIO33 = LAMP_RELAY
   (reserved). Third INA226 (battery) on PaHub channel 2. Every "Load", "sweep" and

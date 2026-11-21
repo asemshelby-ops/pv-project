@@ -469,31 +469,65 @@ temperature in the day's log sheet. **NO-GO in step 1 or 3 = no γ from this con
 tell the supervisor the same day; rows logged with it are still good for temperatures and
 spike detection, not for power cost.
 
-## 13. Lamp in daytime only (decision 2026-11-21) — two options, choose when the controller is bought
+## 13. Lamp in the solar-noon window, switched by the ESP32 (decision 2026-11-21, replaces the earlier §13)
 
-The lamp (60–80 W, 12 V) must not run at night: it would empty the battery in about four
-hours `[EST: 26 Ah × 12 V ≈ 310 Wh nominal]` and deep-discharge it.
+Plan, nothing bought or coded: lamp 12 V, **80–100 W**, ON only in a window of about ± 2 h
+around solar noon (the same window as the row filter of γ Method C, `docs/paper/02` §9),
+OFF the rest of the day so the module recharges the battery. Switched by the ESP32 on
+GPIO33 (`pins::LAMP_RELAY`). Third INA226 in the battery lead (net current, PINMAP).
 
-**Option 1 (preferred): the controller's load output.** Use it if the controller has a load
-output with BOTH a low-voltage disconnect (LVD) and a timer or light-controlled mode that
-can be set to "on in daylight". Check in its manual, before buying: the load output's
-current rating (≥ 8 A for an 80 W lamp), the LVD voltage, and that the daytime mode exists
-(many controllers only offer "on at dusk", made for street lights: the opposite of what we
-need). No ESP32 pin, no firmware. GPIO33 stays unused, held LOW.
+**Wiring.** GPIO33 → active-HIGH switch with a 10 kΩ pull-down at its input (logic-level
+MOSFET module, or a relay module with its own driver transistor; not an active-LOW relay
+board). Switch in the lamp's positive lead, rated ≥ 10 A DC (100 W at 12 V ≈ 8.3 A), fed
+from the battery side of the shunt through a fuse. Battery shunt between the battery
+terminal and the node where controller and lamp meet.
 
-**Option 2: ESP32 switches the lamp on GPIO33 (`pins::LAMP_RELAY`).** Only if option 1 is
-not possible. Wiring: GPIO33 → active-HIGH switch module (logic-level MOSFET module, or a
-relay module with its own driver transistor) with a 10 kΩ pull-down at its input; the
-switch in the lamp's positive lead, fed from the battery side through a fuse. Rules the
-firmware will need — **none of this is coded yet**:
-- ON only when the irradiance has been above a threshold for some minutes and OFF below a
-  lower one (both from the PYR20; values to choose), with the RTC as a second condition;
-- OFF below a battery voltage read by the third INA226 (LVD; value from the battery's
-  datasheet), and OFF if that reading fails;
-- OFF after a reset until the conditions hold again; the watchdog reset releases the pin
-  and the pull-down switches the lamp off;
-- every switch written to a log file, because switching the lamp changes the controller's
-  operating point: rows around it are not used for γ.
-A logger that hangs with the lamp ON is covered by the watchdog; a logger without power is
-covered by the pull-down. A stuck relay or MOSFET is not covered: that is what the
-controller's own LVD is for, so prefer a controller that has one even with option 2.
+**Daily energy balance `[EST]` — every figure is an estimate from the seller listing and
+round assumptions, none is measured.** Assumptions: clear day; module ≈ 100 W × G/1000 ×
+0.86 (hot module, illustrative γ) × 0.95 (controller) ≈ 73 W at the window's mean
+G ≈ 900 W/m²; ≈ 5.5 peak-sun hours in the plane per clear day; 85 % of the energy sent to
+an AGM battery comes back; battery 26 Ah × 12 V = 312 Wh nominal, so 50 % = 156 Wh.
+
+| | Lamp 80 W | Lamp 100 W |
+|---|---|---|
+| Lamp, 4 h window | 320 Wh | 400 Wh |
+| Module in the window, clear | ≈ 290 Wh | ≈ 290 Wh |
+| Taken from the battery in the window, clear | ≈ 30 Wh (10 %) | ≈ 110 Wh (35 %) |
+| Module outside the window, clear (≈ 450 − 290) | ≈ 160 Wh → ≈ 135 Wh stored | same |
+| Clear-day result | recharges fully; battery ≥ 90 % | just recharges (135 vs 110 Wh): **no margin** |
+| Battery falls below 50 % in one window if the module averages less than | ≈ 41 W (≈ 55 % of a clear day) | ≈ 61 W (≈ 85 % of a clear day) |
+| Hazy / cloudy window, module at 30 % (≈ 90 Wh), lamp left on | −230 Wh: battery to ≈ 25 % | −310 Wh: battery flat |
+
+**So: yes, a 26 Ah AGM can fall below 50 % state of charge**, in one day, whenever the lamp
+runs through a window with weak sun, and with the 100 W lamp also after two or three
+merely average days, because the recharge has no margin. A blind timer is therefore not
+enough. And the other way round: an 80 W lamp is below the module's peak (≈ 85–90 W at
+1000 W/m² `[EST]`), so on the clearest noons a full battery would still be curtailed for a
+while. Between the two, **≈ 100 W with the conditions below, or a larger battery**, is the
+consistent choice `[REC]`; the usable capacity at a 3–4 h discharge is also below the
+nominal (20 h) figure `[OPEN: battery datasheet, with its charge-current limit and cycle
+life at 35–50 % depth]`.
+
+**Rules the firmware needs (not coded; to write when the hardware exists):**
+1. Window: solar noon ± 2 h from the RTC (solar noon computed for the date, as NASIM
+   already does for its features), plus ≈ 10 min before, so the controller has settled
+   when the first usable row comes.
+2. Sun: ON only while irradiance ≥ ≈ 800 W/m² for some minutes; OFF below ≈ 700 W/m²
+   `[ASSUMPTION, to tune]`. Rows below 850 W/m² are not used for γ anyway, so nothing is
+   lost, and the lamp never drains the battery under cloud or dust. PYR20 not readable → OFF.
+3. Battery: OFF below a voltage from the battery's datasheet (≈ 50 % under load;
+   `[OPEN]`), read by the third INA226; that reading missing → OFF. Not ON again the same
+   day after such a cut-off.
+4. Safe state: OFF after every reset until 1–3 hold; a watchdog reset or a dead ESP32
+   releases the pin and the pull-down switches the lamp off. A switch stuck ON is not
+   covered: choose a controller whose load output or own cut-off protects the battery.
+5. Every switch goes to a log file and into the 10 s rows (lamp state), with a few minutes
+   around it excluded from γ.
+
+**Side effect on the spike study — to tell the supervisor.** What the module is connected
+to changes its temperature: a module that delivers power runs cooler than one the
+controller has curtailed, by roughly G × 15 % ÷ (25 + 6.84 · v) ≈ 4 °C at 900 W/m² and
+1 m/s `[EST, Faiman defaults; the 15 % is a round figure]`. That is the size of a thermal
+spike. It will happen every time the battery fills outside the window (afternoon, lamp
+off) and can happen at the window's edges. These rises are electrical, not wind: they must
+be labelled from the lamp state and the battery state and kept out of the spike counts.
