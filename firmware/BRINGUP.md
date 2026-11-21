@@ -235,7 +235,21 @@ log for 10 min each, compute per-sensor offsets. Then copy each mounted sensor's
 into `T_ROM` in `logger/logger.ino` (T1..T5 = positions on the back sheet, T6 and T7 = the
 two further probes). The logger also prints every ROM at boot and appends the list to
 `/rom_scan.txt` on the card; a ROM that is in no `T_ROM` row is printed as a ready-made
-row to paste (`NOT in T_ROM -> {0x28, ...}`). **The rows must be filled in before
+row to paste (`NOT in T_ROM -> {0x28, ...}`).
+
+**One command: `ROMS`** (since 2026-11-21, logger with `HAS_LOAD 0`). With the logger
+running, type `ROMS` in the serial monitor (`arduino-cli monitor -p COM3 -c
+baudrate=115200`, then `ROMS` + Enter). It scans the bus, reads every probe once and
+prints the whole `T_ROM` statement between `// ---- T_ROM block ...` and
+`// ---- end of T_ROM block ----`: copy the lines from `static const uint8_t T_ROM` to
+`};` over the `T_ROM` statement in `logger/logger.ino`. Rows already filled keep their
+place; new probes fill the empty rows in bus order and are marked **`position NOT
+checked`**: the scan cannot know where a probe is mounted. To tie each row to its
+position, hold one probe in your hand for ~30 s and type `ROMS` again: its row shows the
+warmest temperature; move that line to its row (T1..T5 = back-sheet positions, T6 and T7
+= the two further probes), and repeat. The heatsink probe (`HEATSINK_ROM`) and ROMs with a
+bad CRC are never placed (a `// not placed:` note says why). Then flash again.
+**The rows must be filled in before
 logging:** since 2026-11-21 a column is the probe with the ROM of its row and nothing
 else. A row left at zero gives an empty column (and, for T1..T5, status bit 32 and no
 detector); the logger never falls back to the bus-scan order.

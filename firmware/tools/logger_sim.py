@@ -145,8 +145,40 @@ def lib():
         f.restype = u32
     so.pvstore_waiting.argtypes = so.pvstore_dropped.argtypes = [ptr]
     assert so.pvstore_io_sizeof() == ctypes.sizeof(StoreIo)
+    so.pvlog_rom_crc_ok.argtypes = [PU8]
+    so.pvlog_trom_block.argtypes = [ctypes.POINTER(Cfg), PU8, ctypes.POINTER(ctypes.c_float),
+                                    ctypes.c_int, ctypes.c_char_p, EMIT, ptr]
     _LIB = so
     return so
+
+
+EMIT = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_char_p)
+
+
+def with_crc(r7):
+    """A ROM from its first 7 bytes, with the right Maxim CRC-8 as byte 8."""
+    crc = 0
+    for b in r7:
+        for _ in range(8):
+            crc = (crc >> 1) ^ 0x8C if (crc ^ b) & 1 else crc >> 1
+            b >>= 1
+    return bytes(r7) + bytes([crc])
+
+
+def trom_block(t_rom, roms, temps=None, known=(), when=None):
+    """The ROMS command's output: (lines, new rows placed). t_rom: 7 ROMs or None."""
+    so, cfg = lib(), Cfg()
+    for k, r in enumerate(t_rom):
+        cfg.t_rom[k][:] = list(r or bytes(8))
+    for k, r in enumerate(known):
+        cfg.known_rom[k][:] = list(r)
+    buf = (ctypes.c_uint8 * (8 * max(len(roms), 1)))(*b"".join(roms))
+    t = (ctypes.c_float * max(len(roms), 1))(*(temps or [math.nan] * len(roms)))
+    lines = []
+    cb = EMIT(lambda _, s: lines.append(s.decode()))
+    placed = so.pvlog_trom_block(ctypes.byref(cfg), buf, t, len(roms),
+                                 when.encode() if when else None, cb, None)
+    return lines, placed
 
 
 def rom(k):

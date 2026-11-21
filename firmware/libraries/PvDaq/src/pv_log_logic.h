@@ -161,6 +161,21 @@ int pvlog_time_at(const pvlog_t *L, uint32_t ms, uint32_t *unix_s);
 const char *pvlog_sensor_name(int sensor);
 int pvlog_rom_is_zero(const uint8_t *rom);
 void pvlog_rom_text(const uint8_t *rom, char *out);   /* "28-xx-..-xx", out >= 24 chars */
+int pvlog_rom_crc_ok(const uint8_t *rom);             /* Maxim CRC-8 of bytes 0..6 = byte 7 */
+
+/* The T_ROM block of the ROMS command (follow-up 2026-11-21): the whole T_ROM statement
+ * of logger.ino, ready to paste over it, built from the table in cfg and one bus scan.
+ *   - a filled row keeps its ROM in its place, on the bus or not (a note says which);
+ *   - ROMs on the bus that no table lists fill the EMPTY rows in bus-search order, each
+ *     marked "position NOT checked": only a person can tell which probe sits where;
+ *   - a known_rom (the heatsink probe) is never placed; a ROM with a bad CRC is not placed;
+ *   - every row on the bus shows its probe's temperature now (temp_c, NaN = no reading):
+ *     warm one probe in the hand, type ROMS again, and its row is the warm one.
+ * The lines (no line end) go to emit() one by one. Returns the number of NEW rows placed.
+ * when: UTC text for the first line, or NULL. */
+int pvlog_trom_block(const pvlog_cfg_t *cfg, const uint8_t (*roms)[8], const float *temp_c,
+                     int n, const char *when, void (*emit)(void *ctx, const char *line),
+                     void *ctx);
 
 /* For the PC tests (the Python mirrors of the structs check their sizes with these). */
 uint32_t pvlog_sizeof(void);

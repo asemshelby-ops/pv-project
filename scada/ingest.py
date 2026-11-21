@@ -80,8 +80,8 @@ class RowParser:
         timed row of its boot: rows of that boot waiting in unplaced_rows can now be placed."""
         self.line_no += 1
         line = line.strip()
-        if not line or line.startswith("#"):
-            return "skip", None, False
+        if not line or line.startswith(("#", "//", "static ", "{", "}")):
+            return "skip", None, False        # comments, and the T_ROM block of the ROMS command
         fields = line.split(",")
         if fields[0] == "date":
             self.header = fields

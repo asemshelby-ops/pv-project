@@ -47,6 +47,109 @@ void pvlog_rom_text(const uint8_t *rom, char *out) {
   for (int k = 0; k < 8; k++) snprintf(out + 3 * k, 4, k < 7 ? "%02X-" : "%02X", rom[k]);
 }
 
+int pvlog_rom_crc_ok(const uint8_t *rom) {
+  uint8_t crc = 0;  /* Dallas/Maxim CRC-8, polynomial x^8 + x^5 + x^4 + 1, LSB first */
+  for (int k = 0; k < 7; k++) {
+    uint8_t b = rom[k];
+    for (int i = 0; i < 8; i++, b >>= 1) crc = (uint8_t)(((crc ^ b) & 1) ? (crc >> 1) ^ 0x8C : crc >> 1);
+  }
+  return crc == rom[7];
+}
+
+static void rom_bytes(const uint8_t *rom, char *out, int size) {
+  snprintf(out, (size_t)size, "{0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X}",
+           rom[0], rom[1], rom[2], rom[3], rom[4], rom[5], rom[6], rom[7]);
+}
+
+static void temp_text(float t, char *out, int size) {
+  if (t != t) snprintf(out, (size_t)size, "no reading");  /* NaN */
+  else snprintf(out, (size_t)size, "%.2f C", (double)t);
+}
+
+int pvlog_trom_block(const pvlog_cfg_t *cfg, const uint8_t (*roms)[8], const float *temp_c,
+                     int n, const char *when, void (*emit)(void *ctx, const char *line),
+                     void *ctx) {
+  char line[160], bytes[64], rom[24], temp[16];
+  int row_of[PVLOG_SCAN_MAX];      /* bus index -> T row (0..6), -1 = not placed */
+  int bus_of[PVLOG_N_T];           /* T row -> bus index, -1 = not on the bus */
+  int placed_new = 0, kept = 0;
+  if (n > PVLOG_SCAN_MAX) n = PVLOG_SCAN_MAX;
+  if (n < 0) n = 0;
+  for (int k = 0; k < PVLOG_N_T; k++) bus_of[k] = -1;
+  for (int i = 0; i < n; i++) {
+    row_of[i] = -1;
+    for (int k = 0; k < PVLOG_N_T; k++)
+      if (!pvlog_rom_is_zero(cfg->t_rom[k]) && memcmp(cfg->t_rom[k], roms[i], 8) == 0) {
+        row_of[i] = k;
+        bus_of[k] = i;
+      }
+  }
+  for (int k = 0; k < PVLOG_N_T; k++) kept += !pvlog_rom_is_zero(cfg->t_rom[k]);
+  /* new ROMs into the empty rows, in bus-search order */
+  int next = 0;
+  for (int i = 0; i < n; i++) {
+    int known = 0;
+    for (int k = 0; k < PVLOG_N_KNOWN; k++) known |= memcmp(cfg->known_rom[k], roms[i], 8) == 0;
+    if (row_of[i] >= 0 || known || pvlog_rom_is_zero(roms[i]) || !pvlog_rom_crc_ok(roms[i])) continue;
+    while (next < PVLOG_N_T && !pvlog_rom_is_zero(cfg->t_rom[next])) next++;
+    if (next == PVLOG_N_T) break;
+    row_of[i] = next;
+    bus_of[next] = i;
+    next++;
+    placed_new++;
+  }
+
+  snprintf(line, sizeof(line), "// ---- T_ROM block (command ROMS%s%s): paste over the T_ROM statement "
+           "in logger/logger.ino ----", when ? ", UTC " : "", when ? when : "");
+  emit(ctx, line);
+  snprintf(line, sizeof(line), "// %d DS18B20 on the bus; %d row(s) kept, %d new, %d empty. Which probe "
+           "is which: warm one in the hand, type ROMS again.", n, kept, placed_new,
+           PVLOG_N_T - kept - placed_new);
+  emit(ctx, line);
+  emit(ctx, "static const uint8_t T_ROM[PVLOG_N_T][8] = {");
+  for (int k = 0; k < PVLOG_N_T; k++) {
+    const int i = bus_of[k];
+    if (!pvlog_rom_is_zero(cfg->t_rom[k])) {
+      rom_bytes(cfg->t_rom[k], bytes, sizeof(bytes));
+      if (i >= 0) {
+        temp_text(temp_c ? temp_c[i] : (float)NAN, temp, sizeof(temp));
+        snprintf(line, sizeof(line), "    %s,  // T%d kept, on the bus (#%d), %s", bytes, k + 1, i, temp);
+      } else {
+        snprintf(line, sizeof(line), "    %s,  // T%d kept, NOT on the bus now", bytes, k + 1);
+      }
+    } else if (i >= 0) {
+      rom_bytes(roms[i], bytes, sizeof(bytes));
+      temp_text(temp_c ? temp_c[i] : (float)NAN, temp, sizeof(temp));
+      snprintf(line, sizeof(line), "    %s,  // T%d NEW (bus #%d), position NOT checked, %s%s", bytes,
+               k + 1, i, temp, (roms[i][0] == 0x28 && !roms[i][5] && !roms[i][6]) ? "" : ", clone?");
+    } else {
+      snprintf(line, sizeof(line), "    {0},  // T%d empty: its column stays empty", k + 1);
+    }
+    emit(ctx, line);
+  }
+  emit(ctx, "};");
+  for (int k = 0; k < PVLOG_N_T; k++) {
+    if (pvlog_rom_is_zero(cfg->t_rom[k]) || bus_of[k] >= 0) continue;
+    pvlog_rom_text(cfg->t_rom[k], rom);
+    snprintf(line, sizeof(line), "// T%d: %s is not on the bus: probe unplugged? If it is gone, set the row to {0}.",
+             k + 1, rom);
+    emit(ctx, line);
+  }
+  for (int i = 0; i < n; i++) {
+    int known = 0;
+    if (row_of[i] >= 0 || pvlog_rom_is_zero(roms[i])) continue;
+    for (int k = 0; k < PVLOG_N_KNOWN; k++) known |= memcmp(cfg->known_rom[k], roms[i], 8) == 0;
+    pvlog_rom_text(roms[i], rom);
+    snprintf(line, sizeof(line), "// not placed: %s (bus #%d): %s", rom, i,
+             known ? "a known_rom (heatsink), not a T column"
+             : !pvlog_rom_crc_ok(roms[i]) ? "CRC BAD, type ROMS again"
+             : "all 7 rows are taken");
+    emit(ctx, line);
+  }
+  emit(ctx, "// ---- end of T_ROM block ----");
+  return placed_new;
+}
+
 /* Days since 1970-01-01 -> civil date (proleptic Gregorian; H. Hinnant's algorithm). */
 void pvlog_utc_text(uint32_t unix_s, char *out, int size) {
   const uint32_t days = unix_s / 86400u, rem = unix_s % 86400u;

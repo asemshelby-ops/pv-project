@@ -643,8 +643,45 @@ void loadCommand(const char *c) {
     load_manual_off(&load.L, millis(), 0);
     loadLog("command LOAD ON");
   } else {
-    Serial.println("# commands: GAMMA <minutes> | LOAD OFF | LOAD ON");
+    Serial.println("# commands: GAMMA <minutes> | LOAD OFF | LOAD ON | ROMS");
   }
+}
+
+// ---- ROMS: the T_ROM block to paste (follow-up 2026-11-21) ------------------------------------
+// Type ROMS in the serial monitor: a fresh bus scan, one conversion, then the whole T_ROM
+// statement printed ready to paste over the one above (pvlog_trom_block, pv_log_logic.c,
+// tested on the PC). Rows already filled keep their place; new ROMs fill the empty rows in
+// bus order, marked "position NOT checked". Each row shows its probe's temperature: warm
+// one probe in the hand and type ROMS again to see which row it is. Takes about 1.5 s
+// (scan + 750 ms conversion), between two rows. Bench use, before logging: not in the
+// load build, where the 1-Wire bus also serves the heatsink probe and the hold loop.
+void emitLine(void *, const char *line) { Serial.println(line); }
+
+void romsCommand() {
+  if (HAS_LOAD) {
+    Serial.println("# ROMS: not in the load build (HAS_LOAD 1); use the logger with HAS_LOAD 0");
+    return;
+  }
+  at(AT_DS18B20);
+  probes.begin();  // 1-Wire search of the whole bus
+  probes.convert();
+  float temp[PvDs18b20::MAX_SENSORS];
+  for (uint8_t i = 0; i < probes.count; i++) temp[i] = probes.readRom(probes.rom[i]);
+  char when[24] = "", *w = nullptr;
+  uint32_t unix_s;
+  if (pvlog_time_at(&plog, millis(), &unix_s)) {
+    pvlog_utc_text(unix_s, when, sizeof(when));
+    w = when;
+  }
+  pvlog_trom_block(&plog.cfg, probes.rom, temp, probes.count, w, emitLine, nullptr);
+  at(AT_IDLE);
+}
+
+// One typed line. ROMS in every build; the load's commands only with HAS_LOAD 1.
+void command(const char *c) {
+  if (!strcmp(c, "ROMS")) romsCommand();
+  else if (HAS_LOAD) loadCommand(c);
+  else Serial.println("# commands: ROMS (the T_ROM block to paste, from a bus scan)");
 }
 
 void readCommands() {
@@ -654,7 +691,7 @@ void readCommands() {
     const char c = (char)Serial.read();
     if (c == '\n' || c == '\r') {
       buf[n] = 0;
-      if (n) loadCommand(buf);
+      if (n) command(buf);
       n = 0;
     } else if (n < sizeof(buf) - 1) {
       buf[n++] = (char)toupper(c);
@@ -806,6 +843,7 @@ void setup() {
     if (!load.begin()) Serial.println("# load: LEDC attach FAILED: both branches are held off");
     Serial.println("# load: active. Commands: GAMMA <minutes> | LOAD OFF | LOAD ON");
   }
+  if (!HAS_LOAD) Serial.println("# type ROMS for the T_ROM block to paste (bus scan, temperatures)");
   Serial.printf("# watchdog on the loop task: %lu ms; LittleFS ring: %s, %lu lines waiting\n",
                 (unsigned long)LOOP_WDT_MS, flash_ring.ok() ? "ready" : "NOT USABLE",
                 (unsigned long)pvstore_waiting(&store));
@@ -818,6 +856,7 @@ void loop() {
   static uint32_t next = millis();
   static uint32_t n = 0;
   if (mark_ms) logMarker();
+  if (!HAS_LOAD) readCommands();            // with the load: in loadLoop(), as before
   if (HAS_LOAD) at(AT_LOAD);
   if (HAS_LOAD) loadLoop(next);
   if ((int32_t)(millis() - next) < 0) return;
