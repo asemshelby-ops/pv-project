@@ -45,7 +45,7 @@ def test_new_format_loads_with_typed_extra_columns(days, tmp_path):
     assert str(df["uptime_ms"].dtype) == "Int64" and df["uptime_ms"].iloc[0] == 5000
     assert df["uptime_ms"].iloc[1] - df["uptime_ms"].iloc[0] == 10000
     assert (df["time_source"] == "rtc").all()
-    assert df.attrs == {"rows_without_time": 0, "rows_time_rebuilt": 0}
+    assert df.attrs == {"rows_without_time": 0, "rows_duplicate": 0, "rows_time_rebuilt": 0}
 
 
 def test_old_format_still_loads_and_gives_the_same_data(days, tmp_path):
@@ -87,7 +87,7 @@ def test_rows_without_rtc_time_are_kept_and_timed_from_uptime(days, tmp_path):
     assert list(df["time_source"].iloc[99:104]) == ["rtc", "uptime", "uptime", "uptime", "rtc"]
     assert df["time"].iloc[101] == ref["time"].iloc[101]         # local time filled in
     assert has_status(df["status"], "RTC_INVALID").sum() == 3
-    assert df.attrs == {"rows_without_time": 0, "rows_time_rebuilt": 3}
+    assert df.attrs == {"rows_without_time": 0, "rows_duplicate": 0, "rows_time_rebuilt": 3}
 
 
 def test_untimed_row_right_after_a_reboot_uses_the_next_timed_row(days, tmp_path):
@@ -111,7 +111,7 @@ def test_rows_whose_time_cannot_be_rebuilt_are_counted_not_hidden(days, tmp_path
     with pytest.warns(UserWarning, match="3 logger rows have no usable time"):
         df = ingest.read_logger(tmp_path)
     assert len(df) == len(days) - 1
-    assert df.attrs == {"rows_without_time": 3, "rows_time_rebuilt": 0}
+    assert df.attrs == {"rows_without_time": 3, "rows_duplicate": 0, "rows_time_rebuilt": 0}
 
 
 # --- status bits ------------------------------------------------------------------------------
@@ -215,3 +215,56 @@ def test_board_and_analysis_share_one_reset_constant():
     ino = (ROOT / "firmware/logger/logger.ino").read_text()
     assert "DET_RESET_AFTER_FAILS = NASIM_DET_RESET_AFTER_FAILS;" in ino
     assert "GAP_S" not in (ROOT / "analysis/ingest.py").read_text()
+
+
+# --- rows the flash ring buffer wrote twice ------------------------------------------------------
+
+def _repeat_block(folder, first, last):
+    """Write data rows first..last of the first day file a second time, right after `last`:
+    what a power cut between "segment copied" and "segment deleted" leaves on the card."""
+    f = sorted(folder.glob("2*.csv"))[0]
+    lines = f.read_text().splitlines()
+    block = lines[first + 1:last + 2]
+    f.write_text("\n".join(lines[:last + 2] + block + lines[last + 2:]) + "\n")
+    return len(block)
+
+
+def test_rows_written_twice_by_the_ring_buffer_are_dropped_and_counted(days, tmp_path):
+    fake_logger.write_logger_files(days, tmp_path)
+    ref = ingest.read_logger(tmp_path)
+    for row in range(100, 160):
+        _edit(tmp_path, row, status=BIT["BUFFERED"])
+    n = _repeat_block(tmp_path, 100, 159)
+    df = ingest.read_logger(tmp_path)
+    assert n == 60 and len(df) == len(ref)
+    assert (df["t_utc"] == ref["t_utc"]).all() and df["t_utc"].is_unique
+    assert (df["segment"] == ref["segment"]).all()               # no false restart of the board
+    assert df.attrs["rows_duplicate"] == 60
+    assert ref.attrs["rows_duplicate"] == 0
+
+
+def test_a_repeated_block_without_rtc_time_is_not_reported_as_lost(days, tmp_path):
+    import warnings as w
+    fake_logger.write_logger_files(days, tmp_path)
+    ref = ingest.read_logger(tmp_path)
+    for row in range(100, 160):
+        _edit(tmp_path, row, date="", time="", status=BIT["RTC_INVALID"] | BIT["BUFFERED"])
+    _repeat_block(tmp_path, 100, 159)
+    with w.catch_warnings():
+        w.simplefilter("error")                                  # "rows have no usable time"
+        df = ingest.read_logger(tmp_path)
+    assert len(df) == len(ref) and (df["t_utc"] == ref["t_utc"]).all()
+    assert df.attrs["rows_duplicate"] == 60 and df.attrs["rows_without_time"] == 0
+
+
+def test_two_different_rows_with_one_timestamp_keep_the_first_and_are_counted(days, tmp_path):
+    fake_logger.write_logger_files(days, tmp_path)
+    ref = ingest.read_logger(tmp_path)
+    f = sorted(tmp_path.glob("2*.csv"))[0]
+    lines = f.read_text().splitlines()
+    cells = lines[51].split(",")
+    cells[2] = "99.0000"                                         # same time, another T1
+    f.write_text("\n".join(lines[:52] + [",".join(cells)] + lines[52:]) + "\n")
+    df = ingest.read_logger(tmp_path)
+    assert len(df) == len(ref) and df["T1"].iloc[50] == ref["T1"].iloc[50]
+    assert df.attrs["rows_duplicate"] == 1

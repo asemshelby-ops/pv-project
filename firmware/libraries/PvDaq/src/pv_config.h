@@ -18,8 +18,14 @@
                            // pull-down and would count noise.
 #ifndef HAS_LOAD
 #define HAS_LOAD 0         // 0 = no load hardware fitted: both load pins stay LOW, rows carry
-#endif                     // D = NaN, load_mode = none. Set to 1 only after bench B0-B7 pass
-                           // (firmware/tests/load_bench/BENCH.md).
+#endif                     // D = NaN, load_mode = none.
+                           // DROPPED 2026-11-21 (Asim): the PWM resistor load is not being
+                           // built (charge controller + battery + lamp instead), so this
+                           // stays 0. With 0 the compiler removes the load and I-V sweep
+                           // code from the logger: tests/test_load_logic.py checks that no
+                           // sweep function is in the built firmware. The code is kept,
+                           // and still compiled by build_all.py as "logger_load", only so
+                           // it does not rot; that build must not be flashed.
 
 // ---- GPIO (firmware/PINMAP.md) ----------------------------------------------
 namespace pins {

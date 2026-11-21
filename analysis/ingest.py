@@ -25,6 +25,10 @@ Rows whose time cannot be rebuilt (no uptime_ms, or no timed row in the same boo
 file, as in /nodate.csv) cannot be placed on the time axis: they are left out and
 COUNTED in `df.attrs["rows_without_time"]`, with a warning. `df.attrs["rows_time_rebuilt"]`
 counts the rebuilt ones.
+Duplicates: a row that is in the files twice is used once. Identical lines are dropped
+first (the flash ring buffer can copy up to 60 rows twice after a power cut, status bit
+BUFFERED), then any further row with a timestamp already seen; `df.attrs["rows_duplicate"]`
+counts both.
 Raw values are never changed, except for optional per-sensor calibration offsets.
 """
 import pathlib
@@ -51,7 +55,13 @@ def read_logger(src, calib=None):
         files.append(src / "nodate.csv")           # rows of boots that never had RTC time
     raw = pd.concat([pd.read_csv(f, comment="#", dtype=str, skip_blank_lines=True)
                     .assign(_file=k) for k, f in enumerate(files)], ignore_index=True)
-    raw = raw[raw["date"] != "date"].reset_index(drop=True)   # a repeated header line
+    raw = raw[raw["date"] != "date"]                           # a repeated header line
+    # A line that is in the file twice, character for character: a flash-buffer segment
+    # copied to the card twice (power cut between "copied" and "deleted"). Dropped before
+    # the times are worked out, so the repeat is not taken for a restart of the board.
+    n_raw = len(raw)
+    raw = raw.drop_duplicates().reset_index(drop=True)
+    repeated = n_raw - len(raw)
     for c in LOGGER_EXTRA_COLUMNS:                 # files written before 2026-11-12
         if c not in raw:
             raw[c] = np.nan
@@ -61,7 +71,11 @@ def read_logger(src, calib=None):
         warnings.warn(f"{lost} logger rows have no usable time and are left out "
                       f"(see df.attrs['rows_without_time'])", stacklevel=2)
     df = raw.assign(t_utc=t_utc, time_source=source)[t_utc.notna()].drop(columns="_file")
+    # One row per timestamp: of rows that share a time but differ, the first in the file
+    # is kept (the logger writes one row every 10 s, so a second one is not a new sample).
+    n_timed = len(df)
     df = df.drop_duplicates("t_utc").sort_values("t_utc").reset_index(drop=True)
+    repeated += n_timed - len(df)
     for c in df.columns.difference(["date", "time", "t_utc", "time_source", "load_mode"]):
         df[c] = pd.to_numeric(df[c], errors="coerce")
     for c in ("sweep_id", "uptime_ms", "status"):
@@ -69,6 +83,7 @@ def read_logger(src, calib=None):
     for name, off in (calib or {}).items():
         df[name] = df[name] - off
     df.attrs["rows_without_time"] = lost
+    df.attrs["rows_duplicate"] = repeated
     df.attrs["rows_time_rebuilt"] = int((df["time_source"] == "uptime").sum())
 
     local = df["t_utc"].dt.tz_convert(config.TZ)

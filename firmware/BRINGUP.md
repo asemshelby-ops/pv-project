@@ -430,3 +430,16 @@ Files: `/pump_log.csv` (commands, starts, stops, trips), `/PPYYYYMMDD.csv` (per 
 which the pump ran or water flowed: duty, V, I, P, state, `flow_pulses`, `flow_Lmin`).
 `flow_Lmin` stays empty until `FLOW_PULSES_PER_L` is measured (pulses counted ÷ litres caught).
 Nothing in the firmware starts the pump by itself.
+
+**YF-S401 output, measure first (2 min, multimeter).** Its vendor sheet gives only the levels
+(> 4.5 V high, < 0.5 V low at 5 V), not the output type. Power the sensor from 5 V, signal
+wire connected to nothing, rotor still (blow gently until the reading is the high one):
+
+| Signal wire to GND reads | Then add 10 kΩ from signal to GND | Meaning | Wiring to GPIO35 |
+|---|---|---|---|
+| ≈ 0 V or drifting, never a steady high | — | open collector, no pull-up inside | 10 kΩ pull-up to **3.3 V**, no divider |
+| ≈ 5 V | stays > 4.5 V | driven output | divider 10 kΩ (top) / 20 kΩ (to GND): 3.3 V at the pin |
+| ≈ 5 V | drops to V | pull-up inside: R = 10 kΩ × (5 − V) / V | pin sees 5 V × 20k / (R + 30k) through the 10k/20k divider: must be 2.6–3.3 V, i.e. R below ≈ 8 kΩ; otherwise change the divider |
+
+Do not add a 10 kΩ pull-up to 5 V in front of the 10k/20k divider: the high level at the pin
+would be 5 V × 20/40 = 2.5 V, at the ESP32's input threshold (0.75 × 3.3 V = 2.475 V).

@@ -764,3 +764,16 @@ def test_logger_keeps_the_load_out_unless_has_load_is_set():
 def test_mode_names_are_the_load_mode_column_values(lib):
     assert [lib.load_mode_text(m) for m in (OFF, HOLD, SWEEP, TRIP)] == \
         [b"off", b"hold", b"sweep", b"trip"]
+
+
+def test_the_firmware_as_flashed_contains_no_load_or_sweep_code():
+    """The PWM load was dropped (2026-11-21): HAS_LOAD stays 0 and the linker then leaves
+    the whole load out. Checked on the linker map of the last default build, if there is one."""
+    assert "#ifndef HAS_LOAD\n#define HAS_LOAD 0" in (SRC / "pv_config.h").read_text()
+    maps = list((ROOT / "out/firmware_build/logger").glob("*.map"))
+    if not maps:
+        pytest.skip("no default logger build in out/firmware_build (python firmware/build_all.py logger)")
+    kept = maps[0].read_text(errors="replace").split("Linker script and memory map")[1]
+    for symbol in ("load_sweep_start", "load_service", "load_reading", "PvLoad7service",
+                   "PvLoad11finishSweep", "PvLoad5begin"):
+        assert not re.search(rf"^\s+0x[0-9a-f]+\s+\S*{symbol}", kept, re.M), symbol

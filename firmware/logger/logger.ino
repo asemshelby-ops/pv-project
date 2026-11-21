@@ -92,11 +92,12 @@ static const uint8_t T_ROM[5][8] = {{0}, {0}, {0}, {0}, {0}};
 // branches off, by design.
 static const uint8_t HEATSINK_ROM[8] = {0};
 // Loop watchdog (esp_task_wdt on the loop task, every build): if the loop stalls for this
-// long the chip resets, the pins are released and the gate pull-downs switch the load and the
-// pump off; logging then starts again by itself. The watchdog is also fed between the stages
+// long the chip resets, the pins are released and the gate pull-down switches the pump
+// off; logging then starts again by itself. The watchdog is also fed between the stages
 // of a row, so the limit applies to ONE stage (a device retry, the reads, the card write,
 // one segment copied back), not to their sum. [ASSUMPTION] 15 s is well above the longest
-// stage (an SD mount that fails twice, a few seconds [EST]); check in bench B7.
+// stage (an SD mount that fails twice, a few seconds [EST]); check with the serial command
+// WDT TEST (firmware/BENCH_LOGGER.md).
 static const uint32_t LOOP_WDT_MS = 15000;
 
 // ---- devices -----------------------------------------------------------------------------
@@ -841,10 +842,16 @@ void tromCommand(const char *c) {
 }
 
 void command(const char *c) {
+  if (!strcmp(c, "WDT TEST")) {  // bench check: stall the loop on purpose
+    Serial.printf("# WDT TEST: loop stalled now; the watchdog must reset the chip in %lu s\n",
+                  (unsigned long)(LOOP_WDT_MS / 1000));
+    Serial.flush();
+    for (;;) delay(100);  // never feeds the watchdog; the outputs keep their state until the reset
+  }
   if (!strncmp(c, "TROM", 4)) tromCommand(c + 4);
   else if (ENABLE_PUMP && !strncmp(c, "PUMP", 4)) pumpCommand(c + 4);
   else if (HAS_LOAD) loadCommand(c);
-  else Serial.println("# commands: TROM | TROM SAVE | TROM SET <1..5> <ROM> | TROM CLEAR");
+  else Serial.println("# commands: TROM | TROM SAVE | TROM SET <1..5> <ROM> | TROM CLEAR | WDT TEST");
 }
 
 void readCommands() {

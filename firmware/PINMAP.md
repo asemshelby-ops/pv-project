@@ -27,9 +27,9 @@ on the Freenove GPIO extension board. Facts about the GPIOs are from the ESP-IDF
 | RS485 RX ← MAX3485 (RO / "RXD") | **26** | I | As above. |
 | PYR20 0–2 V analog | **34** | I (ADC1_CH6) | ADC1 (works with Wi-Fi); input-only pin is fine for an analog input and cannot be driven by mistake. |
 | Pump MOSFET gate (PWM) | **32** | O (LEDC channel 2) | Not strapping; high-impedance during reset, so the gate pull-down (10 kΩ) keeps the pump OFF until the firmware drives it LOW. Driven only with `ENABLE_PUMP 1` (`pv_pump.h`: soft start, cut-off from the pump INA226); held LOW otherwise. |
-| Flow sensor pulse output | **35** | I (PCNT) | Added 2026-11-21. Input-only pin, so it cannot be driven by mistake; the pulse counter (PCNT) accepts any GPIO. **No internal pull-up or pull-down**: an open-collector output needs an external pull-up to 3.3 V (≈ 10 kΩ); a sensor that drives 5 V needs a divider to ≤ 3.3 V. Sensor model not chosen → output type, supply and pulses per litre are open. Counted only with `HAS_FLOW 1`; with nothing wired the pin floats and would count noise. |
-| Measurement-load branch B gate driver (PWM, sweeps only) | **14** | O (LEDC) | Decision 2026-11-12 (Asim). The only free output pin. It is a JTAG pin (MTMS) and toggles during boot, so the driver input has a **10 kΩ pull-down**; a toggle would at most connect one 1.5 Ω branch for a few ms `[EST]`. Checked on the scope in bench step B1. |
-| Measurement-load branch A gate driver (PWM, ~20 kHz) | **33** | O (LEDC) | Same reasoning; the gate driver input also needs a pull-down so the load stays off during reset. |
+| Flow sensor pulse output | **35** | I (PCNT) | Added 2026-11-21. Input-only pin, so it cannot be driven by mistake; the pulse counter (PCNT) accepts any GPIO. **No internal pull-up or pull-down**: an open-collector output needs an external pull-up to 3.3 V (≈ 10 kΩ); a sensor that drives 5 V needs a divider to ≤ 3.3 V. Sensor: **YF-S401** (2026-11-21). Vendor sheet (DFRobot SEN0216): 5–12 V supply, high level > 4.5 V and low < 0.5 V at 5 V, duty 50 ± 10 %, 0.3–6 L/min, "1 L = 5880 pulses" (≈ 590 Hz at 6 L/min, far below the counter's limits). The sheet does **not** say whether the output is open-collector or driven, and gives no internal pull-up value → measure before wiring (BRINGUP §11). `FLOW_PULSES_PER_L` stays 0 until our own bucket calibration. Counted only with `HAS_FLOW 1`; with nothing wired the pin floats and would count noise. |
+| ~~Measurement-load branch B gate driver~~ — **not fitted: the PWM load was dropped 2026-11-21**; pin held LOW, reserved | **14** | O (LEDC) | Decision 2026-11-12 (Asim). The only free output pin. It is a JTAG pin (MTMS) and toggles during boot, so the driver input has a **10 kΩ pull-down**; a toggle would at most connect one 1.5 Ω branch for a few ms `[EST]`. Checked on the scope in bench step B1. |
+| ~~Measurement-load branch A gate driver~~ — **not fitted (dropped 2026-11-21)**; pin held LOW, reserved | **33** | O (LEDC) | Same reasoning; the gate driver input also needs a pull-down so the load stays off during reset. |
 | test_marker button (to GND) | **27** | I, internal pull-up | Needs an internal pull-up (34–39 have none); not strapping. Press = LOW. |
 
 Spare pins (kept free on purpose):
@@ -67,8 +67,8 @@ LEDC, 20 kHz, 11-bit resolution since 2026-11-13 (20 kHz is above hearing; 20 kH
 
 | Output | GPIO | LEDC channel (timer) | Driven when |
 |---|---|---|---|
-| Load branch A | 33 | 0 (timer 0) | `HAS_LOAD 1` |
-| Load branch B | 14 | 1 (timer 0, same phase as A) | `HAS_LOAD 1`, sweeps only |
+| Load branch A | 33 | 0 (timer 0) | never: load dropped 2026-11-21, `HAS_LOAD` stays 0 |
+| Load branch B | 14 | 1 (timer 0) | never, as above |
 | Pump | 32 | 2 (timer 1) | `ENABLE_PUMP 1`, and only after a typed `PUMP` command |
 
 As flashed today (`HAS_LOAD 0`, `ENABLE_PUMP 0`, `HAS_FLOW 0`) none of them is ever turned on. The loop watchdog (15 s, every build) resets the chip if the loop stalls; a reset releases the pins and the gate pull-downs switch everything off.

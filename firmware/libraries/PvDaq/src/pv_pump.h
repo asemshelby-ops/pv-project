@@ -8,7 +8,8 @@
 // reading) and the flyback diode across the pump.
 // Reaction time: a reading takes ~35 ms (16 averages), a trip needs PUMP_I_TRIP_N of them,
 // and they are only taken while service() is called. The logger calls it on every loop pass
-// and inside its waits, but not during an I-V sweep (~1.7 s with HAS_LOAD 1) or an SD write.
+// and inside its waits (DS18B20 conversion, RTC second edge), but not during an SD-card or
+// flash write or a device restart: tens of ms normally, seconds when an SD mount fails [EST].
 #pragma once
 #include "pv_config.h"
 #include "pv_ina226.h"
