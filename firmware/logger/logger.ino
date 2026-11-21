@@ -25,7 +25,14 @@
 // reason of every start is printed and appended to /boot_log.csv.
 // Build: python firmware/build_all.py logger   (adds the include paths to export/c).
 //
-// SAFETY: the pump output is held LOW. Both load outputs are held LOW while HAS_LOAD is 0;
+// With the pump (ENABLE_PUMP 1 in pv_config.h; PvDaq/src/pv_pump.h): the serial commands
+// PUMP <percent> | PUMP OFF | PUMP RESET drive it for the bucket test, with soft start and
+// the over-current / dry-run cut-off from the pump's INA226. /pump_log.csv = starts, stops
+// and trips; /PPYYYYMMDD.csv = one row per 10 s row in which the pump ran.
+//
+// SAFETY: the pump output is held LOW while ENABLE_PUMP is 0; with ENABLE_PUMP 1 it starts
+// LOW, only a typed command turns it on, and nothing in this sketch pumps by itself (no
+// alarm, no temperature). Both load outputs are held LOW while HAS_LOAD is 0;
 // with HAS_LOAD 1 they start LOW and go LOW again on every fault (PvDaq/src/pv_load_logic.h).
 // The alarms are only logged; NASIM is trained and the baselines are tuned on SYNTHETIC
 // data: all must be redone on real data before they drive anything. The load never acts
@@ -36,6 +43,7 @@
 #include <esp_task_wdt.h>
 #include <pv_flashring.h>
 #include <pv_load.h>
+#include <pv_pump.h>
 #include <pv_status.h>
 
 extern "C" {  // export/c is C, compiled here through nasim_core.c / nasim_model.c
@@ -115,6 +123,9 @@ Preferences nvs;                  // namespace "pvdaq", key "t_rom" = 5 x 8 byte
 char day_path[16] = "/nodate.csv";  // file of the last row that had a valid RTC time
 
 PvLoad load(panel);               // serviced only with HAS_LOAD 1
+PvIna226 pump_ina("INA226 pump", &hub, PAHUB_CH_PUMP);  // talked to only with ENABLE_PUMP 1
+PvPump pump(pump_ina);            // serviced only with ENABLE_PUMP 1
+bool pump_ran = false;            // the pump was on at some time since the last 10 s row
 float last_g = NAN;               // irradiance of the last row: input of the load's light rules
 double last_T[5] = {NAN, NAN, NAN, NAN, NAN};  // T1..T5 of the last row: stored with each sweep
 uint32_t row_sweep_id = 0;        // sweep_id column: id of the last finished sweep, 0 = none
@@ -128,6 +139,7 @@ volatile uint32_t mark_ms = 0;    // last button press (ISR), 0 = none pending
 // millis() at the moment the RTC second changes: UTC second anchor_s began at anchor_ms.
 uint32_t anchor_s = 0;            // 0 = no anchor (RTC missing or not set)
 uint32_t anchor_ms = 0;
+const char *PUMP_HEADER = "date,time,uptime_ms,pump_duty,pump_V,pump_I,pump_P,pump_state";
 const char *HEADER =
     "date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,"
     "D,load_mode,sweep_id,uptime_ms,status";
@@ -290,6 +302,16 @@ void resetDetectors() {
   cusum_inc_reset(&det_cusum);
 }
 
+// What must go on while the logger waits for something (a DS18B20 conversion, the RTC edge).
+float heatsinkTemp();
+void background() {
+  if (HAS_LOAD) load.service(last_g, heatsinkTemp());
+  if (ENABLE_PUMP) {
+    pump.service();
+    pump_ran |= pump.P.d > 0.0f;
+  }
+}
+
 // ---- one sample ---------------------------------------------------------------------------
 void sample(uint32_t n) {
   uint32_t status = 0;
@@ -304,6 +326,8 @@ void sample(uint32_t n) {
     if (!d->ok()) retried |= d->begin();
   }
   if (!panel.ok() && hub.ok()) retried |= panel.begin();  // the INA226 needs the PaHub
+  // The pump unit likewise, but never while the pump runs: begin() resets the chip.
+  if (ENABLE_PUMP && !pump_ina.ok() && hub.ok() && pump.P.d <= 0.0f) retried |= pump_ina.begin();
   if (n % RETRY_EVERY == 0) {
     for (PvDevice *d : SLOW_RETRY) {
       if (!d->ok()) retried |= d->begin();
@@ -324,9 +348,15 @@ void sample(uint32_t n) {
   if (HAS_LOAD) load.rowReading();   // 64-average, triggered (also one hold step)
   else if (readable(panel)) panel.read();
   if (HAS_LOAD && conv_running) {    // conversion started ~800 ms ago in loadLoop()
-    while (millis() - conv_ms < PvDs18b20::CONVERSION_MS + 10) load.service(last_g, heatsinkTemp());
+    while (millis() - conv_ms < PvDs18b20::CONVERSION_MS + 10) background();
     probes.fetch();
     conv_running = false;
+  } else if (probes.count && ENABLE_PUMP) {  // same conversion, but the pump is watched meanwhile
+    if (probes.startConversion()) {
+      const uint32_t t0 = millis();
+      while (millis() - t0 < PvDs18b20::CONVERSION_MS + 10) background();
+      probes.fetch();
+    }
   } else if (probes.count) {
     probes.read();
   }
@@ -474,6 +504,7 @@ void sample(uint32_t n) {
     if (!ring.flushOldest(sd, HEADER)) break;
     feedLoopWDT();
   }
+  if (ENABLE_PUMP) pumpRow(have_time, t, uptime_ms);
   if (ring.pending() != was_pending) {
     was_pending = ring.pending();
     Serial.printf("# flash buffer: %s (%s; %lu segments dropped for room since boot)\n",
@@ -491,7 +522,7 @@ void syncRtcEdge() {
   const uint32_t s0 = rtc.time().unixtime();
   const uint32_t start = millis();
   while (millis() - start < 1100) {
-    if (HAS_LOAD) load.service(last_g, heatsinkTemp());  // the hold loop goes on meanwhile
+    background();  // the hold loop and the pump watch go on meanwhile
     if (!rtc.read()) return;
     const uint32_t s = rtc.time().unixtime();
     if (s != s0) {
@@ -544,8 +575,8 @@ float heatsinkTemp() {  // NaN = no valid reading -> the logic trips
   return idx < 0 ? NAN : probes.tempC[idx];
 }
 
-// Mode changes, trips, commands: to Serial and to /load_log.csv.
-void loadLog(const char *text) {
+// One event line (mode change, trip, command) to Serial and to an event file on the card.
+void eventLog(const char *path, const char *tag, const char *text) {
   char line[176];
   uint32_t unix_s;
   unsigned milli;
@@ -557,8 +588,93 @@ void loadLog(const char *text) {
   } else {
     snprintf(line, sizeof(line), ",,%lu,%s", (unsigned long)ms, text);
   }
-  Serial.printf("# load: %s\n", line);
-  if (sd.ok()) sd.appendLine("/load_log.csv", line, "date,time,uptime_ms,event");
+  Serial.printf("# %s: %s\n", tag, line);
+  if (sd.ok()) sd.appendLine(path, line, "date,time,uptime_ms,event");
+}
+
+void loadLog(const char *text) { eventLog("/load_log.csv", "load", text); }
+void pumpLog(const char *text) { eventLog("/pump_log.csv", "pump", text); }
+
+// ---- pump (called only with ENABLE_PUMP 1) -------------------------------------------------------
+// PUMP <percent>   run at this PWM duty (soft start); below PUMP_D_MIN is refused
+// PUMP OFF         stop now
+// PUMP RESET       clear a trip, after the cause was looked at
+// PUMP             print the state
+void pumpCommand(const char *c) {
+  while (*c == ' ') c++;
+  char text[96];
+  if (!*c) {
+    Serial.printf("# pump: %s, duty %.0f %%, %.2f V, %.3f A, trip: %s; INA226 %s\n",
+                  pump_state_text(pump.P.state), 100.0 * pump.P.d, pump.busV, pump.currentA,
+                  pump_trip_text(pump.P.trip_reason), pump_ina.statusText());
+  } else if (!strcmp(c, "OFF")) {
+    pump.off();
+    pumpLog("command PUMP OFF");
+  } else if (!strcmp(c, "RESET")) {
+    pump.clear();
+    pumpLog("command PUMP RESET");
+  } else if (isdigit((unsigned char)*c)) {
+    const float d = constrain(atol(c), 0L, 100L) / 100.0f;
+    if (pump.P.state == PUMP_TRIP) {
+      Serial.println("# pump: tripped. Find the cause, then PUMP RESET");
+    } else if (d > 0.0f && d < PUMP_D_MIN) {
+      Serial.printf("# pump: refused, below the lowest running duty (%.0f %%)\n", 100.0 * PUMP_D_MIN);
+    } else {
+      pump.request(d);
+      snprintf(text, sizeof(text), "command PUMP %.0f %%", 100.0 * d);
+      pumpLog(text);
+    }
+  } else {
+    Serial.println("# commands: PUMP <percent> | PUMP OFF | PUMP RESET | PUMP");
+  }
+}
+
+// One pass of the pump: the protection logic, and a log line when its state changed.
+void pumpLoop() {
+  static uint32_t state = PUMP_IDLE;
+  background();
+  const pump_t &P = pump.P;
+  if (P.state == state) return;
+  char text[112];
+  if (P.state == PUMP_TRIP) {
+    snprintf(text, sizeof(text), "TRIP: %s (last I %.3f A). Pump off until PUMP RESET",
+             pump_trip_text(P.trip_reason), P.i_last);
+    pumpLog(text);
+  } else if (P.state != PUMP_RUN || state != PUMP_RAMP) {  // ramp -> run is not worth a line
+    snprintf(text, sizeof(text), "%s -> %s (request %.0f %%)", pump_state_text(state),
+             pump_state_text(P.state), 100.0 * P.d_req);
+    pumpLog(text);
+  }
+  state = P.state;
+}
+
+// One line in /PPYYYYMMDD.csv for a 10 s row in which the pump ran: the duty at the row and
+// the last current reading of the protection (mean supply current, 16 averages). Raw values.
+void pumpRow(bool have_time, const DateTime &t, uint32_t uptime_ms) {
+  if (!pump_ran) return;
+  pump_ran = pump.P.d > 0.0f;
+  char path[40] = "/PPnodate.csv";  // sized for the widest values the compiler can see
+  String row;
+  row.reserve(96);
+  if (have_time) {
+    char dt[40];
+    snprintf(path, sizeof(path), "/PP%04u%02u%02u.csv", t.year(), t.month(), t.day());
+    snprintf(dt, sizeof(dt), "%04u-%02u-%02u,%02u:%02u:%02u", t.year(), t.month(), t.day(),
+             t.hour(), t.minute(), t.second());
+    row += dt;
+  } else {
+    row += ',';
+  }
+  row += ',';
+  row += uptime_ms;
+  addField(row, pump.P.d, 4);
+  addField(row, pump.busV, 4);
+  addField(row, pump.currentA, 4);
+  addField(row, pump.powerW, 4);
+  row += ',';
+  row += pump_state_text(pump.P.state);
+  Serial.printf("# pump row: %s\n", row.c_str());
+  if (sd.ok()) sd.appendLine(path, row.c_str(), PUMP_HEADER);
 }
 
 // Closes the finished sweep and appends it to the card: every point to /SWYYYYMMDD.csv and
@@ -715,6 +831,7 @@ void tromCommand(const char *c) {
 
 void command(const char *c) {
   if (!strncmp(c, "TROM", 4)) tromCommand(c + 4);
+  else if (ENABLE_PUMP && !strncmp(c, "PUMP", 4)) pumpCommand(c + 4);
   else if (HAS_LOAD) loadCommand(c);
   else Serial.println("# commands: TROM | TROM SAVE | TROM SET <1..5> <ROM> | TROM CLEAR");
 }
@@ -821,6 +938,12 @@ void setup() {
     if (!load.begin()) Serial.println("# load: LEDC attach FAILED: both branches are held off");
     Serial.println("# load: active. Commands: GAMMA <minutes> | LOAD OFF | LOAD ON");
   }
+  if (ENABLE_PUMP) {
+    if (hub.ok()) pump_ina.begin();
+    if (!pump.begin()) Serial.println("# pump: LEDC attach FAILED: the pump is held off");
+    Serial.printf("# pump: enabled, off. INA226 pump = %s. Commands: PUMP <percent> | PUMP OFF | "
+                  "PUMP RESET | PUMP\n", pump_ina.statusText());
+  }
   esp_task_wdt_config_t wdt = {LOOP_WDT_MS, 0, true};  // time-out, no idle task, reset
   if (esp_task_wdt_reconfigure(&wdt) != ESP_OK) esp_task_wdt_init(&wdt);
   enableLoopWDT();  // the loop task joins the watchdog; fed after every loop() and by feedLoopWDT()
@@ -832,6 +955,7 @@ void loop() {
   static uint32_t n = 0;
   if (mark_ms) logMarker();
   readCommands();
+  if (ENABLE_PUMP) pumpLoop();
   if (HAS_LOAD) loadLoop(next);
   if ((int32_t)(millis() - next) < 0) return;
   next += SAMPLE_PERIOD_MS;                 // fixed grid: no drift from the sampling time

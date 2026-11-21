@@ -4,8 +4,13 @@
 #include <stdint.h>
 
 // ---- Build switches (decisions 2026-11-10) --------------------------------------------
-#define ENABLE_PUMP 0      // cooling and pump deferred: pump code compiled out
-                           // (pvOutputsOff still holds PUMP_PWM LOW: safety, not pump code)
+#ifndef ENABLE_PUMP
+#define ENABLE_PUMP 0      // cooling and pump deferred: the pump is never driven
+#endif                     // (pvOutputsOff still holds PUMP_PWM LOW: safety, not pump code).
+                           // 1 = the pump driver with its protection (pv_pump.h) runs and the
+                           // logger takes the PUMP serial commands (bucket test). Nothing in
+                           // the firmware decides by itself to pump. build_all.py compiles
+                           // this variant too ("logger_pump").
 #define HAS_ANEMOMETER 0   // no anemometer in this phase: wind logged as NaN
 #ifndef HAS_LOAD
 #define HAS_LOAD 0         // 0 = no load hardware fitted: both load pins stay LOW, rows carry
@@ -39,9 +44,8 @@ constexpr uint8_t PAHUB_ADDR = 0x70;           // M5Stack PaHub V2.1 default (M5
 // The chip has 8 channels (TI/NXP datasheet); M5 brings out ports 0-5. Scans cover all 8.
 constexpr uint8_t PAHUB_CHANNELS = 8;          // all chip channels, for scans and range checks
 constexpr uint8_t PAHUB_CH_PANEL = 0;          // panel unit in port "0" (verified)
-#if ENABLE_PUMP
-constexpr uint8_t PAHUB_CH_PUMP = 1;           // pump unit in port "1" (verified)
-#endif
+constexpr uint8_t PAHUB_CH_PUMP = 1;           // pump unit in port "1" (verified); only
+                                               // talked to with ENABLE_PUMP 1
 constexpr uint8_t INA226_ADDR = 0x41;          // M5Stack Unit INA226-10A, fixed (M5 docs)
 constexpr float INA226_10A_SHUNT_OHM = 0.005f; // 5 mOhm (M5 docs; also their ESPHome config)
 constexpr float INA226_10A_MAX_A = 10.0f;      // +/-10 A rating (M5 docs)
@@ -109,6 +113,25 @@ constexpr uint32_t INA_FAIL_LIMIT = 3;         // failed readings in a row that 
 constexpr float SWEEP_G_UNSTABLE = 0.02f;      // G_UNSTABLE flag above 2 % (sec. 4)
 constexpr float SWEEP_MONO_TOL = 0.005f;       // [ASSUMPTION] NON_MONOTONIC ignores voltage
                                                // rises below 0.5 % of V_oc (reading noise)
+
+// ---- Pump protection (pv_pump_logic.h; used only with ENABLE_PUMP 1) ---------------------------
+// NONE of these is a property of our pump: nobody has measured it. The only figures we
+// have are seller listings of the R385 (6-12 V, 0.5-0.7 A under load; twin/params.py).
+// The currents are what the pump's INA226 reads, i.e. the MEAN supply current, which
+// falls with the PWM duty. Set all of them from the bucket test with the real nozzles:
+// current at each duty with water, the same while the pump still draws air, the lowest
+// duty at which it starts, and the current with the outlet blocked for a moment.
+constexpr uint32_t PUMP_RAMP_MS = 1000;        // [ASSUMPTION] soft start, duty 0 -> 1
+constexpr uint32_t PUMP_RAMP_MAX_STEP_MS = 20; // a busy loop advances the ramp by 2 % at most
+constexpr float PUMP_D_MIN = 0.50f;            // [ASSUMPTION] lowest running duty; the twin's
+                                               // placeholder (6 V of 12 V, seller listing)
+constexpr float PUMP_I_TRIP_A = 1.5f;          // [ASSUMPTION] about twice the listed 0.7 A
+constexpr uint32_t PUMP_I_TRIP_N = 3;          // readings in a row (~35 ms each)
+constexpr float PUMP_I_DRY_A = 0.20f;          // [ASSUMPTION] below the listed 0.5 A; the
+                                               // dry-running current is NOT known
+constexpr uint32_t PUMP_PRIME_MS = 10000;      // [ASSUMPTION] time allowed to draw water
+constexpr uint32_t PUMP_DRY_MS = 3000;         // [ASSUMPTION] low current this long = dry
+constexpr uint32_t PUMP_INA_FAIL_LIMIT = 3;    // failed readings in a row that stop the pump
 
 // ---- Logging -------------------------------------------------------------------------
 constexpr uint32_t SAMPLE_PERIOD_MS = 10000;   // one CSV row every 10 s (CLAUDE.md)
