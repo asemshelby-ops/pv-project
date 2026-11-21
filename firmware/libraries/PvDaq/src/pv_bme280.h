@@ -9,6 +9,33 @@
 #include "pv_config.h"
 #include "pv_device.h"
 
+// The BME280 library's begin(), with a limit on its one wait. The library waits for the
+// chip with "while (isReadingCalibration()) delay(10);": no time limit, and a failed read
+// counts as "still busy", so the loop never ends if the sensor drops off the bus at that
+// moment (audit 2026-11-21, A1). beginBounded() is the library's own sequence (begin()
+// and init() of version 2.3.0, same registers, same order) through its protected
+// members, with that wait limited to 200 ms.
+class PvBoundedBme280 : public Adafruit_BME280 {
+ public:
+  bool beginBounded(uint8_t addr, TwoWire *wire) {
+    if (i2c_dev) delete i2c_dev;
+    i2c_dev = new Adafruit_I2CDevice(addr, wire);
+    if (!i2c_dev->begin()) return false;
+    _sensorID = read8(BME280_REGISTER_CHIPID);
+    if (_sensorID != 0x60) return false;
+    write8(BME280_REGISTER_SOFTRESET, 0xB6);
+    delay(10);
+    for (int k = 0; isReadingCalibration(); k++) {
+      if (k >= 20) return false;  // 200 ms; the chip needs 2 ms (Bosch datasheet)
+      delay(10);
+    }
+    readCoefficients();
+    setSampling();
+    delay(100);
+    return true;
+  }
+};
+
 class PvBme280 : public PvDevice {
  public:
   explicit PvBme280(TwoWire &wire = Wire) : wire_(wire), bmp_(&wire) {}
@@ -29,7 +56,7 @@ class PvBme280 : public PvDevice {
   bool waitIdle(uint32_t timeout_ms);   // status bit 3 "measuring" clear; false on error
   bool configure();          // forced mode, 1x oversampling, filter off
   TwoWire &wire_;
-  Adafruit_BME280 bme_;
+  PvBoundedBme280 bme_;
   Adafruit_BMP280 bmp_;
   uint8_t initAddr_ = 0, initId_ = 0;   // chip the library has been started for (0 = none)
 };

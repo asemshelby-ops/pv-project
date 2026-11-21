@@ -40,7 +40,12 @@ Last synced: 2026-11-10. Full status, reasons and sources: ./PROJECT_STATE.md
   fill in logger.ino) and never by bus-scan order. 20 columns appended after status (T6,
   T7, pyr_mV, sens_fail, f_* counters, ring_rows, ring_dropped, cycle_ms); every block of
   rows starts with "# nasim-logger-csv v2". Row logic: PvDaq/src/pv_log_logic.c, tested on
-  the PC with fake drivers. Audit, on-board test, "Needs board": docs/paper/13.
+  the PC with fake drivers. Card missing or failing: rows, events and markers wait in a
+  LittleFS ring on the ESP32's flash (4096 lines, oldest given up and counted when full)
+  and reach the card later in order, each once (pv_store_logic.c); the card is never
+  formatted. Task watchdog on the loop task in every build (30 s; 15 s with HAS_LOAD);
+  every boot logs its reset reason as a "boot" event. Audit, on-board test (section 9),
+  "Needs board" (section 10): docs/paper/13.
 - The supervisor lends a commercial data logger: reference for validating the ESP32
   DAQ (temps, V, I, PYR20 analog); align with /markers.csv button presses.
 - Stand: workshop-built mild-steel stand (drawings PS-01..03), tilt 20 deg, facing

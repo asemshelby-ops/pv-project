@@ -397,13 +397,27 @@ date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,win
 - One failed sensor read costs one row of `p` (status bit 64), not the detector state:
   NASIM is reset only after 5 such rows in a row (bit 128, and a `# detector reset` line).
 - A row without RTC time is still written (date and time empty, status bit 1).
+- **Card missing or failing (since 2026-11-21):** rows, events and markers then wait in a
+  ring buffer on the ESP32's own flash (LittleFS, about 11 h of rows) and are copied to the
+  card, in order, when it is back; the card is tried again at every row. Such rows carry
+  status 256 + 512 and `sens_fail` 4096; `ring_rows` shows how many lines wait. The logger
+  never formats the card. On its very first boot this firmware formats the *internal*
+  flash partition once (`ring_formatted` in `/events.csv`).
+- **Watchdog (since 2026-11-21):** if `loop()` does not come round for 30 s the chip
+  resets and goes on logging. Every boot writes a `boot` line to `/events.csv` with the
+  reset reason (`POWERON`, `TASK_WDT`, `BROWNOUT`, ...) and, after a watchdog reset, the
+  last stage reached. Banner line: `# watchdog on the loop task: 30000 ms; LittleFS ring: ready, 0 lines waiting`.
+- On-board test of all this (unplug a DS18B20, the PaHub, pull the card):
+  `docs/paper/13-logger-robustness.md` section 9. Do it once before the logger goes outdoors.
 - A day file started by older firmware needs no care any more: the new rows come after
   their own version line and header, and `analysis/ingest.py` reads the file block by block.
 
 | Symptom | Cause |
 |---|---|
 | Date/time empty, status odd | RTC missing or not set (step 2). The rows are kept; times are rebuilt from `uptime_ms` |
-| status has 256 | SD write needed a retry or rows were lost: check the card and its wiring |
+| status has 256 | The row did not reach the card at the first attempt. With 512 as well: it waited in the LittleFS ring and was copied later (nothing lost). Check the card and its wiring; `ring_dropped` > 0 means lines were given up |
+| `# event: ...,boot,reset=TASK_WDT ...` | The watchdog restarted the board; the event names the stage that did not come back. One is a note; several are a fault to find (which sensor? look at `cycle_ms` before it) |
+| `# event: ...,boot,reset=BROWNOUT ...` | The supply dipped: check the 5 V buck and its wiring |
 | Time 3 h ahead of UTC | RTC still on Makkah local time: re-run `set_rtc.py` (Before logging) |
 | `# warning: sample period overrun` | A device is blocking for too long: look at the status line |
 | A T column empty, status has 32 | That row of `T_ROM` is not filled in yet (step 5) |

@@ -15,10 +15,18 @@
 // fake drivers (tests/test_logger_robustness.py). This sketch only connects it to the
 // real drivers (the io... functions below), runs the detectors and writes the files.
 //
+// CARD AND WATCHDOG (same document, sections 5 and 6): rows, events and markers go to the
+// card through pv_store_logic.c. While the card is missing or a write fails they wait in
+// a ring buffer on the ESP32's own flash (LittleFS) and are copied to the card, in order,
+// when it is back; the card is tried again at every row and is NEVER formatted here. The
+// task watchdog watches loop(): if it does not come round for LOOP_WDT_MS the chip resets,
+// and the next boot writes the reset reason and the last stage reached to /events.csv.
+//
 // Timestamps are UTC (the DS3231 holds UTC). Missing value = empty field. Lines starting
 // with '#' on Serial are status messages, not data. Files: /YYYYMMDD.csv per day (UTC
 // date), /markers.csv for button presses, /rom_scan.txt for the DS18B20 ROMs found at boot,
-// /events.csv for things that are reported once (a sensor failing, an unknown ROM).
+// /events.csv for things that are reported once (a boot, a sensor failing, an unknown ROM,
+// the card going and coming back).
 // With the measurement load (HAS_LOAD 1 in pv_config.h; docs/paper/07): /SWYYYYMMDD.csv and
 // /SSYYYYMMDD.csv for the I-V sweeps, /load_log.csv for mode changes and trips, and two more
 // kinds of rows in /markers.csv, written by the serial commands LOAD OFF and LOAD ON
@@ -34,10 +42,13 @@
 // data: all must be redone on real data before they drive anything. The load never acts
 // on an alarm.
 #include <PvDaq.h>
+#include <esp_system.h>
 #include <esp_task_wdt.h>
+#include <pv_flashring.h>
 #include <pv_load.h>
 #include <pv_log_logic.h>
 #include <pv_status.h>
+#include <pv_store_logic.h>
 
 extern "C" {  // export/c is C, compiled here through nasim_core.c / nasim_model.c
 #include "nasim.h"
@@ -83,10 +94,18 @@ static const uint8_t T_ROM[PVLOG_N_T][8] = {{0}, {0}, {0}, {0}, {0}, {0}, {0}};
 // it). While it is all zero the load stays in TRIP ("heatsink sensor missing"): both
 // branches off, by design.
 static const uint8_t HEATSINK_ROM[8] = {0};
-// Loop watchdog: if loop() does not come round for this long the chip resets, the pins are
-// released and the gate pull-downs switch the load off. [ASSUMPTION] well above the longest
-// normal pass (device retries + a row + the RTC edge, a few seconds); check in bench B7.
-static const uint32_t LOOP_WDT_MS = 15000;
+// Loop watchdog (always on since 2026-11-21): if loop() does not come round for this long
+// the chip resets and logging starts again by itself. 30 s = three row periods, and well
+// above the longest pass that is still normal: every sensor at its time-out (about 7 s
+// [EST], doc 13 section 2) + a failed card mount + the 1 s flush + the RTC edge (1.1 s).
+// With the load fitted the value stays at the 15 s chosen for it on 2026-11-13: a reset
+// releases the pins and the gate pull-downs switch the load off. [ASSUMPTION] both; the
+// 15 s must be checked again in bench B7, because a pass can now also hold a card flush.
+static const uint32_t LOOP_WDT_MS = HAS_LOAD ? 15000 : 30000;
+static const uint32_t HEALTH_EVERY = 360;     // rows between two "health" events (1 h)
+// Button presses and LOAD OFF / LOAD ON marks: one file, one format (BRINGUP.md step 9).
+static const char MARKERS_PATH[] = "/markers.csv";
+static const char MARKERS_HEADER[] = "date,time,millis";
 
 // ---- devices -----------------------------------------------------------------------------
 PvDs3231 rtc;
@@ -97,9 +116,28 @@ PvDs18b20 probes(pins::ONEWIRE);
 PvPyr20Modbus pyr(Serial2, pins::RS485_RX, pins::RS485_TX);
 PvPyr20Analog pyr_analog(pins::PYR20_ANALOG);  // the same sensor's 0-2 V output (GPIO 34)
 PvSdCard sd;
-PvDevice *const DEVICES[] = {&rtc, &env, &hub, &panel, &probes, &pyr, &pyr_analog, &sd};
+PvFlashRing flash_ring;           // LittleFS on the internal flash: the ring behind the card
+PvDevice *const DEVICES[] = {&rtc, &env, &hub, &panel, &probes, &pyr, &pyr_analog, &sd, &flash_ring};
 
 pvlog_t plog;                     // fail counters, events, time base (pv_log_logic.c)
+pvstore_t store;                  // card first, LittleFS ring behind it (pv_store_logic.c)
+
+// Where the program is, written before every call that talks to hardware. The three words
+// live in RTC memory, which a watchdog or software reset does not clear (a power cut
+// does), so the boot after a watchdog reset can say which call did not come back.
+enum Stage : uint32_t { AT_SETUP, AT_IDLE, AT_RTC, AT_PYR20, AT_BME280, AT_PAHUB, AT_INA226,
+                        AT_DS18B20, AT_DETECTORS, AT_STORE, AT_RTC_EDGE, AT_LOAD, AT_COUNT };
+const char *const STAGE_NAME[AT_COUNT] = {"setup", "between rows", "DS3231", "PYR20", "BME280",
+                                          "PaHub", "INA226", "DS18B20", "detectors",
+                                          "card / LittleFS", "RTC second edge", "load"};
+static const uint32_t CRUMB_MAGIC = 0x4E415349;  // "NASI": the words below were written by us
+RTC_NOINIT_ATTR uint32_t crumb_magic;
+RTC_NOINIT_ATTR uint32_t crumb_stage;
+RTC_NOINIT_ATTR uint32_t crumb_ms;
+void at(Stage s) {
+  crumb_stage = s;
+  crumb_ms = millis();
+}
 
 gbt_detector_t det;               // NASIM-GBT
 thr_detector_t det_thr;           // baseline: temperature-rise threshold
@@ -163,6 +201,8 @@ PvDevice *deviceOf(int dev) {
 }
 uint32_t ioMillis(void *) { return millis(); }
 int ioBegin(void *, int dev) {
+  static const Stage stage[] = {AT_BME280, AT_RTC, AT_PAHUB, AT_INA226, AT_PYR20};
+  if (dev >= PV_SENSOR_ENV && dev <= PV_SENSOR_PYR) at(stage[dev - PV_SENSOR_ENV]);
   PvDevice *d = deviceOf(dev);
   return d && d->begin();
 }
@@ -171,12 +211,14 @@ const char *ioDetail(void *, int dev) {
   return d ? d->detail() : "";
 }
 int ioRtcRead(void *, uint32_t *unix_s, int *time_valid) {
+  at(AT_RTC);
   if (!rtc.read()) return 0;
   *unix_s = rtc.time().unixtime();
   *time_valid = rtc.timeValid;
   return 1;
 }
 int ioPyrRead(void *, float *g) {
+  at(AT_PYR20);
   if (!pyr.read()) return 0;
   *g = pyr.irradiance;
   return 1;
@@ -187,13 +229,18 @@ int ioPyrAnalog(void *, float *mv) {
   return 1;
 }
 int ioEnvRead(void *, float *t_c, float *rh) {
+  at(AT_BME280);
   if (!env.read()) return 0;
   *t_c = env.temperatureC;
   *rh = env.humidityPct;
   return 1;
 }
-int ioHubCheck(void *) { return hub.read(); }
+int ioHubCheck(void *) {
+  at(AT_PAHUB);
+  return hub.read();
+}
 int ioInaRead(void *, float *v, float *i, float *p) {
+  at(AT_INA226);
   row_d = load.L.d_a;  // duty of branch A at the reading (HAS_LOAD only)
   // With the load: a 64-average triggered reading (also one hold step). Without: a plain read.
   if (!(HAS_LOAD ? load.rowReading() : panel.read())) return 0;
@@ -203,6 +250,7 @@ int ioInaRead(void *, float *v, float *i, float *p) {
   return 1;
 }
 int ioDsConvert(void *) {
+  at(AT_DS18B20);
   if (HAS_LOAD && conv_running) {  // conversion started ~800 ms ago in loadLoop()
     while (millis() - conv_ms < PvDs18b20::CONVERSION_MS + 10) load.service(last_g, heatsinkTemp());
     conv_running = false;
@@ -215,6 +263,7 @@ int ioDsRead(void *, const uint8_t *rom, float *t_c) {
   return !isnan(*t_c);
 }
 int ioDsScan(void *, uint8_t *roms, int max) {
+  at(AT_DS18B20);
   probes.begin();  // 1-Wire search of the whole bus
   const int n = min((int)probes.count, max);
   memcpy(roms, probes.rom, 8 * n);
@@ -224,6 +273,26 @@ void ioLog(void *, const char *text) { Serial.printf("# %s\n", text); }
 const pvlog_io_t PIO = {nullptr,    ioMillis,   ioBegin,     ioDetail, ioRtcRead,
                         ioPyrRead,  ioPyrAnalog, ioEnvRead,  ioHubCheck, ioInaRead,
                         ioDsConvert, ioDsRead,  ioDsScan,    ioLog};
+
+// ---- the driver table of pv_store_logic.c: the card (never formatted) and the flash ring ------
+int sioMount(void *) { return sd.begin(); }  // mounts only; two attempts 100 ms apart
+int32_t sioSize(void *, const char *path) { return sd.fileSize(path); }
+int sioAppend(void *, const char *path, const char *data, int n) { return sd.appendBytes(path, data, (size_t)n); }
+int sioTail(void *, const char *path, char *buf, int n) { return sd.tail(path, buf, (size_t)n); }
+int sioRange(void *, uint32_t *first, uint32_t *last) { return flash_ring.range(first, last); }
+int32_t sioSegSize(void *, uint32_t seq) { return flash_ring.size(seq); }
+int sioSegAppend(void *, uint32_t seq, const char *data, int n) { return flash_ring.append(seq, data, (size_t)n); }
+int sioSegRead(void *, uint32_t seq, uint32_t off, char *buf, int n) { return flash_ring.readAt(seq, off, buf, (size_t)n); }
+int32_t sioSegLines(void *, uint32_t seq, uint32_t off) {
+  feedLoopWDT();  // called once per segment at boot: up to 128 files after a long outage
+  return flash_ring.countLines(seq, off);
+}
+int sioSegRemove(void *, uint32_t seq) { return flash_ring.remove(seq); }
+int sioSave(void *, const char *text) { return flash_ring.save(text); }
+int sioLoad(void *, char *buf, int n) { return flash_ring.load(buf, (size_t)n); }
+const pvstore_io_t SIO = {nullptr,      ioMillis,     sioMount,     sioSize,   sioAppend,
+                          sioTail,      sioRange,     sioSegSize,   sioSegAppend, sioSegRead,
+                          sioSegLines,  sioSegRemove, sioSave,      sioLoad,   ioLog};
 
 // Column of a ROM: "T1".."T7", "heatsink", or "-" if no table lists it.
 void romColumn(const uint8_t *rom, char *out, size_t size) {
@@ -305,29 +374,6 @@ void resetDetectors() {
 }
 
 // ---- one sample ---------------------------------------------------------------------------
-// Writes one line to a file on the card, with the header block first if this is the first
-// line this boot writes to that file (so every block of rows names its own format).
-bool appendRow(const char *path, const char *line) {
-  static char block_path[PVLOG_PATH_MAX] = "";  // file that has this boot's header block
-  if (strcmp(path, block_path) != 0) {
-    if (!sd.appendLine(path, PVLOG_VERSION_LINE) || !sd.appendLine(path, pvlog_header())) return false;
-    snprintf(block_path, sizeof(block_path), "%s", path);
-  }
-  return sd.appendLine(path, line);
-}
-
-// Events of pv_log_logic.c (a sensor failing, an unknown ROM, ...): to Serial and /events.csv.
-void writeEvents() {
-  char line[PVLOG_LINE_MAX];
-  bool any = false;
-  while (pvlog_next_event(&plog, millis(), line, sizeof(line))) {
-    Serial.printf("# event: %s\n", line);
-    if (sd.ok()) sd.appendLine(PVLOG_EVENTS_PATH, line, PVLOG_EVENTS_HEADER);
-    any = true;
-  }
-  if (any) printStatus();
-}
-
 // RTC, BME280 and PaHub share the main I2C bus. If all three are silent for several rows
 // the bus itself may be stuck (a chip holding SDA low after a glitch): start the I2C
 // driver again. [ASSUMPTION] that this frees such a bus; to be tried on the board.
@@ -364,6 +410,7 @@ void sample(uint32_t n) {
   uint32_t status = row.status;  // the sensor bits; the detector bits are added below
 
   // Detectors: same input as the replay test; they need time, T1..T5, ambient, irradiance.
+  at(AT_DETECTORS);
   double p = NAN;
   int alarm = 0;
   int minute = have_time ? lt.hour() * 60 + lt.minute() : -1;
@@ -416,27 +463,28 @@ void sample(uint32_t n) {
     row.sweep_id = row_sweep_id;
   }
 
-  // A row without RTC time goes to the file of the last row that had one (its neighbours
-  // and uptime_ms give its time back), or to /nodate.csv if there was none since boot.
-  char path[PVLOG_PATH_MAX], line[PVLOG_LINE_MAX];
-  pvlog_day_path(&plog, &row, path);
-  static bool sd_lost = false;  // the row before this one did not reach the card
-  if (sd_lost) status |= ST_SD_RETRY;
-  const int attempts = sd.ok() ? 2 : 1;  // a card that was working gets one re-mount + retry
-  bool written = false;
-  for (int a = 0; a < attempts && !written; a++) {
-    if (a > 0) status |= ST_SD_RETRY;
-    row.status = status;
-    pvlog_format_row(&plog, &row, 0, 0, line, sizeof(line));
-    written = (a == 0 ? (sd.ok() || sd.begin()) : sd.begin()) && appendRow(path, line);
+  if (n && n % HEALTH_EVERY == 0) {  // once an hour: memory, so a slow loss shows in the log
+    char text[112];
+    flash_ring.read();
+    snprintf(text, sizeof(text), "heap free %u B; lowest %u B; loop stack never used %u B; "
+             "LittleFS %u of %u B used", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMinFreeHeap(),
+             (unsigned)uxTaskGetStackHighWaterMark(NULL), (unsigned)flash_ring.usedBytes,
+             (unsigned)flash_ring.totalBytes);
+    pvlog_event(&plog, "health", text);
   }
-  pvlog_note_sd(&plog, written);  // counted in f_sd from the next row on
-  if (!written && !sd_lost) printStatus();
-  sd_lost = !written;
+
+  // The row and this row's events go to the card, or wait in the LittleFS ring
+  // (pvlog_commit, pv_log_logic.c). A row without RTC time goes to the file of the last
+  // row that had one, or to /nodate.csv if there was none since boot.
+  static int last_where = PVSTORE_SD;
+  char line[PVLOG_LINE_MAX];
+  row.status = status;
+  at(AT_STORE);
+  const int where = pvlog_commit(&plog, &store, &SIO, &row, line, sizeof(line));
   Serial.println(line);
-  writeEvents();
-  if (n == 0) printStatus();
-  pvlog_end_cycle(&plog, millis());
+  if (where != last_where || n == 0) printStatus();  // the card went, or came back
+  last_where = where;
+  at(AT_IDLE);
 }
 
 // Polls the RTC until its second changes and records that edge (blocks up to ~1.1 s).
@@ -444,6 +492,7 @@ void sample(uint32_t n) {
 // Repeated every RESYNC_EVERY samples so the ESP32 crystal drift between edges stays small.
 void syncRtcEdge() {
   anchor_s = 0;
+  at(AT_RTC_EDGE);
   if (!rtc.ok() || !rtc.read() || !rtc.timeValid) return;
   const uint32_t s0 = rtc.time().unixtime();
   const uint32_t start = millis();
@@ -485,7 +534,10 @@ void writeMarker(uint32_t ms, const char *what) {
   }
   if (what) Serial.printf("# marker (%s): %s\n", what, line);
   else Serial.printf("# marker: %s\n", line);
-  if (sd.ok()) sd.appendLine("/markers.csv", line, "date,time,millis");
+  // through the store, like a row: a press while the card is away waits in the ring
+  at(AT_STORE);
+  pvstore_put(&store, &SIO, PVK_MARKER, MARKERS_PATH, line, 0);
+  at(AT_IDLE);
 }
 
 void logMarker() {
@@ -666,10 +718,50 @@ void loadLoop(uint32_t next_row_ms) {
 // FIRST ACTION of setup(): the pump gate (GPIO 32) LOW, then both load gates. The LOW level
 // is written before each pin becomes an output (pvOutputsOff, PvDaq.h). Nothing may be
 // placed above that call; tests/test_load_logic.py checks that it is the first statement.
+const char *resetText(esp_reset_reason_t why) {
+  switch (why) {
+    case ESP_RST_POWERON: return "POWERON";
+    case ESP_RST_EXT: return "EXT_PIN";
+    case ESP_RST_SW: return "SOFTWARE";
+    case ESP_RST_PANIC: return "PANIC";
+    case ESP_RST_INT_WDT: return "INT_WDT";
+    case ESP_RST_TASK_WDT: return "TASK_WDT";
+    case ESP_RST_WDT: return "OTHER_WDT";
+    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
+    case ESP_RST_BROWNOUT: return "BROWNOUT";
+    default: return "OTHER";
+  }
+}
+
+// The first event of every boot: why the chip started and, after a reset that leaves RTC
+// memory alone (watchdog, panic, software), the last stage the loop had reached.
+void bootEvent() {
+  const esp_reset_reason_t why = esp_reset_reason();
+  char text[120];
+  const bool crumb = crumb_magic == CRUMB_MAGIC && crumb_stage < AT_COUNT &&
+                     why != ESP_RST_POWERON && why != ESP_RST_BROWNOUT;
+  if (crumb) {
+    snprintf(text, sizeof(text), "reset=%s (%d); before it: %s at uptime %lu ms; heap %u B",
+             resetText(why), (int)why, STAGE_NAME[crumb_stage], (unsigned long)crumb_ms,
+             (unsigned)ESP.getFreeHeap());
+  } else {
+    snprintf(text, sizeof(text), "reset=%s (%d); heap %u B", resetText(why), (int)why,
+             (unsigned)ESP.getFreeHeap());
+  }
+  pvlog_event(&plog, "boot", text);
+  crumb_magic = CRUMB_MAGIC;
+  at(AT_SETUP);
+}
+
 void setup() {
   pvOutputsOff();
   Serial.begin(115200);
   delay(300);
+  // The watchdog on this task (the Arduino loop task), from here on. setup() feeds it
+  // between its slow steps; afterwards the Arduino core feeds it each time loop() returns.
+  esp_task_wdt_config_t wdt = {LOOP_WDT_MS, 0, true};  // time-out, no idle task, reset
+  if (esp_task_wdt_reconfigure(&wdt) != ESP_OK) esp_task_wdt_init(&wdt);
+  enableLoopWDT();
   pinMode(pins::MARKER_BUTTON, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(pins::MARKER_BUTTON), onMarker, FALLING);
   Wire.begin(pins::I2C_SDA, pins::I2C_SCL, I2C_CLOCK_HZ);
@@ -680,6 +772,7 @@ void setup() {
   cfg.fail_report_after = FAIL_REPORT_AFTER;
   cfg.scan_every = ROM_SCAN_EVERY;
   pvlog_init(&plog, &cfg);
+  bootEvent();
   gbt_init(&det, nasim_score_nowind, /*use_wind=*/0, /*hybrid=*/1, NASIM_P_THRESHOLD,
            NASIM_PERSIST);
   thr_init(&det_thr, THR_RISE_C);
@@ -694,28 +787,38 @@ void setup() {
   // A first begin() of everything for the boot report. Whatever is missing now is started
   // again by the first row, and by every row after it, until it answers.
   for (PvDevice *d : DEVICES) {
-    if (d != &panel) d->begin();
+    feedLoopWDT();
+    if (d != &panel && d != &sd) d->begin();  // the flash ring too (formats itself once)
   }
   if (hub.ok()) panel.begin();  // the INA226 needs the PaHub
+  feedLoopWDT();
+  if (flash_ring.formatted) pvlog_event(&plog, "ring_formatted", "internal flash had no LittleFS: formatted (first use)");
+  // The store finds what an earlier run left in the ring and mounts the card (no format).
+  pvstore_init(&store, pvlog_file_head(), PVLOG_EVENTS_HEADER, MARKERS_HEADER);
+  pvstore_begin(&store, &SIO);
+  feedLoopWDT();
   reportRomScan();
+  feedLoopWDT();
   if (HAS_LOAD) {
     // a first heatsink temperature before the load may start (NaN keeps it in TRIP)
     if (!romIsZero(HEATSINK_ROM)) probes.convert();
     heatsink_c = romIsZero(HEATSINK_ROM) ? NAN : probes.readRom(HEATSINK_ROM);
     if (!load.begin()) Serial.println("# load: LEDC attach FAILED: both branches are held off");
-    esp_task_wdt_config_t wdt = {LOOP_WDT_MS, 0, true};  // time-out, no idle task, reset
-    if (esp_task_wdt_reconfigure(&wdt) != ESP_OK) esp_task_wdt_init(&wdt);
-    enableLoopWDT();
     Serial.println("# load: active. Commands: GAMMA <minutes> | LOAD OFF | LOAD ON");
   }
+  Serial.printf("# watchdog on the loop task: %lu ms; LittleFS ring: %s, %lu lines waiting\n",
+                (unsigned long)LOOP_WDT_MS, flash_ring.ok() ? "ready" : "NOT USABLE",
+                (unsigned long)pvstore_waiting(&store));
   Serial.println(PVLOG_VERSION_LINE);
   Serial.println(pvlog_header());
+  at(AT_IDLE);
 }
 
 void loop() {
   static uint32_t next = millis();
   static uint32_t n = 0;
   if (mark_ms) logMarker();
+  if (HAS_LOAD) at(AT_LOAD);
   if (HAS_LOAD) loadLoop(next);
   if ((int32_t)(millis() - next) < 0) return;
   next += SAMPLE_PERIOD_MS;                 // fixed grid: no drift from the sampling time
@@ -725,5 +828,6 @@ void loop() {
   }
   sample(n);
   if (n % RESYNC_EVERY == 0 || !anchor_s) syncRtcEdge();  // after the row: may block ~1 s
+  at(AT_IDLE);
   n++;
 }

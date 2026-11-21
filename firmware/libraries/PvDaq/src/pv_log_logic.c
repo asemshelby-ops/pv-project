@@ -27,6 +27,12 @@ static const char HEADER[] =
 
 const char *pvlog_header(void) { return HEADER; }
 
+const char *pvlog_file_head(void) {
+  static char head[sizeof(PVLOG_VERSION_LINE) + 2 + sizeof(HEADER)];
+  if (!head[0]) snprintf(head, sizeof(head), "%s\r\n%s", PVLOG_VERSION_LINE, HEADER);
+  return head;
+}
+
 const char *pvlog_sensor_name(int sensor) {
   return sensor >= 0 && sensor < PV_SENSOR_COUNT ? SENSOR_NAME[sensor] : "?";
 }
@@ -394,6 +400,68 @@ int pvlog_format_row(const pvlog_t *L, const pvlog_row_t *r, uint32_t ring_rows,
   put_uint(&t, ring_dropped);
   put_uint(&t, L->cycle_ms);
   return t.overflow ? 0 : t.n;
+}
+
+/* ---- storing the row ---------------------------------------------------------------------------- */
+
+/* Characters of a row up to and including the comma after uptime_ms (20 commas): date,
+ * time, the measurements and the uptime. They are the same in every version of the row
+ * (the versions differ from `status` on), so they tell whether the row is on the card. */
+static int row_key_len(const char *line) {
+  int commas = 0;
+  for (int k = 0; line[k]; k++)
+    if (line[k] == ',' && ++commas == 20) return k + 1;
+  return 0;
+}
+
+static void take_notices(pvlog_t *L, pvstore_t *S) {
+  char event[24], detail[PVSTORE_NOTICE_MAX];
+  while (pvstore_next_notice(S, event, sizeof(event), detail, sizeof(detail))) {
+    pvlog_event(L, event, detail);
+  }
+}
+
+int pvlog_commit(pvlog_t *L, pvstore_t *S, const pvstore_io_t *sio, pvlog_row_t *r, char *line,
+                 int size) {
+  char path[PVLOG_PATH_MAX], say[PVLOG_LINE_MAX + 8] = "event: ";
+  char *const text = say + 7;  /* one buffer: "event: " for Serial, the line itself after it */
+  const uint32_t status = r->status | (L->prev_row_lost ? ST_SD_RETRY : 0);
+  int where = PVSTORE_RING;
+
+  pvstore_service(S, sio);
+  pvlog_day_path(L, r, path);
+  r->status = status;
+  if (pvstore_direct(S)) {  /* card up, nothing waiting: straight to the card */
+    pvlog_format_row(L, r, pvstore_waiting(S), pvstore_dropped(S), line, size);
+    if (pvstore_try_card(S, sio, PVK_ROW, path, line, row_key_len(line))) {
+      where = PVSTORE_SD;
+      pvlog_note_sd(L, 1);
+    } else {
+      r->sens_fail |= pvlog_note_sd(L, 0);
+      if (pvstore_remount(S, sio)) {  /* one re-mount, one more try */
+        r->status = status | ST_SD_RETRY;
+        pvlog_format_row(L, r, pvstore_waiting(S), pvstore_dropped(S), line, size);
+        if (pvstore_try_card(S, sio, PVK_ROW, path, line, row_key_len(line))) where = PVSTORE_SD_RETRY;
+      }
+    }
+  } else {
+    r->sens_fail |= pvlog_note_sd(L, 0);
+  }
+  if (where == PVSTORE_RING) {  /* card down, or older lines still wait: keep the order */
+    r->status = status | ST_SD_RETRY | ST_SD_BUFFERED;
+    pvlog_format_row(L, r, pvstore_waiting(S), pvstore_dropped(S), line, size);
+    if (!pvstore_buffer(S, sio, PVK_ROW, path, line, row_key_len(line))) where = PVSTORE_LOST;
+  }
+  L->prev_row_lost = where == PVSTORE_LOST;
+
+  take_notices(L, S);
+  while (pvlog_next_event(L, sio->millis(sio->ctx), text, PVLOG_LINE_MAX)) {
+    sio->log(sio->ctx, say);
+    pvstore_put(S, sio, PVK_EVENT, PVLOG_EVENTS_PATH, text, 0);
+    take_notices(L, S);  /* what storing that event caused is said in this row too */
+  }
+  pvlog_end_cycle(L, sio->millis(sio->ctx));
+  return where;
 }
 
 /* ---- for the PC tests ------------------------------------------------------------------------- */

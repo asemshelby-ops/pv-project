@@ -23,6 +23,7 @@
 
 #include <stdint.h>
 #include "pv_status.h"
+#include "pv_store_logic.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -102,6 +103,7 @@ typedef struct {
   uint8_t base_valid, cand_valid;
   uint32_t base_unix, base_ms, cand_unix, cand_ms;
   char day_path[PVLOG_PATH_MAX];           /* file of the last row that had a time */
+  uint8_t prev_row_lost;                   /* the row before reached neither card nor flash */
   uint32_t cycle_start_ms, cycle_ms;       /* cycle_ms: what the row before this one took */
   char events[PVLOG_EVENT_QUEUE][PVLOG_EVENT_MAX];
   uint32_t ev_head, ev_count, ev_missed;
@@ -134,6 +136,22 @@ int pvlog_next_event(pvlog_t *L, uint32_t now_ms, char *line, int size);
 
 /* Call when the row is stored: cycle_ms of the NEXT row = time this one took. */
 void pvlog_end_cycle(pvlog_t *L, uint32_t now_ms);
+
+/* Stores the row and everything that is waiting to be said (pv_store_logic.c):
+ *   1. the card is tried again if it was down, and waiting lines are copied to it;
+ *   2. the row goes to the card, or to the LittleFS ring if the card is down or lines
+ *      still wait there. Its status and sens_fail say which: ST_SD_RETRY = not at the
+ *      first attempt, ST_SD_BUFFERED = through the ring, sensor bit `sd` with either;
+ *   3. the events of this row (sensors, card, ring) go the same way, to /events.csv,
+ *      and to Serial through sio->log;
+ *   4. the cycle ends (pvlog_end_cycle).
+ * line: the row as stored (size >= PVLOG_LINE_MAX). Returns PVSTORE_SD, PVSTORE_SD_RETRY,
+ * PVSTORE_RING or PVSTORE_LOST. */
+int pvlog_commit(pvlog_t *L, pvstore_t *S, const pvstore_io_t *sio, pvlog_row_t *r, char *line,
+                 int size);
+
+/* The text a row file starts with: version line, line end, header line. */
+const char *pvlog_file_head(void);
 
 /* UTC "YYYY-MM-DD,HH:MM:SS" (19 characters) of Unix seconds. */
 void pvlog_utc_text(uint32_t unix_s, char *out, int size);

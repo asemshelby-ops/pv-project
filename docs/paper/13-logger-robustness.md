@@ -3,8 +3,8 @@
 Status 2026-11-21: written **without the board**. Everything below was checked in two
 ways only: (a) the logger compiles for the ESP32 (`python firmware/build_all.py`), and
 (b) its row logic runs on the PC against **fake** drivers (`tests/test_logger_robustness.py`).
-Nothing here has run on hardware. What only the board can confirm is listed in §8; the
-procedure for it is §7.
+Nothing here has run on hardware. What only the board can confirm is listed in §10; the
+procedure for it is §9.
 
 Why: logging starts at the end of November and a lost row cannot be measured again, so a
 failed sensor must cost its own fields for its own rows and nothing else.
@@ -18,11 +18,11 @@ its source under `Arduino15`.
 
 | # | Where | What happens | Now |
 |---|---|---|---|
-| A1 | BME280 library `init()`, called by `PvBme280::begin()` at boot and at every re-start of a lost sensor | `while (isReadingCalibration()) delay(10);` has **no time limit**. A read that fails returns the register address `0xF3`, whose bit 0 is set, so the loop never ends if the sensor drops off the bus during `begin()`. The no-load logger had no watchdog: it would hang until someone pressed reset | The library's `begin()` runs once per chip; a later `begin()` only writes the sampling mode. The one remaining call is covered by the watchdog (Task 2) |
+| A1 | BME280 library `init()`, called by `PvBme280::begin()` at boot and at every re-start of a lost sensor | `while (isReadingCalibration()) delay(10);` has **no time limit**. A read that fails returns the register address `0xF3`, whose bit 0 is set, so the loop never ends if the sensor drops off the bus during `begin()`. The no-load logger had no watchdog: it would hang until someone pressed reset | The library's `begin()` is not called any more: `PvBoundedBme280::beginBounded()` runs the same sequence through the library's protected members with the wait limited to 200 ms. It runs once per chip; a later `begin()` only writes the sampling mode |
 | A2 | BMP280 library `takeForcedMeasurement()`, every row if the board carries a BMP280 | `while (read8(STATUS) & 0x08) delay(1);` has no time limit: a chip that keeps reporting "measuring" blocks for ever | Not called any more: `PvBme280::read()` triggers the measurement and waits in its own loop, 100 ms at most |
-| A3 | No watchdog on the loop unless `HAS_LOAD` is 1 | Any block of the kind above = a dead logger, no data until a manual reset | Task 2 |
+| A3 | No watchdog on the loop unless `HAS_LOAD` is 1 | Any block of the kind above = a dead logger, no data until a manual reset | Watchdog on the loop task in every build, 30 s (§6) |
 | A4 | I2C time-out left to the core's default | 50 ms per transaction, but only by default | Set explicitly: `Wire.setTimeOut(I2C_TIMEOUT_MS)`, 50 ms |
-| A5 | SD mount of a missing card | Bounded by the core (each SD command waits 0.5–1 s), length unknown | Unchanged in Task 1; measured in §7 |
+| A5 | SD mount of a missing card | Bounded by the core (each SD command waits 0.5–1 s), length unknown | One mount (two attempts 100 ms apart) per row while the card is away, never more (§5); to be timed in §9 |
 
 Bounded already, checked in the source: DS18B20 conversion wait (library limit 750 ms),
 1-Wire reset (≈ 0.25 ms), Modbus reply wait (300 ms), BME280 `takeForcedMeasurement`
@@ -46,10 +46,10 @@ No path was found where one failed read crashes or resets the board. Two weaknes
 | C3 | INA226 unit re-powered while the ESP32 stays on (PaHub cable touched, brown-out of the 5 V line) | The unit restarts with an empty calibration register: `current` and `power` read exactly 0 with a correct `voltage`, **from then on** | Detected (current register 0 while the shunt voltage shows > 50 mA); `begin()` writes the calibration again at the next row |
 | C4 | `PvDs3231::read()` | RTClib `now()` ignores a failed read and builds a date from its buffer; it often passes `isValid()`. A row could carry a wrong time **and go to a wrong day file** | The seven time registers are read with the byte count checked and every field range-checked; in addition the logic refuses a time that is more than 60 s away from "last accepted time + elapsed uptime" until a second read confirms it |
 | C5 | T1..T5 by bus-scan order while `T_ROM` is empty (today) | A probe missing at boot shifts every later column: T3's column holds T4's sensor, with no error | A column is the probe with the ROM of its `T_ROM` row, or empty. There is no scan-order mode any more |
-| C6 | SD `appendLine()` | `File::println()` only fills a buffer; the write happens in `close()`, whose result the Arduino `File` API drops. A row could be **reported as written when it was not** | Task 2 (the store writes with `fwrite`/`fflush`/`fsync`/`fclose`, each checked) |
-| C7 | A line cut off by a power loss | The next row is appended to the same line: two rows merged | The loader drops and counts lines with a wrong field count (`rows_malformed`); Task 2: the store starts a fresh line |
+| C6 | SD `appendLine()` | `File::println()` only fills a buffer; the write happens in `close()`, whose result the Arduino `File` API drops. A row could be **reported as written when it was not** | The card is written with `fwrite`/`fflush`/`fsync`/`fclose`, each checked (`PvSdCard::appendBytes`); a row that did not reach the card goes to the LittleFS ring (§5) |
+| C7 | A line cut off by a power loss | The next row is appended to the same line: two rows merged | The store reads the end of a file before its first write of a boot (and after any failed write): a fragment is left on its own line. The loader drops and counts such lines (`rows_malformed`) |
 | C8 | A day file begun by older firmware | New rows under an old header: columns misread | Every block of rows starts with `# nasim-logger-csv v2` and its own header; the loader reads block by block |
-| C9 | Markers, `/rom_scan.txt` lines | Written only `if (sd.ok())`: a button press during an SD outage is **lost** | Task 2 (markers go through the same store as rows) |
+| C9 | Markers, `/rom_scan.txt` lines | Written only `if (sd.ok())`: a button press during an SD outage is **lost** | Markers go through the same store as rows: a press while the card is away waits in the ring. `/rom_scan.txt` is still written only if the card is there (its content is also in `/events.csv` as `unknown_rom` and on Serial) |
 
 ### Not read at all
 
@@ -77,6 +77,7 @@ count of I2C transactions times the 50 ms time-out; **not measured**):
 |---|---|---|
 | DS3231 `begin` / read | 100 ms / 100 ms | 2 transactions each |
 | BME280 `begin` (after its first) / read | 350 ms / 2.7 s | 7 transactions / the library's 2 s wait, our 100 ms wait, 8 transactions |
+| BME280 first `begin` for a chip (at boot, or when a sensor absent at boot appears) | ≈ 2.6 s | 200 ms wait, 110 ms of fixed delays, about 45 transactions |
 | PaHub `begin` / check | 100 ms / 50 ms | 2 / 1 transactions |
 | INA226 `begin` / read | 600 ms / 550 ms | 12 / 11 transactions |
 | PYR20 Modbus `begin` / read | 350 ms / 350 ms | 300 ms reply time-out + the 8-byte request |
@@ -137,7 +138,8 @@ T6,T7,pyr_mV,sens_fail,f_T1,f_T2,f_T3,f_T4,f_T5,f_T6,f_T7,f_env,f_rtc,f_hub,f_in
 | `pyr_mV` | PYR20 0–2 V output on GPIO 34, raw millivolts (manual: 1 mV = 1 W/m²). The ESP32 ADC is usable from ≈ 150 mV (ESP-IDF docs), so small values are not irradiance. Not validated; a pin with nothing connected reads noise |
 | `sens_fail` | bit field, decimal: bit *n* = sensor *n* failed at this row |
 | `f_T1` … `f_sd` | failed rows since boot, one counter per sensor, same order as the bits |
-| `ring_rows`, `ring_dropped` | LittleFS buffer (Task 2); 0 until then |
+| `ring_rows` | lines (rows, events, markers) waiting in the LittleFS ring when this row was built; 0 = the card is up to date |
+| `ring_dropped` | lines the ring had to give up since it was last empty (§5); 0 = nothing lost |
 | `cycle_ms` | how long the row **before** this one took, ms (0 in the first row) |
 
 Sensor numbers (`pv_status.h` `PV_SENSOR_*` = `data/schema.py` `SENSOR_BITS`; a test
@@ -155,7 +157,8 @@ compares them):
 
 `status`: bits 0–8 keep their numbers. Changed meaning of bit 5 (`TROM_UNMAPPED`): in
 CSV v2 the unmapped column is **empty**; in older files T1..T5 followed the scan order.
-New bit 9 (`SD_BUFFERED`, Task 2).
+Bit 8 (`SD_RETRY`) now reads "not on the card at the first attempt" (second attempt, or
+through the ring). New bit 9 (`SD_BUFFERED`): the row waited in the ring (§5).
 
 **Version line.** Every block of rows starts with the line `# nasim-logger-csv v2` and
 the header line. The logger writes such a block at the top of a new file and with the
@@ -165,18 +168,103 @@ formats (a firmware update at midday). Files without the line are older: 16 colu
 row its `csv_version`; a line whose field count does not match its block's header is left
 out and counted (`df.attrs["rows_malformed"]`).
 
-`/events.csv` (`date,time,uptime_ms,event,detail`, UTC): `sensor_fail`, `sensor_ok`,
-`unknown_rom`, `rtc_jump`, `i2c_restart`, `config`, `events_missed`.
+`/events.csv` (`date,time,uptime_ms,event,detail`, UTC): `boot`, `health`, `sensor_fail`,
+`sensor_ok`, `unknown_rom`, `rtc_jump`, `i2c_restart`, `config`, `events_missed`, and from
+the store `sd_lost`, `sd_back`, `ring_found`, `ring_flushed`, `ring_full`, `ring_error`,
+`ring_formatted`.
 
-## 5. PC tests with fake drivers
+## 5. Card missing or failing: the LittleFS ring
+
+Implemented in `pv_store_logic.c` (plain C, tested on the PC with a fake card and a fake
+flash); the card is reached through `PvSdCard`, the flash through `PvFlashRing`.
+
+**Where a line goes.** Rows, events and markers all take the same path:
+
+1. At every row the store first looks after the card (`pvstore_service`): if it was down,
+   **one** mount is tried (the card is retried every 10 s, for as long as it is away); if
+   it is up and lines wait in the ring, they are copied to it, oldest first.
+2. Card up and nothing waiting: the line is written to the card. If that write fails, one
+   re-mount and one more attempt (`SD_RETRY`).
+3. Otherwise the line goes into the ring on the ESP32's own flash, with `SD_RETRY` +
+   `SD_BUFFERED` in a row's `status` and the `sd` bit in `sens_fail`.
+4. **While anything waits in the ring, new lines go to the ring too**, even if the card is
+   back. That keeps every file in the order the lines were made. Copying is limited to 64
+   lines and 1 s per row, so a long backlog drains over several rows without stopping the
+   sampling.
+
+**Exactly once.** A write can fail after its bytes reached the card, and power can go
+between a write and the note that it was done. So before a line is written whose earlier
+write failed, and before the first line copied after a restart, the **end of its file is
+read**: if the line is already there it is not written again. Rows are compared by their
+first 20 fields (date … `uptime_ms`), which do not change between attempts. In the same
+read a file that ends in a fragment (a write cut off by a power loss) is noticed, and the
+next line starts on a fresh line. Two faults at once can still duplicate rows: the flash
+refusing to save the place **and** a restart during the copy; `analysis/ingest.py` drops
+rows with a repeated time.
+
+**The ring.** Segment files `/ring/NNNNNNNN.seg` of 32 lines each, written by appending
+only (LittleFS appends cheaply but rewrites a file to change its middle), plus
+`/ring/state.txt` with the place of the oldest line not yet on the card. Everything is on
+flash: lines survive a watchdog reset and a power cut, and the next boot goes on
+(`ring_found`).
+
+**Full.** Capacity 128 segments = 4096 lines ≈ 11 h of rows, or less if the 1.4 MB
+partition fills first. When full, the **oldest segment (32 lines) is given up** to make
+room for the newest, and counted: column `ring_dropped`, event `ring_full` (once per
+outage), and the total in `ring_flushed` when the card is back. Sampling never stops.
+Copying a full ring back takes many rows (64 lines and 1 s per row at the most; with the
+fake's card times about 20 lines per row `[EST]`, i.e. about half an hour), and rows made
+meanwhile join the end of the ring; if the ring is still full when one arrives, the
+oldest segment is given up as above. If
+the flash itself cannot be used, a line that cannot reach the card is counted the same way
+(`ring_error`) and the next row that reaches the card carries `SD_RETRY`.
+
+**Never formatted.** The logger mounts the card with `PvSdCard::begin()`, which cannot
+format; the store's driver table has no format function; a test checks both. The one
+thing that is formatted, once, is the **internal** flash partition if it holds no LittleFS
+(first boot of this firmware): event `ring_formatted`.
+
+Not buffered: the load's files (`/SW*.csv`, `/SS*.csv`, `/load_log.csv`, only with
+`HAS_LOAD 1`) and `/rom_scan.txt`. They are written with the checked writes, but straight
+to the card.
+
+## 6. Watchdog and reset reason
+
+- The ESP32 task watchdog watches the Arduino loop task in **every** build, from the start
+  of `setup()`: `LOOP_WDT_MS` = 30 s without the load (three row periods, and well above
+  the slowest normal pass: ≈ 7 s of sensor time-outs `[EST]` + a failed card mount + the
+  1 s flush + the 1.1 s RTC edge search). With `HAS_LOAD 1` the 15 s chosen on 2026-11-13
+  is kept; bench B7 must check it again, because a pass can now also hold a card flush.
+- If `loop()` does not come round in that time the chip resets and logging starts again by
+  itself. Lines in the ring are still there.
+- Every boot writes one `boot` event to `/events.csv` (and Serial) with the reset reason:
+  `POWERON`, `TASK_WDT`, `PANIC`, `BROWNOUT`, `SOFTWARE`, `EXT_PIN`, `INT_WDT`, …
+- After a watchdog, panic or software reset the event also names the **last stage** the
+  program had entered and its uptime, e.g. `reset=TASK_WDT (6); before it: BME280 at
+  uptime 123456 ms`. The stage is kept in RTC memory, which those resets do not clear (a
+  power cut does).
+- Once an hour a `health` event: free heap, lowest free heap, unused stack of the loop
+  task, LittleFS use. A slow loss of memory shows there long before it matters.
+
+## 7. PC tests with fake drivers
 
 `firmware/tools/logger_sim.py` holds the fake drivers; each can be told to **fail** (a
 bad read), to **disappear** (no answer) or to be **slow** (each call takes as long as its
-driver allows). `tests/test_logger_robustness.py`, 57 tests: the row text (every field,
-empty fields, date arithmetic against Python), the ROM table (scan order, missing probe,
-zero rows, unknown ROMs once), retry at the next row, counters and the one report, the
-PaHub rule, every sensor gone at once, the slowest possible row, the time rules, the
-`millis()` wrap after 49.7 days, and loading the simulated card with `analysis/ingest.py`.
+driver allows). The fake card can be pulled and put back, can refuse a write, can write
+half a line, and can report failure for a write that did land; the fake flash can be
+full, refuse writes or be unusable; `rig.reboot()` is a restart with the card and the
+flash as they were. `tests/test_logger_robustness.py`, 81 tests: the row text (every
+field, empty fields, date arithmetic against Python), the ROM table (scan order, missing
+probe, zero rows, unknown ROMs once), retry at the next row, counters and the one report,
+the PaHub rule, every sensor gone at once, the slowest possible row, the time rules, the
+`millis()` wrap after 49.7 days; for the store: card away and back, no card at boot, one
+failed write, a write that failed but landed, a half-written line, order during a long
+flush, the flush limits, ring full, flash full, flash unusable, a restart with lines in
+the ring (also with a full ring), a power cut between the card write and the saved place, markers and events in
+the ring, an outage over midnight, an old-format day file on the card; and loading the
+simulated card with `analysis/ingest.py`. Four more pin the sketch's text: the watchdog,
+the first statement of `setup()`, the boot event, and that nothing is written past the
+store.
 
 What they show: the decisions are right whatever the drivers return. What they do not
 show: that the real drivers return within their limits on the real buses (§8).
@@ -225,7 +313,49 @@ time,T1,T2,T3,T4,voltage,current,status,sens_fail,f_T3,f_hub,f_ina,cycle_ms
 
 `status` 16 = `PANEL_FAIL`; `sens_fail` 512 = bit 9 = PaHub. `f_ina` stays 0.
 
-## 6. Flash and RAM
+SD card missing for 12 rows, then back. First the rows as the logger made them (and
+printed on Serial), with where each went first:
+
+```
+time,T1,voltage,uptime_ms,status,sens_fail,f_sd,ring_rows,ring_dropped,cycle_ms,_where
+06:00:00,40.0000,18.0000,5000,0,0,0,0,0,0,sd
+06:00:10,40.0000,18.0000,15000,0,0,0,0,0,1060,sd
+06:00:20,40.0000,18.0000,25000,0,0,0,0,0,912,sd
+06:00:30,40.0000,18.0000,35000,768,4096,1,0,0,912,ring
+06:00:40,40.0000,18.0000,45000,768,4096,2,2,0,2412,ring
+06:00:50,40.0000,18.0000,55000,768,4096,3,3,0,2392,ring
+06:01:00,40.0000,18.0000,65000,768,4096,4,5,0,2402,ring
+06:01:10,40.0000,18.0000,75000,768,4096,5,6,0,2497,ring
+06:01:20,40.0000,18.0000,85000,768,4096,6,7,0,2392,ring
+06:01:30,40.0000,18.0000,95000,768,4096,7,8,0,2392,ring
+06:01:40,40.0000,18.0000,105000,768,4096,8,9,0,2392,ring
+06:01:50,40.0000,18.0000,115000,768,4096,9,10,0,2392,ring
+06:02:00,40.0000,18.0000,125000,768,4096,10,11,0,2392,ring
+06:02:10,40.0000,18.0000,135000,768,4096,11,12,0,2497,ring
+06:02:20,40.0000,18.0000,145000,768,4096,12,13,0,2392,ring
+06:02:30,40.0000,18.0000,155000,0,0,12,0,0,2392,sd
+06:02:40,40.0000,18.0000,165000,0,0,12,0,0,1765,sd
+06:02:50,40.0000,18.0000,175000,0,0,12,0,0,912,sd
+06:03:00,40.0000,18.0000,185000,0,0,12,0,0,912,sd
+06:03:10,40.0000,18.0000,195000,0,0,12,0,0,1017,sd
+```
+
+`status` 768 = `SD_RETRY` + `SD_BUFFERED`; `sens_fail` 4096 = `sd`. `ring_rows` counts
+lines, so it also counts the two events of the outage. `cycle_ms` ≈ 2.4 s while the card
+is away is the fake's 1.5 s for a failed mount `[EST]`, not a measurement. After the card
+is back, `/20261125.csv` on the card holds **the same 20 rows, in this order, each once**
+(the test compares them text for text), and `/events.csv`:
+
+```
+date,time,uptime_ms,event,detail
+2026-11-25,06:00:32,37402,sd_lost,card not answering or write failed: lines go to the LittleFS buffer
+2026-11-25,06:00:52,57392,sensor_fail,sd failed 3 rows in a row: row not written to the card at once
+2026-11-25,06:02:31,156675,sensor_ok,sd back after 12 failed rows
+2026-11-25,06:02:31,156705,sd_back,card mounted; 14 lines wait in the buffer
+2026-11-25,06:02:31,156735,ring_flushed,14 lines copied from the buffer to the card in order; 0 given up
+```
+
+## 8. Flash and RAM
 
 `python firmware/build_all.py logger`, esp32:esp32 3.3.8, FQBN `esp32:esp32:esp32wrover`
 (app partition 1 310 720 B, RAM 327 680 B):
@@ -233,13 +363,16 @@ time,T1,T2,T3,T4,voltage,current,status,sens_fail,f_T3,f_hub,f_ina,cycle_ms
 | Build | Flash | RAM (globals) |
 |---|---|---|
 | `main` before this work (`51d18aa`) | 461 974 B (35 %) | 30 792 B (9 %) |
-| after Task 1 | 475 334 B (36 %) | 33 344 B (10 %) |
-| change | +13 360 B | +2 552 B |
+| after Task 1 (`b14f1dd`) | 475 334 B (36 %) | 33 344 B (10 %) |
+| after Task 2 | 530 966 B (40 %) | 36 264 B (11 %) |
+| change, both tasks | +68 992 B | +5 472 B |
 
-With `-DHAS_LOAD=1`: 481 761 B / 31 048 B before, 495 933 B / 33 592 B after Task 1.
-The RAM is the event queue (16 × 128 B) and the counters.
+With `-DHAS_LOAD=1`: 481 761 B / 31 048 B before, 495 933 B / 33 592 B after Task 1,
+550 409 B / 36 528 B after Task 2. Task 1's RAM is the event queue (16 × 128 B) and
+the counters; Task 2's flash is mostly the LittleFS library, its RAM the store's two work
+buffers. 60 % of the app partition and 89 % of the RAM stay free.
 
-## 7. On-board test (to do; ≈ 20 min)
+## 9. On-board test (to do; ≈ 30 min)
 
 Before: `T_ROM` filled in (boot scan prints the rows), RTC set, card in, serial monitor
 open at 115200, the pump unplugged. Let the logger write 6 clean rows first. Press the
@@ -268,9 +401,34 @@ note it: that is the connector, not the firmware.
 | Serial | `sensor_fail,hub failed 3 rows in a row: …` once, `sensor_ok,hub back after …` once |
 | Not expected | a reset; `T_ambient` or the time going empty (if they do: hot-plugging disturbed the main bus — note which, and whether `i2c_restart` appears) |
 
-Step 3 (SD card) is added with Task 2.
+**Step 3 — pull the SD card for 2 minutes**, then push it back in.
 
-## 8. Needs board
+| Where | Expect |
+|---|---|
+| Serial, while out | rows keep coming every 10 s, each with `status` + 768 and `sens_fail` + 4096; once `# event: …,sd_lost,…`; after 3 rows once `…,sensor_fail,sd failed 3 rows in a row…`; a `# status:` line showing `microSD=not found` |
+| Serial, `ring_rows` | grows by 1 per row (plus the event lines): about 14 after 2 minutes |
+| Serial, `cycle_ms` | **read it off**: the normal value + the time of one failed mount. This is the number the watchdog margin rests on; it must stay far below 30 000 |
+| Serial, after re-inserting | within one row: `…,sd_back,card mounted; N lines wait…` and `…,ring_flushed,N lines copied from the buffer to the card in order; 0 given up`; rows again with `status` without 768 and `ring_rows` 0 |
+| Card, afterwards (on the PC) | the day file has **every** row of the two minutes: `time` steps by 10 s through the whole test with no gap and no repeat, the 12 or so rows of the outage carry 768 in `status`; `/events.csv` has the four lines; a marker pressed while the card was out is in `/markers.csv` in its place |
+| PC check | `python -c "from analysis import ingest; d = ingest.read_logger('E:/'); print(d.attrs, d['t_utc'].diff().dt.total_seconds().value_counts())"` → `rows_malformed` 0 and only 10.0 s steps over the test |
+| Not expected | a reset; a gap in `time`; the same row twice; any question about formatting the card |
+
+Pull the card **between** two rows if possible (just after a row appears on Serial).
+Pulling it during a write is the harder case, worth one extra try: a half-written line
+may then be on the card; it must stand on its own line and the row must follow whole.
+
+**Step 4 — watchdog** (it can only be seen with a deliberate hang, so on the bench only):
+flash once with a test line `while (true) {}` at the end of `sample()` (do not commit
+it). Expect: about 30 s after the first row a panic print on Serial
+(`task_wdt`), a reboot, and as the first event of the new boot
+`…,boot,reset=TASK_WDT (6); before it: between rows at uptime … ms`. Then flash the
+normal build again. Also power-cycle once: `…,boot,reset=POWERON (1); heap …`.
+
+**Step 5 — first boot of this firmware**: the Serial banner must show
+`# watchdog on the loop task: 30000 ms; LittleFS ring: ready, 0 lines waiting`, and
+`/events.csv` a `ring_formatted` line once (never again at later boots).
+
+## 10. Needs board
 
 Cannot be confirmed without hardware; none of it is claimed.
 
@@ -292,7 +450,24 @@ Cannot be confirmed without hardware; none of it is claimed.
 7. **I2C restart** (`i2c_restart`): whether it frees a bus that a device holds low.
 8. **`pyr_mV`**: whether GPIO 34 is wired to the PYR20 analog output in the final rig,
    and how it compares with the Modbus value (the analog output is not validated).
-9. **Heap over days**: the SD and device re-starts allocate and free; watch for a slow
-   loss (Task 2 logs the free heap).
+9. **Heap and stack over days**: the SD and device re-starts allocate and free; the
+   hourly `health` event logs free heap, its lowest value and the unused stack of the
+   loop task (8 KB in total). Look at it after the first day.
 10. **GPIO 32 at reset**: that the pump gate stays LOW through power-up and reset (scope,
     with the 10 kΩ pull-down fitted). The pump stays unplugged for this phase anyway.
+11. **Watchdog** (step 4): that it fires at 30 s, that the chip restarts and logs
+    `TASK_WDT` with the stage, and that no normal row comes near the limit (`cycle_ms`).
+    That the stage survives the reset in RTC memory.
+12. **Real SD removal** (step 3): how long a failed mount takes (two attempts), whether
+    the SPI driver recovers when the card is re-inserted, whether a write to a pulled card
+    is reported as failed by `fsync` on this core, and whether pulling during a write
+    leaves a fragment as assumed. FAT itself is not power-safe: a cut during a write can
+    damage more than the last line; nothing here changes that.
+13. **LittleFS on the real flash**: mount and first format on this board (partition
+    `spiffs`, 1.4 MB), time of one append and of one state save (they add to `cycle_ms`
+    during an outage and a flush), behaviour when the partition is full, and that the
+    files survive a reset and a power cut as the design assumes.
+14. **A long outage**: a night without the card (≈ 4000 lines), then the copy back:
+    duration, `cycle_ms` during it, and `ring_dropped` = 0.
+15. **Load build** (`HAS_LOAD 1`, later): the 15 s watchdog against a pass that holds a
+    card flush (bench B7); the load's own files are not buffered.

@@ -1,11 +1,14 @@
-"""The logger's row logic on the PC, with FAKE sensor drivers.
+"""The logger's row logic on the PC, with FAKE sensor drivers, a FAKE SD card and a FAKE
+internal flash.
 
-firmware/libraries/PvDaq/src/pv_log_logic.c is the code the ESP32 runs for every 10 s row.
-Here it is compiled with gcc and driven by fake drivers that can be told to fail (a read
-error), to time out (the call takes its whole time-out) or to disappear (no answer at all,
-as when a cable is pulled). Nothing here is a measurement: every reading is made up, and
-the time each fake call "takes" is an [EST] taken from the driver's own time-out constants,
-only so that the length of a worst-case row can be bounded.
+firmware/libraries/PvDaq/src/pv_log_logic.c and pv_store_logic.c are the code the ESP32
+runs for every 10 s row. Here they are compiled with gcc and driven by fake drivers that
+can be told to fail (a read error), to time out (the call takes its whole time-out) or to
+disappear (no answer at all, as when a cable is pulled); the fake card can be pulled out
+and put back, and both it and the fake flash can refuse writes. Nothing here is a
+measurement: every reading is made up, and the time each fake call "takes" is an [EST]
+taken from the driver's own time-out constants, only so that the length of a worst-case
+row can be bounded.
 
     python firmware/tools/logger_sim.py            prints the scenarios as CSV rows
 
@@ -20,7 +23,7 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SRC = ROOT / "firmware/libraries/PvDaq/src"
-C_FILES = ["pv_log_logic.c"]
+C_FILES = ["pv_log_logic.c", "pv_store_logic.c"]
 
 N_T = 7
 SENSORS = ["T1", "T2", "T3", "T4", "T5", "T6", "T7", "env", "rtc", "hub", "ina", "pyr", "sd"]
@@ -51,6 +54,27 @@ class Io(ctypes.Structure):           # mirrors pvlog_io_t (pv_log_logic.h), sam
         ("ds_convert", ctypes.CFUNCTYPE(ctypes.c_int, ptr)),
         ("ds_read", ctypes.CFUNCTYPE(ctypes.c_int, ptr, PU8, PF)),
         ("ds_scan", ctypes.CFUNCTYPE(ctypes.c_int, ptr, PU8, ctypes.c_int)),
+        ("log", ctypes.CFUNCTYPE(None, ptr, ctypes.c_char_p)),
+    ]
+
+
+class StoreIo(ctypes.Structure):      # mirrors pvstore_io_t (pv_store_logic.h), same order
+    _fields_ = [
+        ("ctx", ptr),
+        ("millis", ctypes.CFUNCTYPE(u32, ptr)),
+        ("sd_mount", ctypes.CFUNCTYPE(ctypes.c_int, ptr)),
+        ("sd_size", ctypes.CFUNCTYPE(i32, ptr, ctypes.c_char_p)),
+        ("sd_append", ctypes.CFUNCTYPE(ctypes.c_int, ptr, ctypes.c_char_p, PU8, ctypes.c_int)),
+        ("sd_tail", ctypes.CFUNCTYPE(ctypes.c_int, ptr, ctypes.c_char_p, PU8, ctypes.c_int)),
+        ("fs_range", ctypes.CFUNCTYPE(ctypes.c_int, ptr, ctypes.POINTER(u32),
+                                      ctypes.POINTER(u32))),
+        ("fs_size", ctypes.CFUNCTYPE(i32, ptr, u32)),
+        ("fs_append", ctypes.CFUNCTYPE(ctypes.c_int, ptr, u32, PU8, ctypes.c_int)),
+        ("fs_read", ctypes.CFUNCTYPE(ctypes.c_int, ptr, u32, u32, PU8, ctypes.c_int)),
+        ("fs_lines", ctypes.CFUNCTYPE(i32, ptr, u32, u32)),
+        ("fs_remove", ctypes.CFUNCTYPE(ctypes.c_int, ptr, u32)),
+        ("fs_save", ctypes.CFUNCTYPE(ctypes.c_int, ptr, ctypes.c_char_p)),
+        ("fs_load", ctypes.CFUNCTYPE(ctypes.c_int, ptr, PU8, ctypes.c_int)),
         ("log", ctypes.CFUNCTYPE(None, ptr, ctypes.c_char_p)),
     ]
 
@@ -107,6 +131,20 @@ def lib():
     assert so.pvlog_row_sizeof() == ctypes.sizeof(Row)      # the mirrors above are in step
     assert so.pvlog_cfg_sizeof() == ctypes.sizeof(Cfg)
     assert so.pvlog_io_sizeof() == ctypes.sizeof(Io)
+    so.pvlog_commit.argtypes = [ptr, ptr, ctypes.POINTER(StoreIo), ctypes.POINTER(Row),
+                                ctypes.c_char_p, ctypes.c_int]
+    so.pvlog_file_head.restype = ptr     # kept as a pointer: the store does not copy it
+    so.pvstore_init.argtypes = [ptr, ptr, ctypes.c_char_p, ctypes.c_char_p]
+    so.pvstore_begin.argtypes = [ptr, ctypes.POINTER(StoreIo)]
+    so.pvstore_service.argtypes = [ptr, ctypes.POINTER(StoreIo)]
+    so.pvstore_put.argtypes = [ptr, ctypes.POINTER(StoreIo), ctypes.c_int, ctypes.c_char_p,
+                               ctypes.c_char_p, ctypes.c_int]
+    so.pvstore_get.argtypes = [ptr, ctypes.c_char_p]
+    so.pvstore_get.restype = u32
+    for f in (so.pvstore_sizeof, so.pvstore_io_sizeof, so.pvstore_waiting, so.pvstore_dropped):
+        f.restype = u32
+    so.pvstore_waiting.argtypes = so.pvstore_dropped.argtypes = [ptr]
+    assert so.pvstore_io_sizeof() == ctypes.sizeof(StoreIo)
     _LIB = so
     return so
 
@@ -164,6 +202,29 @@ class Rig:
         self.g, self.ta, self.rh, self.v, self.i = 800.0, 30.0, 20.0, 18.0, 5.0
         self.serial = []
         self._detail = ctypes.create_string_buffer(64)
+        # -- the fake microSD card: {path: bytes}. Times are [EST], not measured.
+        self.card = {}
+        self.card_in = True            # False = pulled out: mount and every access fail
+        self.card_fail_appends = 0     # the next n appends fail and write nothing
+        self.card_ghost_appends = 0    # the next n appends REPORT failure but did write
+        self.card_torn_appends = 0     # the next n appends write only half, then fail
+        self.card_mounted = False
+        self.sd_write_ms, self.sd_mount_ms, self.sd_mount_fail_ms = 30, 150, 1500
+        self.mounts = 0
+        # -- the fake internal flash (LittleFS): ring segments {number: bytes} + state text
+        self.flash = {}
+        self.flash_state = None
+        self.flash_ok = True           # False = the file system cannot be used at all
+        self.flash_fail_appends = 0    # the next n appends fail (write nothing)
+        self.flash_capacity = 1 << 30  # bytes the segments may hold together
+        self.flash_ms = 10
+
+    def reboot(self):
+        """A restart of the board (watchdog, power): uptime starts again, the RTC went on,
+        and what was on the card and in the flash is still there."""
+        self.rtc_offset_s += (self.ms - BOOT_MS) // 1000 + 3     # ~3 s to boot [EST]
+        self.ms = BOOT_MS
+        self.card_mounted = False
 
     # -- the driver functions, in the order of pvlog_io_t --------------------------------
     def _use(self, d, begin=False):
@@ -261,9 +322,125 @@ class Rig:
             setattr(io, name, kind(getattr(self, name)))
         return io
 
+    # -- the card's driver functions, in the order of pvstore_io_t ------------------------------
+    def sd_mount(self, _):
+        self.mounts += 1
+        self.ms += self.sd_mount_ms if self.card_in else self.sd_mount_fail_ms
+        self.card_mounted = self.card_in
+        return int(self.card_mounted)
+
+    def _card_ok(self):
+        if not (self.card_in and self.card_mounted):
+            self.card_mounted = False      # an access to a pulled card: mount again first
+            return False
+        return True
+
+    def sd_size(self, _, path):
+        if not self._card_ok():
+            return -2
+        return len(self.card[path.decode()]) if path.decode() in self.card else -1
+
+    def sd_append(self, _, path, data, n):
+        self.ms += self.sd_write_ms
+        if not self._card_ok():
+            return 0
+        chunk = bytes(data[:n])
+        if self.card_fail_appends:
+            self.card_fail_appends -= 1
+            self.card_mounted = False
+            return 0
+        if self.card_torn_appends:
+            self.card_torn_appends -= 1
+            self.card.setdefault(path.decode(), bytearray()).extend(chunk[:n // 2])
+            self.card_mounted = False
+            return 0
+        self.card.setdefault(path.decode(), bytearray()).extend(chunk)
+        if self.card_ghost_appends:
+            self.card_ghost_appends -= 1
+            self.card_mounted = False
+            return 0
+        return 1
+
+    def sd_tail(self, _, path, buf, n):
+        self.ms += 5
+        if not self._card_ok() or path.decode() not in self.card:
+            return -1
+        tail = bytes(self.card[path.decode()][-n:])
+        for k, b in enumerate(tail):
+            buf[k] = b
+        return len(tail)
+
+    # -- the flash's driver functions -------------------------------------------------------------
+    def fs_range(self, _, first, last):
+        if not self.flash_ok:
+            return -1
+        if not self.flash:
+            return 0
+        first[0], last[0] = min(self.flash), max(self.flash)
+        return 1
+
+    def fs_size(self, _, seq):
+        return len(self.flash[seq]) if self.flash_ok and seq in self.flash else -1
+
+    def fs_append(self, _, seq, data, n):
+        self.ms += self.flash_ms
+        used = sum(len(v) for v in self.flash.values())
+        if not self.flash_ok or used + n > self.flash_capacity:
+            return 0
+        if self.flash_fail_appends:
+            self.flash_fail_appends -= 1
+            return 0
+        self.flash.setdefault(seq, bytearray()).extend(bytes(data[:n]))
+        return 1
+
+    def fs_read(self, _, seq, off, buf, n):
+        self.ms += 2
+        if not self.flash_ok or seq not in self.flash:
+            return -1
+        chunk = bytes(self.flash[seq][off:off + n])
+        for k, b in enumerate(chunk):
+            buf[k] = b
+        return len(chunk)
+
+    def fs_lines(self, _, seq, off):
+        self.ms += 2
+        if not self.flash_ok or seq not in self.flash:
+            return -1
+        return bytes(self.flash[seq][off:]).count(b"\n")
+
+    def fs_remove(self, _, seq):
+        self.ms += self.flash_ms
+        return int(self.flash.pop(seq, None) is not None)
+
+    def fs_save(self, _, text):
+        self.ms += self.flash_ms
+        if not self.flash_ok:
+            return 0
+        self.flash_state = text
+        return 1
+
+    def fs_load(self, _, buf, n):
+        if not self.flash_ok or self.flash_state is None:
+            return -1
+        for k, b in enumerate(self.flash_state[:n]):
+            buf[k] = b
+        return min(len(self.flash_state), n)
+
+    def store_io(self):
+        io = StoreIo()
+        for name, kind in StoreIo._fields_[1:]:
+            setattr(io, name, kind(getattr(self, name)))
+        return io
+
+    def card_lines(self, path):
+        """The lines of a file on the fake card (as text, line ends removed)."""
+        return self.card.get(path, b"").decode().splitlines()
+
 
 class Sim:
-    """The logger loop on the PC: pvlog_read -> row text -> card, events -> /events.csv.
+    """The logger loop on the PC, as logger.ino runs it: pvlog_read, then pvlog_commit
+    (card first, LittleFS ring when the card is away). One Sim = one boot of the board;
+    Sim(rig=old.rig) after rig.reboot() is the next boot with the same card and flash.
     files: {path: [lines]} = what is on the fake SD card."""
 
     def __init__(self, rig=None, t_rom=None, known=(), fail_report_after=3, scan_every=6):
@@ -279,7 +456,16 @@ class Sim:
         self.L = ctypes.create_string_buffer(self.so.pvlog_sizeof())
         self.so.pvlog_init(self.L, ctypes.byref(cfg))
         self.io = self.rig.io()
-        self.files, self.rows, self.cycle_ms = {}, [], []
+        self.sio = self.rig.store_io()
+        self.S = ctypes.create_string_buffer(self.so.pvstore_sizeof())
+        # the store keeps these pointers, so the two Python strings must live as long as it
+        self._headers = (ctypes.c_char_p(b"date,time,uptime_ms,event,detail"),
+                         ctypes.c_char_p(b"date,time,millis"))
+        self.so.pvstore_init(self.S, self.so.pvlog_file_head(), *self._headers)
+        ms = self.rig.ms
+        self.so.pvstore_begin(self.S, ctypes.byref(self.sio))
+        self.rig.ms = ms                 # the time setup() takes before row 0 is not modelled
+        self.rows, self.cycle_ms, self.where = [], [], []
         self.n = 0
 
     def header(self):
@@ -288,41 +474,61 @@ class Sim:
     def get(self, what, sensor="T1"):
         return self.so.pvlog_get(self.L, what.encode(), S[sensor])
 
-    def _append(self, path, line, header):
-        if path not in self.files:
-            self.files[path] = list(header)
-        self.files[path].append(line)
+    def store(self, what):
+        return self.so.pvstore_get(self.S, what.encode())
+
+    @property
+    def files(self):
+        return {path: self.rig.card_lines(path) for path in self.rig.card}
+
+    def data_rows(self, path):
+        """The rows of a day file on the card as dicts (header and version lines left out)."""
+        names = self.header().split(",")
+        return [dict(zip(names, line.split(","))) for line in self.rig.card_lines(path)
+                if line and not line.startswith(("#", "date,"))]
 
     def events(self):
         """The /events.csv lines as (event, detail)."""
         return [tuple(l.split(",")[3:5]) for l in self.files.get("/events.csv", [])[1:]]
 
+    def marker(self, text="2026-11-25,06:00:05.123,10123"):
+        """A button press: one line for /markers.csv through the same store."""
+        return self.so.pvstore_put(self.S, ctypes.byref(self.sio), 2, b"/markers.csv",
+                                   text.encode(), 0)
+
     def cycle(self, p=math.nan, alarm=0):
-        """One 10 s row. Returns it as a dict of the CSV fields (text)."""
+        """One 10 s row. Returns it as a dict of the CSV fields (text), as it was stored."""
         rig, so = self.rig, self.so
         rig.ms = max(rig.ms, BOOT_MS + self.n * PERIOD_MS)       # the 10 s grid
         start = rig.ms
         row = Row()
         so.pvlog_read(self.L, ctypes.byref(self.io), ctypes.byref(row))
         row.p, row.alarm = p, alarm
-        path = ctypes.create_string_buffer(20)
-        so.pvlog_day_path(self.L, ctypes.byref(row), path)
-        row.sens_fail |= so.pvlog_note_sd(self.L, 1)
         line = ctypes.create_string_buffer(400)
-        assert so.pvlog_format_row(self.L, ctypes.byref(row), 0, 0, line, 400) > 0
-        rig.ms += 30                                             # one SD append [EST]
-        self._append(path.value.decode(), line.value.decode(),
-                     ["# nasim-logger-csv v2", self.header()])
-        while so.pvlog_next_event(self.L, rig.ms & 0xFFFFFFFF, line, 400):
-            rig.serial.append("# event: " + line.value.decode())
-            self._append("/events.csv", line.value.decode(), ["date,time,uptime_ms,event,detail"])
-        so.pvlog_end_cycle(self.L, rig.ms & 0xFFFFFFFF)
+        where = so.pvlog_commit(self.L, self.S, ctypes.byref(self.sio), ctypes.byref(row), line, 400)
         self.cycle_ms.append(rig.ms - start)
+        self.where.append(where)
         self.n += 1
-        fields = dict(zip(self.header().split(","), self.files[path.value.decode()][-1].split(",")))
-        fields["_path"] = path.value.decode()
+        text = line.value.decode()
+        fields = dict(zip(self.header().split(","), text.split(",")))
+        fields["_path"] = self._find(text)
+        fields["_where"] = {0: "LOST", 1: "sd", 2: "sd_retry", 3: "ring"}[where]
         self.rows.append(fields)
         return fields
+
+    def _find(self, text):
+        """The file the logger chose for this row: where it is on the card, or the path in
+        its ring record."""
+        for path in self.rig.card:
+            lines = self.rig.card_lines(path)
+            if lines and lines[-1] == text:
+                return path
+        for seq in sorted(self.rig.flash, reverse=True):
+            for rec in reversed(self.rig.flash[seq].decode().splitlines()):
+                parts = rec.split("\t")
+                if len(parts) == 4 and parts[3] == text:
+                    return parts[2]
+        return None
 
     def run(self, n, plan=None):
         """n rows; plan(k, rig) is called before row k to change the fake hardware."""
@@ -365,6 +571,20 @@ def scenario_pahub_absent():
     return sim
 
 
+SHOW_SD = ["time", "T1", "voltage", "uptime_ms", "status", "sens_fail", "f_sd", "ring_rows",
+           "ring_dropped", "cycle_ms"]
+
+
+def scenario_sd_missing(rows=20, out_from=3, out_rows=12):
+    """The card is pulled before row 3 and put back before row 15: 12 rows."""
+    sim = Sim()
+
+    def plan(k, rig):
+        rig.card_in = not out_from <= k < out_from + out_rows
+    sim.run(rows, plan)
+    return sim
+
+
 def main():
     for title, make in (("One DS18B20 (T3) missing for 6 rows", scenario_probe_missing),
                         ("PaHub absent for 6 rows", scenario_pahub_absent)):
@@ -373,6 +593,14 @@ def main():
         print(table(sim.rows))
         print("-- /events.csv")
         print("\n".join(sim.files.get("/events.csv", ["(none)"])))
+    sim = scenario_sd_missing()
+    print("\n== SD card missing for 12 rows, then back (SIMULATION; values are made up) ==")
+    print("-- rows as the logger made them (and printed on Serial), with where each went first")
+    print(table(sim.rows, SHOW_SD + ["_where"]))
+    print("-- /20261125.csv on the card afterwards")
+    print(table(sim.data_rows("/20261125.csv"), SHOW_SD))
+    print("-- /events.csv on the card afterwards")
+    print("\n".join(sim.files.get("/events.csv", ["(none)"])))
 
 
 if __name__ == "__main__":

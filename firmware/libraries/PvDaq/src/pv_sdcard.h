@@ -22,6 +22,15 @@ class PvSdCard : public PvDevice {
   // The file is closed after every line, so a power cut loses at most one row.
   bool appendLine(const char *path, const char *line, const char *header = nullptr);
 
+  // The same card through the C file functions (the card is mounted at /sd), for the
+  // logger's store (pv_store_logic.c). Why not the Arduino File class: its write() only
+  // fills a buffer and its close() returns nothing, so a write that failed could not be
+  // seen (audit 2026-11-21). Here every step is checked, and the data and the directory
+  // entry are on the card (fsync) before true is returned.
+  bool appendBytes(const char *path, const char *data, size_t n);
+  int32_t fileSize(const char *path);                 // bytes; -1 = no such file; -2 = no card mounted
+  int tail(const char *path, char *buf, size_t n);    // the last <= n bytes; count, -1 = error
+
   const char *typeText() const;
   uint64_t sizeMB() const { return sizeMB_; }
   uint8_t mountAttempts = 0;       // attempts used by the last begin() (1 or 2)

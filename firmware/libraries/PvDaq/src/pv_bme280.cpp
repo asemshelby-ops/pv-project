@@ -51,15 +51,14 @@ bool PvBme280::begin() {
     return setStatus(PvStatus::ReadError, d);
   }
 
-  // The library's own begin() runs ONCE per chip (audit 2026-11-21): the BME280 one waits
-  // for the chip in a loop without a time limit ("while (isReadingCalibration())"), which
-  // never ends if the sensor drops off the bus during it. It is needed once, to read the
-  // factory calibration into the library; a later begin() (the logger calls it at the next
-  // row after every failed read) only writes the sampling mode again, which is all a chip
-  // that was re-powered has lost. The first call itself is covered by the loop watchdog.
+  // The full start (soft reset, reading the factory calibration into the library) runs
+  // once per chip. A later begin() (the logger calls it at the next row after every
+  // failed read) only writes the sampling mode again, which is all a chip that was
+  // re-powered has lost, and takes a few transactions instead of about forty. The BME280
+  // start is beginBounded(), not the library's begin(): see pv_bme280.h.
   if (initAddr_ != address || initId_ != chipId) {
     initAddr_ = initId_ = 0;
-    const bool started = chipId == 0x60 ? bme_.begin(address, &wire_) : bmp_.begin(address, chipId);
+    const bool started = chipId == 0x60 ? bme_.beginBounded(address, &wire_) : bmp_.begin(address, chipId);
     if (!started) return setStatus(PvStatus::ReadError, "library init failed");
     initAddr_ = address;
     initId_ = chipId;

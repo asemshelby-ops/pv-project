@@ -745,7 +745,10 @@ def test_sweep_file_headers_are_the_ones_the_analysis_reads():
 
 def test_load_off_and_on_write_markers_in_the_existing_format():
     assert LOGGER.count('"/markers.csv"') == 1                       # one writer, one format
-    assert _literal('sd.appendLine("/markers.csv", line,') == "date,time,millis"
+    assert _literal("MARKERS_HEADER[] =") == "date,time,millis"
+    # since 2026-11-21 through the store, so a press while the card is away is not lost
+    assert LOGGER.count("pvstore_put(&store, &SIO, PVK_MARKER, MARKERS_PATH, line, 0);") == 1
+    assert "pvstore_init(&store, pvlog_file_head(), PVLOG_EVENTS_HEADER, MARKERS_HEADER);" in LOGGER
     assert '%02u:%02u:%02u.%03u,%lu' in LOGGER                       # millisecond UTC time
     assert 'writeMarker(ms, "load off")' in LOGGER and 'writeMarker(millis(), "load on")' in LOGGER
     assert 'writeMarker(ms, nullptr)' in LOGGER                      # the button, as before
