@@ -18,14 +18,14 @@ on the Freenove GPIO extension board. Facts about the GPIOs are from the ESP-IDF
 |---|---|---|---|
 | I2C SDA | **21** | I/O | Arduino-ESP32 default `Wire` pins; not strapping; any GPIO works, but defaults make examples and tests match. |
 | I2C SCL | **22** | O (open drain) | As above. |
-| 1-Wire DQ (DS18B20 ×5 + water/tank) | **4** | I/O | Plain bidirectional GPIO, not strapping, not used by anything else. Needs an external 4.7 kΩ pull-up to 3.3 V. |
+| 1-Wire DQ (DS18B20 ×7: T1..T5 back sheet, T6, T7) | **4** | I/O | Plain bidirectional GPIO, not strapping, not used by anything else. Needs an external 4.7 kΩ pull-up to 3.3 V. |
 | SD SCK | **18** | O | Default pins of the VSPI controller (`SPI` object): hardware SPI without pin remapping. |
 | SD MISO | **19** | I | VSPI default. |
 | SD MOSI | **23** | O | VSPI default. |
 | SD CS | **13** | O | The VSPI default CS is GPIO5, a strapping pin → moved to 13 (not strapping, free on this board). |
 | RS485 TX → MAX3485 (DI / "TXD") | **25** | O | UART2 is remapped here because its default pins (16/17) are the PSRAM pins. Not strapping. |
 | RS485 RX ← MAX3485 (RO / "RXD") | **26** | I | As above. |
-| PYR20 0–2 V analog | **34** | I (ADC1_CH6) | ADC1 (works with Wi-Fi); input-only pin is fine for an analog input and cannot be driven by mistake. |
+| PYR20 0–2 V analog | **34** | I (ADC1_CH6) | ADC1 (works with Wi-Fi); input-only pin is fine for an analog input and cannot be driven by mistake. Read by the logger every row since 2026-11-21 (column `pyr_mV`). |
 | Pump MOSFET gate (PWM) | **32** | O (LEDC) | Not strapping; high-impedance during reset, so the gate pull-down (10 kΩ) keeps the pump OFF until the firmware drives it LOW. |
 | Measurement-load branch B gate driver (PWM, sweeps only) | **14** | O (LEDC) | Decision 2026-11-12 (Asim). The only free output pin. It is a JTAG pin (MTMS) and toggles during boot, so the driver input has a **10 kΩ pull-down**; a toggle would at most connect one 1.5 Ω branch for a few ms `[EST]`. Checked on the scope in bench step B1. |
 | Measurement-load branch A gate driver (PWM, ~20 kHz) | **33** | O (LEDC) | Same reasoning; the gate driver input also needs a pull-down so the load stays off during reset. |
@@ -62,4 +62,4 @@ ESP32 (21/22) ── [level shifter if the M5 side idles near 5 V — measure fi
 
 ## PWM outputs
 
-LEDC, 20 kHz, 11-bit resolution since 2026-11-13 (20 kHz is above hearing; 20 kHz × 2¹¹ = 40.96 MHz is within the 80 MHz APB clock, 12 bits would not be; `pv_config.h` checks this at compile time). Both outputs are driven LOW (duty 0) at boot by every sketch in this folder; no sketch in Phase 0 turns them on. The pump and sweep logic come later.
+LEDC, 20 kHz, 11-bit resolution since 2026-11-13 (20 kHz is above hearing; 20 kHz × 2¹¹ = 40.96 MHz is within the 80 MHz APB clock, 12 bits would not be; `pv_config.h` checks this at compile time). The pump output (GPIO 32) and both load outputs are driven LOW by the first statement of `setup()` in every sketch in this folder (`pvOutputsOff()`: pump first, and for each pin the LOW level is written before the pin is made an output); no sketch in Phase 0 turns them on. The pump and sweep logic come later.

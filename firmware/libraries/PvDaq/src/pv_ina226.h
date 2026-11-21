@@ -39,6 +39,7 @@ class PvIna226 : public PvDevice {
 
  private:
   bool selectChannel();
+  bool readValues();        // the four result registers; false if any read failed
   const char *label_;
   PvPaHub *hub_;            // nullptr = unit wired directly to the bus
   uint8_t ch_;

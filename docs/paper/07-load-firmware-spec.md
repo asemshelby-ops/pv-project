@@ -166,6 +166,10 @@ are on the upstream bus at other addresses, so nothing collides.
 
 ## 7. Files and columns
 
+**Since 2026-11-21 (CSV v2):** 20 more columns follow `status`, every block of rows
+starts with the line `# nasim-logger-csv v2`, and T1..T7 are read by ROM only. The 21
+columns described here are unchanged. See `13-logger-robustness.md` section 4.
+
 10 s row (`/YYYYMMDD.csv`) — five columns appended at the end, so older files and the
 existing parsers still work. This uses the additions already proposed in CLAUDE.md
 ("confirm before coding") plus two from the audit:
@@ -214,13 +218,15 @@ two. A bit is never renumbered once data exists; new bits are added at the end.
 | 2 | 4 | `AMBIENT_FAIL` | BME280: no ambient temperature |
 | 3 | 8 | `IRRAD_FAIL` | PYR20: no irradiance |
 | 4 | 16 | `PANEL_FAIL` | panel INA226 or its PaHub channel: no V, I, P |
-| 5 | 32 | `TROM_UNMAPPED` | `T_ROM` in `logger.ino` is not filled in: T1..T5 follow the bus-scan order, not positions on the module |
+| 5 | 32 | `TROM_UNMAPPED` | a T1..T5 row of `T_ROM` in `logger.ino` is not filled in. CSV v2: that column is empty. Files before CSV v2: T1..T5 followed the bus-scan order, not positions on the module |
 | 6 | 64 | `DET_SKIPPED` | the row was not given to NASIM (an input or the time is missing); the detector keeps its state |
 | 7 | 128 | `DET_RESET` | NASIM's state was cleared at this row: `DET_RESET_AFTER_FAILS` (5) skipped rows in a row. `p` is empty for the next 10 min |
-| 8 | 256 | `SD_RETRY` | this row needed a second SD write attempt, or the row(s) just before it did not reach the card |
+| 8 | 256 | `SD_RETRY` | this row did not reach the card at the first attempt, or the row(s) just before it did not reach the card |
+| 9 | 512 | `SD_BUFFERED` | CSV v2: this row waited in the LittleFS ring buffer and was copied to the card later (`13` section 5) |
 
 Example: `status = 33` = 32 + 1 = `TROM_UNMAPPED` + `RTC_INVALID`. Until `T_ROM` is
-filled in, a clean row reads `32`, not `0`. Rows outside the 06:00–18:00 window are not
+filled in, no row is clean: in CSV v2 it reads at least `98` (32 + 2 `TEMP_FAIL` + 64
+`DET_SKIPPED`), because the unmapped columns are empty. Rows outside the 06:00–18:00 window are not
 "skipped" rows: the detector rests there by design and no bit is set.
 
 Precision and cost of the detectors on the ESP32 (checked on the build of 2026-11-13).

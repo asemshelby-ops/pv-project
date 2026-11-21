@@ -46,10 +46,12 @@ STOPS_DETECTOR = {"TEMP_FAIL", "IRRAD_FAIL", "AMBIENT_FAIL", "RTC_INVALID"}   # 
 
 
 def inject_faults(lines, utc_date):
-    """lines: one day file as text lines (header first). Returns the lines with FAULTS."""
-    header = lines[0].split(",")
+    """lines: one day file as text lines (its head first: the header, after the version
+    line in CSV v2). Returns the lines with FAULTS."""
+    h = replay.head_size(lines)
+    header = lines[h - 1].split(",")
     col = {name: k for k, name in enumerate(header)}
-    rows = [line.split(",") for line in lines[1:]]
+    rows = [line.split(",") for line in lines[h:]]
     for start, n, blank, bit in FAULTS:
         utc = pd.Timestamp(f"{utc_date} {start}", tz=config.TZ).tz_convert("UTC")
         first = next(k for k, r in enumerate(rows) if r[col["time"]] == f"{utc:%H:%M:%S}")
@@ -63,7 +65,7 @@ def inject_faults(lines, utc_date):
             for name in blank:
                 r[col[name]] = ""
             r[col["status"]] = str(status)
-    return [lines[0]] + [",".join(r) for r in rows]
+    return lines[:h] + [",".join(r) for r in rows]
 
 
 def detector_columns(folder, results):
@@ -116,8 +118,9 @@ def build(run, out, dates=None, n_days=2, faults=True):
     for date in dates:
         f = out / (date.replace("-", "") + ".csv")
         lines = f.read_text().splitlines()
-        col = {name: k for k, name in enumerate(lines[0].split(","))}
-        for n in range(1, len(lines)):
+        h = replay.head_size(lines)
+        col = {name: k for k, name in enumerate(lines[h - 1].split(","))}
+        for n in range(h, len(lines)):
             r = lines[n].split(",")
             p, alarm = values.get((r[col["date"]], r[col["time"]]), (np.nan, 0))
             r[col["p"]], r[col["alarm"]] = ("" if np.isnan(p) else f"{p:.6f}"), str(alarm)

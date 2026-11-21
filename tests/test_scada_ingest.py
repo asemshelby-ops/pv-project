@@ -28,15 +28,19 @@ def conn():
     c.close()
 
 
+HEAD = 2      # lines before the first row of a CSV v2 day file: version line + header
+
+
 def _edit(folder, row, **cells):
     """Overwrite cells of data row `row` (0 = first row) in the first day file."""
     f = sorted(folder.glob("2*.csv"))[0]
     lines = f.read_text().splitlines()
-    header = lines[0].split(",")
-    values = lines[row + 1].split(",")
+    h = next(k for k, line in enumerate(lines) if line.startswith("date,"))   # the header line
+    header = lines[h].split(",")
+    values = lines[h + 1 + row].split(",")
     for name, value in cells.items():
         values[header.index(name)] = str(value)
-    lines[row + 1] = ",".join(values)
+    lines[h + 1 + row] = ",".join(values)
     f.write_text("\n".join(lines) + "\n")
 
 
@@ -136,10 +140,10 @@ def test_a_growing_file_is_read_once_and_only_in_complete_lines(days, tmp_path, 
     live = tmp_path / "live"
     live.mkdir()
     f, ingest = live / "20261115.csv", FolderIngest(conn, live)
-    f.write_text("".join(lines[:11]) + lines[11][:30])          # 10 rows + half a row
+    f.write_text("".join(lines[:HEAD + 10]) + lines[HEAD + 10][:30])   # 10 rows + half a row
     assert ingest.poll()["rows"] == 10
     assert ingest.poll()["rows"] == 0                            # nothing new
-    f.write_text("".join(lines[:21]))                            # the file grew
+    f.write_text("".join(lines[:HEAD + 20]))                     # the file grew
     assert ingest.poll()["rows"] == 10
     assert _count(conn) == 20
 
@@ -151,11 +155,11 @@ def test_a_restart_goes_on_where_the_last_run_stopped(days, tmp_path):
     lines = sorted(src.glob("2*.csv"))[0].read_text().splitlines(keepends=True)
     live = tmp_path / "live"
     live.mkdir()
-    (live / "20261115.csv").write_text("".join(lines[:101]))
+    (live / "20261115.csv").write_text("".join(lines[:HEAD + 100]))
     c = historian.connect(db)
     assert FolderIngest(c, live).poll()["rows"] == 100
     c.close()
-    (live / "20261115.csv").write_text("".join(lines[:151]))
+    (live / "20261115.csv").write_text("".join(lines[:HEAD + 150]))
     c = historian.connect(db)                                    # the service was restarted
     assert FolderIngest(c, live).poll()["rows"] == 50            # header remembered, no re-read
     assert _count(c) == 150
@@ -205,7 +209,7 @@ def test_untimed_rows_right_after_a_reboot_wait_for_the_next_timed_row(days, tmp
     full = sorted(tmp_path.glob("2*.csv"))[0]
     lines = full.read_text().splitlines(keepends=True)
     ingest = FolderIngest(conn, tmp_path)
-    full.write_text("".join(lines[:203]))                        # up to the second untimed row
+    full.write_text("".join(lines[:HEAD + 202]))                 # up to the second untimed row
     ingest.poll()
     assert _count(conn, "unplaced_rows") == 2                    # kept, waiting
     full.write_text("".join(lines))                              # the timed rows arrive

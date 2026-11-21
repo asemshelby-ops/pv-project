@@ -752,9 +752,16 @@ def test_load_off_and_on_write_markers_in_the_existing_format():
 
 
 def test_logger_keeps_the_load_out_unless_has_load_is_set():
-    assert '",NaN,none,0,"' in LOGGER                                # today's row, unchanged
+    # today's row, unchanged: D = "NaN", load_mode = "none", sweep_id = 0 unless the sketch
+    # fills them in, which it does only with HAS_LOAD (the row text is built in
+    # pv_log_logic.c since 2026-11-21; tests/test_logger_robustness.py checks it field by field)
+    logic = (SRC / "pv_log_logic.c").read_text(encoding="utf-8")
+    assert 'if (isnan(r->d)) put(&t, ",NaN");' in logic
+    assert 'put(&t, r->load_mode ? r->load_mode : "none");' in logic
+    fill = LOGGER.index("row.load_mode = load_mode_text(load.L.mode);")
+    assert LOGGER.rindex("if (HAS_LOAD) {", 0, fill) > LOGGER.rindex("}", 0, fill)   # inside it
     assert "if (HAS_LOAD) loadLoop(next);" in LOGGER                 # the only way into the load
-    assert "if (HAS_LOAD) load.rowReading();" in LOGGER
+    assert "if (!(HAS_LOAD ? load.rowReading() : panel.read())) return 0;" in LOGGER
     setup = LOGGER.split("void setup() {")[1]
     assert setup.lstrip().startswith("pvOutputsOff();")              # first thing after a reset
     guard, begin = setup.index("if (HAS_LOAD) {"), setup.index("load.begin()")

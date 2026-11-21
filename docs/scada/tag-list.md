@@ -11,6 +11,7 @@ description names a source. Alarm priorities are a first proposal `[ASSUMPTION]`
 
 | Format | Columns | Header |
 |---|---|---|
+| CSV v2 (logger since 2026-11-21) | 41 | `date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,D,load_mode,sweep_id,uptime_ms,status,T6,T7,pyr_mV,sens_fail,f_T1,f_T2,f_T3,f_T4,f_T5,f_T6,f_T7,f_env,f_rtc,f_hub,f_ina,f_pyr,f_sd,ring_rows,ring_dropped,cycle_ms` |
 | new (logger since 2026-11-12) | 21 | `date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,D,load_mode,sweep_id,uptime_ms,status` |
 | old (logger before 2026-11-12) | 16 | `date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm` |
 | bare schema (synthetic day tables) | 14 | `date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind` |
@@ -42,7 +43,7 @@ field and the text `NaN` are both stored as NULL.
 | `load_mode` | enum | none/off/hold/sweep/trip |  | csv:load_mode | State of the measurement load. |
 | `sweep_id` | counter | - |  | csv:sweep_id | Id of the last finished I-V sweep (Unix seconds of its start); 0 = none yet. |
 | `uptime_ms` | counter | ms |  | csv:uptime_ms | millis() at the row. A fall = the board restarted. Wraps after 49.7 days. |
-| `status` | bitfield | - | 0 .. 511 | csv:status | Health bits of the row; 0 = nothing to report. Decoded into the ST.* tags. Not recorded in files written before 2026-11-12. |
+| `status` | bitfield | - | 0 .. 1023 | csv:status | Health bits of the row; 0 = nothing to report. Decoded into the ST.* tags. Not recorded in files written before 2026-11-12. |
 | `T_module` | analog | degC | 0 .. 90 | derived | Mean of the T1..T5 values present in the row (the detectors use the mean of all five). |
 | `dT_module_ambient` | analog | K | -10 .. 50 | derived | T_module - T_ambient. |
 | `ALM.NASIM` | discrete | 0/1 | 0 .. 1 | alarm bit 0 (value 1) | NASIM-GBT alarmed at this row. |
@@ -53,10 +54,11 @@ field and the text `NaN` are both stored as NULL.
 | `ST.AMBIENT_FAIL` | discrete | 0/1 | 0 .. 1 | status bit 2 (value 4) | BME280: no ambient temperature. |
 | `ST.IRRAD_FAIL` | discrete | 0/1 | 0 .. 1 | status bit 3 (value 8) | PYR20: no irradiance. |
 | `ST.PANEL_FAIL` | discrete | 0/1 | 0 .. 1 | status bit 4 (value 16) | Panel INA226 (or its PaHub channel): no V, I, P. |
-| `ST.TROM_UNMAPPED` | discrete | 0/1 | 0 .. 1 | status bit 5 (value 32) | T_ROM not filled in: T1..T5 follow the bus-scan order. |
+| `ST.TROM_UNMAPPED` | discrete | 0/1 | 0 .. 1 | status bit 5 (value 32) | A T1..T5 row of T_ROM is not filled in: that column is empty (files before CSV v2: T1..T5 followed the bus-scan order). |
 | `ST.DET_SKIPPED` | discrete | 0/1 | 0 .. 1 | status bit 6 (value 64) | Row not given to the detectors (an input or the time is missing). |
 | `ST.DET_RESET` | discrete | 0/1 | 0 .. 1 | status bit 7 (value 128) | Detector state cleared at this row (5 skipped rows in a row). |
-| `ST.SD_RETRY` | discrete | 0/1 | 0 .. 1 | status bit 8 (value 256) | SD: second write attempt, or the row(s) before did not reach the card. |
+| `ST.SD_RETRY` | discrete | 0/1 | 0 .. 1 | status bit 8 (value 256) | SD: not on the card at the first attempt, or the row(s) before did not reach the card. |
+| `ST.SD_BUFFERED` | discrete | 0/1 | 0 .. 1 | status bit 9 (value 512) | SD: the row waited in the LittleFS ring buffer and was copied to the card later. |
 
 ## Load modes (`load_mode`)
 
@@ -85,10 +87,11 @@ field and the text `NaN` are both stored as NULL.
 | 2 | 4 | `AMBIENT_FAIL` | BME280: no ambient temperature. |
 | 3 | 8 | `IRRAD_FAIL` | PYR20: no irradiance. |
 | 4 | 16 | `PANEL_FAIL` | Panel INA226 (or its PaHub channel): no V, I, P. |
-| 5 | 32 | `TROM_UNMAPPED` | T_ROM not filled in: T1..T5 follow the bus-scan order. |
+| 5 | 32 | `TROM_UNMAPPED` | A T1..T5 row of T_ROM is not filled in: that column is empty (files before CSV v2: T1..T5 followed the bus-scan order). |
 | 6 | 64 | `DET_SKIPPED` | Row not given to the detectors (an input or the time is missing). |
 | 7 | 128 | `DET_RESET` | Detector state cleared at this row (5 skipped rows in a row). |
-| 8 | 256 | `SD_RETRY` | SD: second write attempt, or the row(s) before did not reach the card. |
+| 8 | 256 | `SD_RETRY` | SD: not on the card at the first attempt, or the row(s) before did not reach the card. |
+| 9 | 512 | `SD_BUFFERED` | SD: the row waited in the LittleFS ring buffer and was copied to the card later. |
 
 ## Alarm definitions
 

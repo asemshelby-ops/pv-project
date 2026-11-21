@@ -1,6 +1,7 @@
 """The logger row format: the five columns appended on 2026-11-12 (D, load_mode, sweep_id,
-uptime_ms, status), files written before that, rows without RTC time, and the status
-bits. All data is synthetic (analysis/fake_logger.py)."""
+uptime_ms, status), CSV v2 of 2026-11-21 (version line, 20 more columns, blocks), files
+written before either, rows without RTC time, and the status and sensor bits. All data is
+synthetic (analysis/fake_logger.py)."""
 import pathlib
 import re
 
@@ -10,10 +11,26 @@ import pytest
 import config
 from analysis import fake_logger, ingest
 from data import synth
-from data.schema import (LOGGER_EXTRA_COLUMNS, STATUS_BITS, decode_status, has_status)
+from data.schema import (FAIL_COUNTER_COLUMNS, LOGGER_EXTRA_COLUMNS, LOGGER_V2_COLUMNS,
+                         SENSOR_BITS, STATUS_BITS, decode_sensors, decode_status,
+                         has_sensor_fail, has_status)
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 BIT = {name: 1 << bit for name, bit in STATUS_BITS.items()}
+CLEAN = {"rows_without_time": 0, "rows_time_rebuilt": 0, "rows_malformed": 0}
+LOGIC_C = ROOT / "firmware/libraries/PvDaq/src/pv_log_logic.c"
+
+
+def _header_at(lines):
+    """Index of the first header line (after the version line of a CSV v2 file)."""
+    return next(k for k, line in enumerate(lines) if line.startswith("date,"))
+
+
+def firmware_header():
+    """The header line the logger writes: the HEADER string of pv_log_logic.c."""
+    literal = re.search(r"static const char HEADER\[\] =((?:\s*\"[^\"]*\")+);",
+                        LOGIC_C.read_text(encoding="utf-8")).group(1)
+    return "".join(re.findall(r"\"([^\"]*)\"", literal)).split(",")
 
 
 @pytest.fixture(scope="module")
@@ -25,11 +42,12 @@ def _edit(folder, row, **cells):
     """Overwrite cells of data row `row` (0 = first row) in the first day file."""
     f = sorted(folder.glob("2*.csv"))[0]
     lines = f.read_text().splitlines()
-    header = lines[0].split(",")
-    values = lines[row + 1].split(",")
+    h = _header_at(lines)
+    header = lines[h].split(",")
+    values = lines[h + 1 + row].split(",")
     for name, value in cells.items():
         values[header.index(name)] = str(value)
-    lines[row + 1] = ",".join(values)
+    lines[h + 1 + row] = ",".join(values)
     f.write_text("\n".join(lines) + "\n")
 
 
@@ -45,7 +63,12 @@ def test_new_format_loads_with_typed_extra_columns(days, tmp_path):
     assert str(df["uptime_ms"].dtype) == "Int64" and df["uptime_ms"].iloc[0] == 5000
     assert df["uptime_ms"].iloc[1] - df["uptime_ms"].iloc[0] == 10000
     assert (df["time_source"] == "rtc").all()
-    assert df.attrs == {"rows_without_time": 0, "rows_time_rebuilt": 0}
+    assert df.attrs == CLEAN
+    assert (df["csv_version"] == 2).all()                        # the version line was read
+    assert df["T6"].isna().all() and (df["pyr_mV"] == df["irradiance"].round()).all()
+    for c in ["sens_fail", *FAIL_COUNTER_COLUMNS, "ring_rows", "ring_dropped"]:
+        assert str(df[c].dtype) == "Int64" and (df[c] == 0).all(), c
+    assert (df["cycle_ms"] == 912).all()
 
 
 def test_old_format_still_loads_and_gives_the_same_data(days, tmp_path):
@@ -54,10 +77,13 @@ def test_old_format_still_loads_and_gives_the_same_data(days, tmp_path):
     fake_logger.write_logger_files(days, new)
     assert "status" not in sorted(old.glob("*.csv"))[0].read_text().splitlines()[0]
     a, b = ingest.read_logger(old), ingest.read_logger(new)
-    for c in LOGGER_EXTRA_COLUMNS:                               # present, but "not recorded"
+    for c in LOGGER_EXTRA_COLUMNS + LOGGER_V2_COLUMNS:           # present, but "not recorded"
         assert a[c].isna().all(), c
     assert not has_status(a["status"], "RTC_INVALID").any()
-    shared = [c for c in a.columns if c not in LOGGER_EXTRA_COLUMNS]
+    assert not has_sensor_fail(a["sens_fail"], "T3").any()
+    assert (a["csv_version"] == 0).all() and (b["csv_version"] == 2).all()
+    shared = [c for c in a.columns
+              if c not in LOGGER_EXTRA_COLUMNS + LOGGER_V2_COLUMNS + ["csv_version"]]
     pd.testing.assert_frame_equal(a[shared], b[shared])
     assert (a["segment"] == b["segment"]).all()
 
@@ -65,11 +91,12 @@ def test_old_format_still_loads_and_gives_the_same_data(days, tmp_path):
 def test_old_and_new_files_in_one_folder(days, tmp_path):
     fake_logger.write_logger_files(days, tmp_path)
     first = sorted(tmp_path.glob("2*.csv"))[0]                   # make day 1 an old file
-    rows = [",".join(line.split(",")[:-5]) for line in first.read_text().splitlines()]
+    rows = [",".join(line.split(",")[:16]) for line in first.read_text().splitlines()[1:]]
     first.write_text("\n".join(rows) + "\n")
     df = ingest.read_logger(tmp_path)
     assert len(df) == len(days)
     day1 = df["date_utc"] == df["date_utc"].iloc[0]
+    assert (df.loc[day1, "csv_version"] == 0).all() and (df.loc[~day1, "csv_version"] == 2).all()
     assert df.loc[day1, "status"].isna().all() and (df.loc[~day1, "status"] == 0).all()
     assert df.loc[day1, "load_mode"].isna().all() and (df.loc[~day1, "load_mode"] == "none").all()
 
@@ -87,7 +114,7 @@ def test_rows_without_rtc_time_are_kept_and_timed_from_uptime(days, tmp_path):
     assert list(df["time_source"].iloc[99:104]) == ["rtc", "uptime", "uptime", "uptime", "rtc"]
     assert df["time"].iloc[101] == ref["time"].iloc[101]         # local time filled in
     assert has_status(df["status"], "RTC_INVALID").sum() == 3
-    assert df.attrs == {"rows_without_time": 0, "rows_time_rebuilt": 3}
+    assert df.attrs == {**CLEAN, "rows_time_rebuilt": 3}
 
 
 def test_untimed_row_right_after_a_reboot_uses_the_next_timed_row(days, tmp_path):
@@ -104,14 +131,14 @@ def test_untimed_row_right_after_a_reboot_uses_the_next_timed_row(days, tmp_path
 def test_rows_whose_time_cannot_be_rebuilt_are_counted_not_hidden(days, tmp_path):
     fake_logger.write_logger_files(days, tmp_path, extra_columns=False)
     _edit(tmp_path, 50, date="", time="")                        # old file: no uptime_ms
-    header = ",".join(fake_logger.HEADER + fake_logger.EXTRA)
+    header = ",".join(fake_logger.HEADER + fake_logger.EXTRA)    # a 21-column /nodate.csv
     blank = "," * 15 + f"0,NaN,none,0,{{}},{BIT['RTC_INVALID']}"  # date ... p empty, alarm 0
     (tmp_path / "nodate.csv").write_text(
         "\n".join([header, blank.format(5000), blank.format(15000)]) + "\n")
     with pytest.warns(UserWarning, match="3 logger rows have no usable time"):
         df = ingest.read_logger(tmp_path)
     assert len(df) == len(days) - 1
-    assert df.attrs == {"rows_without_time": 3, "rows_time_rebuilt": 0}
+    assert df.attrs == {**CLEAN, "rows_without_time": 3}
 
 
 # --- status bits ------------------------------------------------------------------------------
@@ -123,6 +150,27 @@ def test_status_bits_match_the_firmware_header():
     assert defined == STATUS_BITS
     assert len(set(defined.values())) == len(defined)            # no bit used twice
     assert text.count("#define ST_") == len(defined)             # every define was parsed
+
+
+def test_sensor_numbers_match_the_firmware_header():
+    text = (ROOT / "firmware/libraries/PvDaq/src/pv_status.h").read_text()
+    defined = {name: int(n) for name, n in
+               re.findall(r"^#define PV_SENSOR_(\w+)\s+(\d+)\b", text, re.M)}
+    assert defined.pop("COUNT") == len(SENSOR_BITS)
+    assert {k.lower(): v for k, v in defined.items()} == {k.lower(): v
+                                                          for k, v in SENSOR_BITS.items()}
+    names = re.search(r"SENSOR_NAME\[PV_SENSOR_COUNT\] = \{(.*?)\};", LOGIC_C.read_text(), re.S)
+    assert re.findall(r"\"(\w+)\"", names.group(1)) == list(SENSOR_BITS)   # the f_* order
+    assert FAIL_COUNTER_COLUMNS == [f"f_{n}" for n in SENSOR_BITS]
+
+
+def test_decode_sensors():
+    assert decode_sensors(0) == [] and decode_sensors(pd.NA) == []
+    assert decode_sensors(4) == ["T3"] and decode_sensors(512) == ["hub"]
+    assert decode_sensors((1 << 2) | (1 << 12)) == ["T3", "sd"]
+    s = pd.Series(pd.array([0, 4, pd.NA, 4100], dtype="Int64"))
+    assert list(has_sensor_fail(s, "T3")) == [False, True, False, True]
+    assert list(has_sensor_fail(s, "sd")) == [False, False, False, True]
 
 
 def test_decode_status():
@@ -144,11 +192,62 @@ def test_has_status_on_a_column_with_missing_values():
 
 
 def test_firmware_header_line_equals_the_format_the_tests_use():
-    ino = (ROOT / "firmware/logger/logger.ino").read_text()
-    literal = re.search(r"const char \*HEADER =((?:\s*\"[^\"]*\")+);", ino).group(1)
-    header = "".join(re.findall(r"\"([^\"]*)\"", literal))
-    assert header.split(",") == fake_logger.HEADER + fake_logger.EXTRA
-    assert header.split(",")[-5:] == LOGGER_EXTRA_COLUMNS
+    header = firmware_header()
+    assert header == fake_logger.HEADER + fake_logger.EXTRA + fake_logger.V2
+    assert header[16:21] == LOGGER_EXTRA_COLUMNS and header[21:] == LOGGER_V2_COLUMNS
+    assert len(header) == 41 and len(set(header)) == 41
+    # CSV v2 only APPENDS: the first 21 names are the format written since 2026-11-12
+    assert header[:21] == ("date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,"
+                           "current,power,wind,p,alarm,D,load_mode,sweep_id,uptime_ms,"
+                           "status").split(",")
+    version = re.search(r'#define PVLOG_VERSION_LINE "(.*)"',
+                        (LOGIC_C.with_suffix(".h")).read_text()).group(1)
+    assert version == fake_logger.VERSION_LINE
+
+
+# --- CSV v2: blocks, a format change inside one file, cut-off lines ----------------------------
+
+def test_a_file_that_changes_format_in_the_middle_loads_block_by_block(days, tmp_path):
+    """A firmware update at midday: the day file starts with 21-column rows and goes on,
+    after the new firmware's version line and header, with 41-column rows."""
+    fake_logger.write_logger_files(days, tmp_path)
+    ref = ingest.read_logger(tmp_path)
+    first = sorted(tmp_path.glob("2*.csv"))[0]
+    lines = first.read_text().splitlines()
+    version, header, rows = lines[0], lines[1], lines[2:]
+    old = [",".join(r.split(",")[:21]) for r in rows[:1000]]
+    first.write_text("\n".join([",".join(header.split(",")[:21]), *old, version, header,
+                                *rows[1000:]]) + "\n")
+    df = ingest.read_logger(tmp_path)
+    assert len(df) == len(ref) and df.attrs == CLEAN
+    assert list(df["csv_version"].iloc[[0, 999, 1000]]) == [1, 1, 2]
+    assert df["cycle_ms"].iloc[:1000].isna().all() and (df["cycle_ms"].iloc[1000:] == 912).all()
+    assert (df["status"] == 0).all()                             # in both blocks
+    pd.testing.assert_series_equal(df["T1"], ref["T1"])
+
+
+def test_a_header_block_repeated_at_every_boot_is_not_data(days, tmp_path):
+    fake_logger.write_logger_files(days, tmp_path)
+    ref = ingest.read_logger(tmp_path)
+    first = sorted(tmp_path.glob("2*.csv"))[0]
+    lines = first.read_text().splitlines()
+    first.write_text("\n".join(lines[:500] + lines[:2] + lines[500:]) + "\n")   # a reboot
+    df = ingest.read_logger(tmp_path)
+    assert len(df) == len(ref) and df.attrs == CLEAN and (df["csv_version"] == 2).all()
+
+
+def test_cut_off_lines_are_left_out_and_counted(days, tmp_path):
+    fake_logger.write_logger_files(days, tmp_path)
+    ref = ingest.read_logger(tmp_path)
+    first = sorted(tmp_path.glob("2*.csv"))[0]
+    lines = first.read_text().splitlines()
+    torn = lines[300][:57]                                       # a write cut by a power loss
+    first.write_text("\n".join(lines[:300] + [torn] + lines[300:] + ["2026-11-"]) + "\n")
+    with pytest.warns(UserWarning, match="2 lines in the logger files are not complete rows"):
+        df = ingest.read_logger(tmp_path)
+    assert len(df) == len(ref)                                   # the full row 300 is kept
+    assert df.attrs == {**CLEAN, "rows_malformed": 2}
+    pd.testing.assert_series_equal(df["irradiance"], ref["irradiance"])
 
 
 # --- detector segments: the board's rule (config.DET_RESET_AFTER_FAILS) -------------------------
@@ -157,7 +256,8 @@ def _drop(folder, rows):
     """Remove data rows (0 = first row) from the first day file: rows that never reached the card."""
     f = sorted(folder.glob("2*.csv"))[0]
     lines = f.read_text().splitlines()
-    f.write_text("\n".join(l for k, l in enumerate(lines) if k - 1 not in set(rows)) + "\n")
+    h = _header_at(lines)
+    f.write_text("\n".join(l for k, l in enumerate(lines) if k - h - 1 not in set(rows)) + "\n")
 
 
 def _segments(folder):

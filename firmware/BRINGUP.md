@@ -188,8 +188,8 @@ Correct output:
 
 Why: since 2026-11-13 `PvIna226::begin()` writes the chip's reset bit before it writes the
 calibration (so that the chip always converts continuously, even if a load test left it
-in single-shot mode). This runs in today's logger at every start and every 60 s re-start
-of a lost unit. It compiles; it has **not been run on the board**. A reset that went
+in single-shot mode). This runs in today's logger at every start and at the row after
+every failed read of the unit (since 2026-11-21; before: every 60 s). It compiles; it has **not been run on the board**. A reset that went
 wrong would show as voltage that never changes, or as current and power stuck at 0.
 
 Set-up: bench supply 12 V, current limit 2 A, a power resistor that draws ≈ 0.5–1 A, the
@@ -203,7 +203,7 @@ Flash the logger (`build_all.py logger`, upload from `out/firmware_build/logger`
 | 3 | Press the ESP32 reset button (the unit stays powered). Repeat 1. | Same values as before the reset |
 | 4 | Unplug USB and the supply, wait 5 s, power up again. Repeat 1. | Same values |
 | 5 | The case the reset was added for: flash `tests/load_bench`, type `R` twice (this puts the chip in single-shot mode), then flash the logger again **without removing power**. Repeat 1 and 2. | Rows are correct and follow the supply. If they are frozen at the last `R` value, the reset does not work |
-| 6 | Re-start path: while the logger runs, pull the panel unit's Grove cable, wait two rows, plug it back. (Hot-plugging glitched the bus on our bench once: if other devices drop out, note it and power-cycle.) | Rows without the unit: empty `voltage,current,power`, `status` with bit 16. Within 60 s after plugging back: values as in 1, bit 16 gone |
+| 6 | Re-start path: while the logger runs, pull the panel unit's Grove cable, wait two rows, plug it back. (Hot-plugging glitched the bus on our bench once: if other devices drop out, note it and power-cycle.) | Rows without the unit: empty `voltage,current,power`, `status` with bit 16, `sens_fail` with 1024 (INA226) and `f_ina` counting. First row after plugging back: values as in 1, bit 16 gone, and **`current` not 0** (the unit was re-powered: the calibration must have been written again) |
 | 7 | Flash `tests/ina226`. | Still `IDs 0x5449 / 0x2260` and `current LSB 500.0 uA`; values update every second |
 
 Record date, meter model, and the rows of steps 1–6. All seven must pass before the
@@ -232,10 +232,13 @@ steps, and all sensors agree within about 0.5 °C in the same air.
 
 Cross-calibration: all sensors in one stirred water bath (2–3 temperatures if possible),
 log for 10 min each, compute per-sensor offsets. Then copy each mounted sensor's ROM
-into `T_ROM` in `logger/logger.ino` (T1..T5 = positions on the back sheet). The logger
-also prints every ROM at boot and appends the list to `/rom_scan.txt` on the card, so
-the addresses can be read without flashing this test sketch. Fill in all five rows:
-until then the logger takes T1..T5 in scan order and sets status bit 32 in every row.
+into `T_ROM` in `logger/logger.ino` (T1..T5 = positions on the back sheet, T6 and T7 = the
+two further probes). The logger also prints every ROM at boot and appends the list to
+`/rom_scan.txt` on the card; a ROM that is in no `T_ROM` row is printed as a ready-made
+row to paste (`NOT in T_ROM -> {0x28, ...}`). **The rows must be filled in before
+logging:** since 2026-11-21 a column is the probe with the ROM of its row and nothing
+else. A row left at zero gives an empty column (and, for T1..T5, status bit 32 and no
+detector); the logger never falls back to the bus-scan order.
 
 | Symptom | Cause |
 |---|---|
@@ -359,33 +362,43 @@ Correct output on Serial:
 # PV Phase 0 logger. NASIM-GBT (no wind, double) trained on SYNTHETIC data.
 # alarm = 1 NASIM-GBT (p >= 0.980, 2 rows) + 2 threshold (rise >= 2.70 C in 10 min) + 4 CUSUM (kappa 0.020 C, h 2.00 C); settings from SYNTHETIC data
 # timestamps are UTC (DS3231)
-# boot ROM scan, UTC 2026-11-05 06:59:48: 5 DS18B20, T_ROM NOT filled in -> T1..T5 by scan order
+# boot ROM scan, UTC 2026-11-05 06:59:48: 7 DS18B20 on the bus, T_ROM has 7 of 7 rows
 # 0,28-xx-xx-xx-xx-00-00-xx,crc ok,genuine pattern,T1
 # ... (one line per sensor; the same lines go to /rom_scan.txt)
-date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,D,load_mode,sweep_id,uptime_ms,status
-# status: DS3231=ok; BME280=ok; PaHub=ok; INA226 panel=ok; DS18B20=ok; PYR20 Modbus=ok; microSD=ok;
-2026-11-05,07:00:00,41.1250,...,812,18.0120,4.8810,87.9134,NaN,,0,NaN,none,0,12345,32
+# nasim-logger-csv v2
+date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,D,load_mode,sweep_id,uptime_ms,status,T6,T7,pyr_mV,sens_fail,f_T1,f_T2,f_T3,f_T4,f_T5,f_T6,f_T7,f_env,f_rtc,f_hub,f_ina,f_pyr,f_sd,ring_rows,ring_dropped,cycle_ms
+2026-11-05,07:00:00,41.1250,...,812,18.0120,4.8810,87.9134,NaN,,0,NaN,none,0,12345,0,40.0625,39.8750,809,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+# status: DS3231=ok; BME280=ok; PaHub=ok; INA226 panel=ok; DS18B20=ok; PYR20 Modbus=ok; PYR20 analog=ok (presence cannot be detected on an analog pin); microSD=ok;
 ```
 
 (The values in this example are illustrative, not measurements.)
 
 - Date and time are UTC (10:00 in Makkah = 07:00 in the log).
 - One row every 10 s; the time column steps by 10 s with no drift (millis schedule).
-- Missing devices → empty fields, and the logger keeps running. Missing devices are retried every 60 s.
+- A failed or missing device → its own fields empty, and the logger keeps running. It is
+  started and read again at the next row, every row (`docs/paper/13-logger-robustness.md`).
+  After 3 failed rows in a row it is reported once: `# event: ...,sensor_fail,...` on Serial
+  and in `/events.csv`; once more when it is back (`sensor_ok`).
+- Columns after `status` (CSV v2, 2026-11-21): `T6,T7`; `pyr_mV` (PYR20 analog output on
+  GPIO 34, raw mV); `sens_fail` (which sensor failed at this row: 4 = T3, 512 = PaHub, ...);
+  `f_T1 ... f_sd` (failed rows per sensor since boot); `ring_rows,ring_dropped`;
+  `cycle_ms` (how long the row before took). Table: doc 13 section 4.
 - Read order in a row: time, then irradiance at once, then air, panel V/I, and the
   DS18B20 conversion last (so the temperatures are ≈ 0.1–0.9 s after the timestamp `[EST]`).
 - `p` is empty outside 06:00–18:00 Makkah time (03:00–15:00 UTC in the log), during the first 10 min of data each day (warm-up),
   and when T1–T5, ambient, irradiance or the time is missing.
 - `wind` is `NaN` (not measured) while `HAS_ANEMOMETER` is 0; an empty field elsewhere means a failed read.
-- SD files: `/YYYYMMDD.csv` per UTC day (03:00 to 03:00 Makkah time), with a header line.
-- Last five columns: `D,load_mode,sweep_id` are `NaN,none,0` until the load exists;
+- SD files: `/YYYYMMDD.csv` per UTC day (03:00 to 03:00 Makkah time). A new file, and the
+  first rows after every boot, start with the line `# nasim-logger-csv v2` and the header.
+- `D,load_mode,sweep_id` are `NaN,none,0` until the load exists;
   `uptime_ms` is `millis()`; `status` is a bit field (table in
-  `docs/paper/07-load-firmware-spec.md` §7). `32` = `T_ROM` not filled in; `0` = clean.
+  `docs/paper/07-load-firmware-spec.md` §7). `32` = a T1..T5 row of `T_ROM` is not filled
+  in (that column is empty); `0` = clean.
 - One failed sensor read costs one row of `p` (status bit 64), not the detector state:
   NASIM is reset only after 5 such rows in a row (bit 128, and a `# detector reset` line).
 - A row without RTC time is still written (date and time empty, status bit 1).
-- A day file started by the older firmware keeps its old 16-column header: after flashing
-  this version, start with a fresh day file (rename or move the old one off the card).
+- A day file started by older firmware needs no care any more: the new rows come after
+  their own version line and header, and `analysis/ingest.py` reads the file block by block.
 
 | Symptom | Cause |
 |---|---|
@@ -393,4 +406,6 @@ date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,win
 | status has 256 | SD write needed a retry or rows were lost: check the card and its wiring |
 | Time 3 h ahead of UTC | RTC still on Makkah local time: re-run `set_rtc.py` (Before logging) |
 | `# warning: sample period overrun` | A device is blocking for too long: look at the status line |
-| T1..T5 in the wrong order, status has 32 | `T_ROM` not filled in yet (step 5) |
+| A T column empty, status has 32 | That row of `T_ROM` is not filled in yet (step 5) |
+| A T column empty, `sens_fail` has its bit (1, 2, 4, ... 64) | That probe gives no reading: connector, cable, or a ROM typed wrongly (compare with `/rom_scan.txt`) |
+| `# event: ...,unknown_rom,...` | A probe is on the bus whose ROM is in no `T_ROM` row: it is not logged |

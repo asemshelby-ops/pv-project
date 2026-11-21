@@ -21,12 +21,27 @@ time, because the detector features (solar geometry) and the day split are local
   * `time_source`       "rtc", or "uptime" for a row the logger wrote without RTC time:
                         its time is rebuilt from `uptime_ms` and the nearest row of the
                         same boot that has a time (good to about 1 s, the RTC's step).
+  * `csv_version`       format of the block the row was read from: 2 = the logger since
+                        2026-11-21 (its blocks start with "# nasim-logger-csv v2"), 1 = the
+                        21 columns written from 2026-11-12, 0 = the 16 columns before.
+  * `T6`, `T7`, `pyr_mV`, `sens_fail`, `f_T1` ... `f_sd`, `ring_rows`, `ring_dropped`,
+    `cycle_ms`          the columns CSV v2 appends (data/schema.py LOGGER_V2_COLUMNS;
+                        docs/paper/13-logger-robustness.md). Empty in older files. Decode
+                        `sens_fail` with data.schema.decode_sensors / has_sensor_fail.
 Rows whose time cannot be rebuilt (no uptime_ms, or no timed row in the same boot and
 file, as in /nodate.csv) cannot be placed on the time axis: they are left out and
 COUNTED in `df.attrs["rows_without_time"]`, with a warning. `df.attrs["rows_time_rebuilt"]`
 counts the rebuilt ones.
+A file is read as a sequence of BLOCKS. A block starts at a header line (`date,time,...`),
+with the version line before it if there is one; the logger writes such a block at the
+top of a new file and again with the first rows after every boot, so one file can hold
+blocks of different formats (a firmware update in the middle of a day). A line that does
+not have as many fields as its block's header is not a row (a write cut off by a power
+loss, a line damaged on the card): it is left out and COUNTED in
+`df.attrs["rows_malformed"]`, with a warning.
 Raw values are never changed, except for optional per-sensor calibration offsets.
 """
+import io
 import pathlib
 import warnings
 
@@ -34,7 +49,8 @@ import numpy as np
 import pandas as pd
 
 import config
-from data.schema import BACK_SENSORS, LOGGER_EXTRA_COLUMNS
+from data.schema import (BACK_SENSORS, FAIL_COUNTER_COLUMNS, LOGGER_EXTRA_COLUMNS,
+                         LOGGER_V2_COLUMNS, LOGGER_VERSION_PREFIX)
 
 REQUIRED = BACK_SENSORS + ["T_ambient", "irradiance"]     # inputs of every detector
 DAY_FILE = "[0-9]" * 8 + ".csv"
@@ -49,10 +65,18 @@ def read_logger(src, calib=None):
         raise FileNotFoundError(f"no logger files in {src}")
     if src.is_dir() and (src / "nodate.csv").exists():
         files.append(src / "nodate.csv")           # rows of boots that never had RTC time
-    raw = pd.concat([pd.read_csv(f, comment="#", dtype=str, skip_blank_lines=True)
-                    .assign(_file=k) for k, f in enumerate(files)], ignore_index=True)
-    raw = raw[raw["date"] != "date"].reset_index(drop=True)   # a repeated header line
-    for c in LOGGER_EXTRA_COLUMNS:                 # files written before 2026-11-12
+    blocks, malformed = [], 0
+    for k, f in enumerate(files):
+        tables, bad = _read_blocks(f)
+        blocks += [t.assign(_file=k) for t in tables]
+        malformed += bad
+    if not blocks:
+        raise ValueError(f"no rows in the logger files of {src}")
+    if malformed:
+        warnings.warn(f"{malformed} lines in the logger files are not complete rows and are "
+                      f"left out (see df.attrs['rows_malformed'])", stacklevel=2)
+    raw = pd.concat(blocks, ignore_index=True)
+    for c in LOGGER_EXTRA_COLUMNS + LOGGER_V2_COLUMNS:   # blocks older than the column
         if c not in raw:
             raw[c] = np.nan
     t_utc, source = _row_times(raw)
@@ -64,12 +88,15 @@ def read_logger(src, calib=None):
     df = df.drop_duplicates("t_utc").sort_values("t_utc").reset_index(drop=True)
     for c in df.columns.difference(["date", "time", "t_utc", "time_source", "load_mode"]):
         df[c] = pd.to_numeric(df[c], errors="coerce")
-    for c in ("sweep_id", "uptime_ms", "status"):
+    for c in ("sweep_id", "uptime_ms", "status", "sens_fail", *FAIL_COUNTER_COLUMNS,
+              "ring_rows", "ring_dropped", "cycle_ms"):
         df[c] = df[c].astype("Int64")              # whole numbers, <NA> where not recorded
+    df["csv_version"] = df["csv_version"].astype("int64")
     for name, off in (calib or {}).items():
         df[name] = df[name] - off
     df.attrs["rows_without_time"] = lost
     df.attrs["rows_time_rebuilt"] = int((df["time_source"] == "uptime").sum())
+    df.attrs["rows_malformed"] = malformed
 
     local = df["t_utc"].dt.tz_convert(config.TZ)
     df["date_utc"] = df["t_utc"].dt.strftime("%Y-%m-%d")
@@ -88,6 +115,37 @@ def read_logger(src, calib=None):
     df["segment"] = -1
     df.loc[use, "segment"] = new.cumsum() - 1
     return df
+
+
+def _read_blocks(path):
+    """One logger file -> ([table of text cells per block], number of malformed lines).
+    Each table has the columns of its own header and `csv_version`."""
+    tables, bad = [], 0
+    header, version, announced, lines = None, 0, None, []
+
+    def close():
+        if header and lines:
+            text = "\n".join([",".join(header)] + lines)
+            tables.append(pd.read_csv(io.StringIO(text), dtype=str).assign(csv_version=version))
+
+    for line in pathlib.Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if line.startswith(LOGGER_VERSION_PREFIX):
+            digits = line[len(LOGGER_VERSION_PREFIX):].split()
+            announced = int(digits[0]) if digits and digits[0].isdigit() else None
+        elif not line or line.startswith("#"):
+            continue
+        elif line.startswith("date,"):                 # a header line: a new block starts
+            close()
+            header, lines = line.split(","), []
+            version = announced if announced is not None else int("status" in header)
+            announced = None
+        elif header is None or line.count(",") != len(header) - 1:
+            bad += 1                                   # cut-off or damaged line: not a row
+        else:
+            lines.append(line)
+    close()
+    return tables, bad
 
 
 def _row_times(raw):

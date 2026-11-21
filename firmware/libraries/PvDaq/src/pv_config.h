@@ -33,6 +33,9 @@ constexpr int MARKER_BUTTON = 27;  // to GND, internal pull-up
 
 // ---- I2C ------------------------------------------------------------------------
 constexpr uint32_t I2C_CLOCK_HZ = 100000;      // long leads, several pull-ups
+constexpr uint16_t I2C_TIMEOUT_MS = 50;        // longest ONE I2C transaction may take: the Wire
+                                               // time-out (also the ESP32 core's default). A stuck
+                                               // bus then costs each driver call a bounded time.
 constexpr uint8_t PAHUB_ADDR = 0x70;           // M5Stack PaHub V2.1 default (M5 docs)
 // PCA9548A channel numbers (bit n of the command byte). Bench check 2026-11-05, one unit
 // moved between ports: the port printed "n" is chip channel n ("0" -> 0, "1" -> 1).

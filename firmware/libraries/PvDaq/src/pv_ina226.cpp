@@ -34,19 +34,39 @@ bool PvIna226::begin() {
   return setStatus(PvStatus::Ok);
 }
 
+// Audit 2026-11-21: the INA226 library returns 0 for a register it could not read, so a
+// unit that dropped off mid-read gave 0.0000 V / 0.0000 A, a wrong value that looks
+// measured. The library does keep an error code per read: it is checked after each one.
+bool PvIna226::readValues() {
+  bool good = true;
+  busV = ina_.getBusVoltage();
+  good = good && ina_.getLastError() == 0;
+  shuntmV = ina_.getShuntVoltage_mV();
+  good = good && ina_.getLastError() == 0;
+  currentA = ina_.getCurrent();
+  good = good && ina_.getLastError() == 0;
+  powerW = ina_.getPower();
+  good = good && ina_.getLastError() == 0;
+  return good;
+}
+
 bool PvIna226::read() {
-  if (!selectChannel()) return false;
-  bool alive = ina_.isConnected();
-  if (alive) {
-    busV = ina_.getBusVoltage();
-    shuntmV = ina_.getShuntVoltage_mV();
-    currentA = ina_.getCurrent();
-    powerW = ina_.getPower();
+  if (!selectChannel()) {
+    busV = shuntmV = currentA = powerW = NAN;
+    return false;
   }
+  const bool alive = ina_.isConnected() && readValues();
   if (hub_) hub_->deselect();
   if (!alive) {
     busV = shuntmV = currentA = powerW = NAN;
     return setStatus(PvStatus::ReadError, "lost on the bus");
+  }
+  // A unit that lost power for a moment restarts with an empty calibration register: its
+  // current and power registers then read exactly 0 while the shunt voltage shows current
+  // (0.25 mV on 5 mOhm = 50 mA). begin() writes the calibration again at the next row.
+  if (currentA == 0.0f && fabsf(shuntmV) > 0.25f) {
+    busV = shuntmV = currentA = powerW = NAN;
+    return setStatus(PvStatus::ReadError, "calibration lost (unit was re-powered?)");
   }
   return setStatus(PvStatus::Ok);
 }
@@ -98,10 +118,11 @@ uint16_t PvIna226::fastBusV(float *v, uint32_t *t_us, uint16_t n, void (*at_star
 
 bool PvIna226::fetch() {
   if (!selectChannel()) return false;
-  busV = ina_.getBusVoltage();
-  shuntmV = ina_.getShuntVoltage_mV();
-  currentA = ina_.getCurrent();
-  powerW = ina_.getPower();
+  const bool good = readValues();
   if (hub_) hub_->deselect();
+  if (!good) {
+    busV = shuntmV = currentA = powerW = NAN;
+    return setStatus(PvStatus::ReadError, "lost on the bus");
+  }
   return setStatus(PvStatus::Ok);
 }

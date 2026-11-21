@@ -20,6 +20,13 @@ class PvDs18b20 : public PvDevice {
   static constexpr uint32_t CONVERSION_MS = 750;   // 12 bit (Maxim datasheet)
   bool startConversion();
   bool fetch();
+  // The logger's way (2026-11-21): ask a probe by ITS ROM, whatever the bus scan found.
+  // convert() starts one conversion of every probe on the bus and waits for it (the
+  // library polls the bus and gives up after 750 ms). readRom() then returns that probe's
+  // temperature, or NaN if it does not answer, its CRC is wrong, it shows the power-on
+  // value 85.0 or a value outside -55..125 degC (the sensor's range, Maxim datasheet).
+  bool convert();
+  float readRom(const uint8_t *r);
   const char *name() const override { return "DS18B20"; }
 
   uint8_t count = 0;

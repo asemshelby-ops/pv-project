@@ -20,11 +20,14 @@ import pvlib
 from scipy.optimize import brentq
 
 import config
-from data.schema import BACK_SENSORS
+from data.schema import (BACK_SENSORS, LOGGER_CSV_VERSION, LOGGER_V2_COLUMNS,
+                         LOGGER_VERSION_PREFIX)
 
 HEADER = ["date", "time", *BACK_SENSORS, "T_ambient", "humidity", "irradiance",
           "voltage", "current", "power", "wind", "p", "alarm"]
 EXTRA = ["D", "load_mode", "sweep_id", "uptime_ms", "status"]   # logger rows since 2026-11-12
+V2 = list(LOGGER_V2_COLUMNS)                                    # appended by CSV v2, 2026-11-21
+VERSION_LINE = f"{LOGGER_VERSION_PREFIX}{LOGGER_CSV_VERSION}"
 SYN_ALPHA_ISC = 0.0005      # [ASSUMPTION, synthetic only] 1/degC
 R_SWEEP = 0.75              # ohm, both load branches (firmware pv_config.h)
 
@@ -33,20 +36,30 @@ def _utc(local_naive):
     return pd.DatetimeIndex(local_naive).tz_localize(config.TZ).tz_convert("UTC")
 
 
-def write_logger_files(days, out, extra_columns=True):
+def write_logger_files(days, out, extra_columns=True, version=None):
     """days: schema table in LOCAL time (data/synth.py). Writes /YYYYMMDD.csv in UTC.
-    extra_columns=False writes the format used before 2026-11-12 (no D ... status).
-    The five extra columns are what the logger writes with no load fitted and nothing
-    wrong: NaN, none, 0, uptime of one boot 5 s before the first row, status 0."""
+    version: 2 = what the logger writes since 2026-11-21 (the line "# nasim-logger-csv v2",
+    then 41 columns); 1 = the 21 columns written from 2026-11-12; 0 = the 16 columns
+    before that. Default: 2, or 0 with extra_columns=False (the older way to ask for it).
+    The columns after `alarm` are what the logger writes with no load fitted and nothing
+    wrong: NaN, none, 0, uptime of one boot 5 s before the first row, status 0; in v2 also
+    T6 and T7 empty (not fitted), pyr_mV = irradiance (1 mV = 1 W/m2), every counter 0 and
+    a row time of 912 ms."""
     out = pathlib.Path(out)
     out.mkdir(parents=True, exist_ok=True)
+    if version is None:
+        version = LOGGER_CSV_VERSION if extra_columns else 0
     t = _utc(pd.to_datetime(days["date"] + " " + days["time"]))
     d = days.assign(date=t.strftime("%Y-%m-%d"), time=t.strftime("%H:%M:%S"),
                     wind="NaN", p="", alarm=0, D="NaN", load_mode="none", sweep_id=0,
                     uptime_ms=((t - t[0]).total_seconds() * 1000 + 5000).astype("int64"),
-                    status=0)
+                    status=0, T6="", T7="", pyr_mV=days["irradiance"].round().astype("int64"),
+                    cycle_ms=912, **{c: 0 for c in V2 if c not in ("T6", "T7", "pyr_mV", "cycle_ms")})
+    columns = HEADER + (EXTRA if version >= 1 else []) + (V2 if version >= 2 else [])
     for key, g in d.groupby(d["date"].str.replace("-", "")):
-        g[HEADER + EXTRA if extra_columns else HEADER].to_csv(out / f"{key}.csv", index=False)
+        text = g[columns].to_csv(index=False, lineterminator="\n")
+        (out / f"{key}.csv").write_text((VERSION_LINE + "\n" if version >= 2 else "") + text,
+                                        newline="\n")
 
 
 def write_markers(schedule, out):

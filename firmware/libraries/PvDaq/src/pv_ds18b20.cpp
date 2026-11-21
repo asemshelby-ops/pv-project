@@ -40,6 +40,18 @@ bool PvDs18b20::startConversion() {
   return true;
 }
 
+bool PvDs18b20::convert() {
+  dt_.setWaitForConversion(true);
+  dt_.requestTemperatures();  // skip-ROM convert: every probe, scanned or not
+  return true;
+}
+
+float PvDs18b20::readRom(const uint8_t *r) {
+  const float t = dt_.getTempC(r);  // reads the scratchpad and checks its CRC
+  if (t == DEVICE_DISCONNECTED_C || t == 85.0f || t < -55.0f || t > 125.0f) return NAN;
+  return t;
+}
+
 bool PvDs18b20::fetch() {
   if (count == 0) return setStatus(PvStatus::NotFound, "no sensor");
   uint8_t bad = 0;

@@ -1,17 +1,24 @@
-// Phase 0 data logger. Every 10 s (millis schedule, no drift): read every sensor that
-// is present, skip the missing ones, and write one CSV row to the microSD card and to
+// Phase 0 data logger. Every 10 s (millis schedule, no drift): read every sensor, leave
+// the fields of a failed one empty, and write one CSV row to the microSD card and to
 // Serial. Columns: the schema of CLAUDE.md + wind (data/schema.py COLUMNS), then p (the
 // NASIM-GBT probability; no wind, double precision) and alarm, then five columns:
 // D, load_mode, sweep_id (NaN, none, 0 while HAS_LOAD is 0: no load fitted), uptime_ms, status.
 // alarm holds one bit per on-board detector (data/schema.py ALARM_BITS): 1 = NASIM-GBT,
 // 2 = threshold rule, 4 = CUSUM; values add up, 0 = no alarm. All three see the same rows.
+// CSV v2 (2026-11-21) appends, after status: T6, T7, pyr_mV, sens_fail, one fail counter
+// per sensor (f_T1 ... f_sd), ring_rows, ring_dropped, cycle_ms. The header and the row
+// text are built in PvDaq/src/pv_log_logic.c (pvlog_header, pvlog_format_row); every block
+// of rows starts with the line "# nasim-logger-csv v2" and the header.
 //
-//   date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,
-//   D,load_mode,sweep_id,uptime_ms,status
+// ROBUSTNESS (docs/paper/13-logger-robustness.md): what is read, retried, counted and
+// reported is decided in pv_log_logic.c, which is also compiled on the PC and tested with
+// fake drivers (tests/test_logger_robustness.py). This sketch only connects it to the
+// real drivers (the io... functions below), runs the detectors and writes the files.
 //
 // Timestamps are UTC (the DS3231 holds UTC). Missing value = empty field. Lines starting
 // with '#' on Serial are status messages, not data. Files: /YYYYMMDD.csv per day (UTC
-// date), /markers.csv for button presses, /rom_scan.txt for the DS18B20 ROMs found at boot.
+// date), /markers.csv for button presses, /rom_scan.txt for the DS18B20 ROMs found at boot,
+// /events.csv for things that are reported once (a sensor failing, an unknown ROM).
 // With the measurement load (HAS_LOAD 1 in pv_config.h; docs/paper/07): /SWYYYYMMDD.csv and
 // /SSYYYYMMDD.csv for the I-V sweeps, /load_log.csv for mode changes and trips, and two more
 // kinds of rows in /markers.csv, written by the serial commands LOAD OFF and LOAD ON
@@ -29,6 +36,7 @@
 #include <PvDaq.h>
 #include <esp_task_wdt.h>
 #include <pv_load.h>
+#include <pv_log_logic.h>
 #include <pv_status.h>
 
 extern "C" {  // export/c is C, compiled here through nasim_core.c / nasim_model.c
@@ -48,21 +56,27 @@ static const real CUSUM_H_C = NASIM_TUNED_CUSUM_H_C;          // CUSUM alarm lev
 static const int NASIM_START_MIN = 6 * 60;    // detector window = synthetic day window,
 static const int NASIM_END_MIN = 18 * 60;     // config.DAY_START / DAY_END (local time)
 static const int32_t UTC_OFFSET_S = 3 * 3600; // Makkah = UTC+3: NASIM's time inputs are local
-static const uint8_t RETRY_EVERY = 6;         // retry missing devices every 6 samples (60 s)
 static const uint8_t RESYNC_EVERY = 6;        // re-find the RTC second edge every 60 s
+// A sensor that failed is started and read again at the very next row (pv_log_logic.c).
+static const uint32_t FAIL_REPORT_AFTER = 3;  // failed rows in a row before the ONE report
+static const uint32_t ROM_SCAN_EVERY = 6;     // 1-Wire bus scan for unknown ROMs every 60 s
+static const uint8_t I2C_RESTART_AFTER = 3;   // rows with RTC, BME280 and PaHub all silent
 // A row with a missing detector input is skipped by the detector, which keeps its state.
 // Only this many skipped rows in a row clear the state (the 10 s spacing the features
 // assume is then too far off). The value is config.py DET_RESET_AFTER_FAILS, through the
 // generated nasim_config.h: the offline analysis (analysis/ingest.py) uses the same one.
 static const uint8_t DET_RESET_AFTER_FAILS = NASIM_DET_RESET_AFTER_FAILS;
 
-// Back-sheet sensors T1..T5 by ROM (row 0 = T1 ... row 4 = T5).
-// TODO(user): fill in all five rows after the water-bath cross-calibration and mounting.
-// The ROMs are printed on Serial at every boot and appended to /rom_scan.txt on the card,
+// DS18B20 columns by ROM: row 0 = T1 ... row 6 = T7. T1..T5 are the back-sheet sensors
+// (the detectors' inputs); T6 and T7 are the two further probes on the bus.
+// TODO(user): fill in the rows after the water-bath cross-calibration and mounting. The
+// boot ROM scan (Serial and /rom_scan.txt) prints every ROM it finds as a ready-made row,
 // e.g. 28-FF-64-1E-0F-00-00-A1 -> {0x28, 0xFF, 0x64, 0x1E, 0x0F, 0x00, 0x00, 0xA1}.
-// Until ALL five rows are filled, T1..T5 take the sensors in bus-scan order (not tied to a
-// position on the module) and every row carries the ST_TROM_UNMAPPED status bit.
-static const uint8_t T_ROM[5][8] = {{0}, {0}, {0}, {0}, {0}};
+// A column is ALWAYS the probe with the ROM of its row, never a position in the bus
+// search. A row left at zero means "no probe for this column": the column stays empty;
+// for T1..T5 the row also carries ST_TROM_UNMAPPED and the detectors do not run. A probe
+// that is unplugged leaves only its own column empty.
+static const uint8_t T_ROM[PVLOG_N_T][8] = {{0}, {0}, {0}, {0}, {0}, {0}, {0}};
 
 // Measurement load (used only with HAS_LOAD 1). DS18B20 on the resistor heatsink, by ROM,
 // same notation as T_ROM. TODO(user): fill in when the sensor is mounted (bench B5 prints
@@ -81,8 +95,11 @@ PvPaHub hub;
 PvIna226 panel("INA226 panel", &hub, PAHUB_CH_PANEL);
 PvDs18b20 probes(pins::ONEWIRE);
 PvPyr20Modbus pyr(Serial2, pins::RS485_RX, pins::RS485_TX);
+PvPyr20Analog pyr_analog(pins::PYR20_ANALOG);  // the same sensor's 0-2 V output (GPIO 34)
 PvSdCard sd;
-PvDevice *const DEVICES[] = {&rtc, &env, &hub, &panel, &probes, &pyr, &sd};
+PvDevice *const DEVICES[] = {&rtc, &env, &hub, &panel, &probes, &pyr, &pyr_analog, &sd};
+
+pvlog_t plog;                     // fail counters, events, time base (pv_log_logic.c)
 
 gbt_detector_t det;               // NASIM-GBT
 thr_detector_t det_thr;           // baseline: temperature-rise threshold
@@ -90,16 +107,14 @@ cusum_inc_t det_cusum;            // baseline: CUSUM on the temperature incremen
 int det_doy = -1;                 // day the state of the three detectors belongs to
 uint8_t det_fails = 0;            // rows skipped by the detector in a row
 
-uint8_t t_map[5][8] = {{0}};      // ROM behind each of T1..T5 in use (all zero = none yet)
-bool t_rom_unmapped = true;       // true while t_map comes from the scan order, not T_ROM
-char day_path[16] = "/nodate.csv";  // file of the last row that had a valid RTC time
-
 PvLoad load(panel);               // serviced only with HAS_LOAD 1
 float last_g = NAN;               // irradiance of the last row: input of the load's light rules
 double last_T[5] = {NAN, NAN, NAN, NAN, NAN};  // T1..T5 of the last row: stored with each sweep
 uint32_t row_sweep_id = 0;        // sweep_id column: id of the last finished sweep, 0 = none
 bool conv_running = false;        // a DS18B20 conversion was started ahead of the row ...
 uint32_t conv_ms = 0;             // ... at this millis()
+float heatsink_c = NAN;           // load heatsink probe, read with each row (NaN = no reading)
+float row_d = NAN;                // duty of branch A at the row's reading (HAS_LOAD only)
 bool load_on_marker = false;      // LOAD ON was typed: write its marker when the load holds
 
 volatile uint32_t mark_ms = 0;    // last button press (ISR), 0 = none pending
@@ -108,9 +123,6 @@ volatile uint32_t mark_ms = 0;    // last button press (ISR), 0 = none pending
 // millis() at the moment the RTC second changes: UTC second anchor_s began at anchor_ms.
 uint32_t anchor_s = 0;            // 0 = no anchor (RTC missing or not set)
 uint32_t anchor_ms = 0;
-const char *HEADER =
-    "date,time,T1,T2,T3,T4,T5,T_ambient,humidity,irradiance,voltage,current,power,wind,p,alarm,"
-    "D,load_mode,sweep_id,uptime_ms,status";
 
 // ---- helpers ------------------------------------------------------------------------------
 void IRAM_ATTR onMarker() {
@@ -132,37 +144,93 @@ bool romIsZero(const uint8_t *r) {
   return true;
 }
 
-// True if the device can be read now. A device whose last read failed is read again at
-// the next row (not only after the 60 s re-begin), so one bad read costs one row.
+// True if the device can be read now (used by the load code for the PYR20).
 bool readable(const PvDevice &d) { return d.ok() || d.status() == PvStatus::ReadError; }
 
-// Decides which ROM is behind each of T1..T5. With T_ROM filled in: exactly T_ROM.
-// Otherwise by scan order, and the choice is then KEPT: a column that has a ROM never
-// changes it, so a sensor that drops off the bus leaves its own column empty instead of
-// shifting the others. Columns still free take the next ROM not used yet.
-void mapProbes() {
-  t_rom_unmapped = false;
-  for (int k = 0; k < 5; k++) t_rom_unmapped |= romIsZero(T_ROM[k]);
-  if (!t_rom_unmapped) {
-    memcpy(t_map, T_ROM, sizeof(t_map));
-    return;
-  }
-  for (uint8_t i = 0; i < probes.count; i++) {
-    if (memcmp(probes.rom[i], HEATSINK_ROM, 8) == 0) continue;  // not a back-sheet sensor
-    int free_k = -1;
-    bool used = false;
-    for (int k = 4; k >= 0; k--) {
-      if (memcmp(t_map[k], probes.rom[i], 8) == 0) used = true;
-      else if (romIsZero(t_map[k])) free_k = k;
-    }
-    if (!used && free_k >= 0) memcpy(t_map[free_k], probes.rom[i], 8);
+float heatsinkTemp();
+
+// ---- the driver table of pv_log_logic.c: each function is one bounded driver call -------------
+// Longest time each can take is listed in docs/paper/13-logger-robustness.md, section 2.
+PvDevice *deviceOf(int dev) {
+  switch (dev) {
+    case PV_SENSOR_RTC: return &rtc;
+    case PV_SENSOR_ENV: return &env;
+    case PV_SENSOR_HUB: return &hub;
+    case PV_SENSOR_INA: return &panel;
+    case PV_SENSOR_PYR: return &pyr;
+    default: return nullptr;
   }
 }
+uint32_t ioMillis(void *) { return millis(); }
+int ioBegin(void *, int dev) {
+  PvDevice *d = deviceOf(dev);
+  return d && d->begin();
+}
+const char *ioDetail(void *, int dev) {
+  PvDevice *d = deviceOf(dev);
+  return d ? d->detail() : "";
+}
+int ioRtcRead(void *, uint32_t *unix_s, int *time_valid) {
+  if (!rtc.read()) return 0;
+  *unix_s = rtc.time().unixtime();
+  *time_valid = rtc.timeValid;
+  return 1;
+}
+int ioPyrRead(void *, float *g) {
+  if (!pyr.read()) return 0;
+  *g = pyr.irradiance;
+  return 1;
+}
+int ioPyrAnalog(void *, float *mv) {
+  pyr_analog.read();  // 64 ADC samples, a few ms; an ADC cannot "fail"
+  *mv = (float)pyr_analog.millivolts;
+  return 1;
+}
+int ioEnvRead(void *, float *t_c, float *rh) {
+  if (!env.read()) return 0;
+  *t_c = env.temperatureC;
+  *rh = env.humidityPct;
+  return 1;
+}
+int ioHubCheck(void *) { return hub.read(); }
+int ioInaRead(void *, float *v, float *i, float *p) {
+  row_d = load.L.d_a;  // duty of branch A at the reading (HAS_LOAD only)
+  // With the load: a 64-average triggered reading (also one hold step). Without: a plain read.
+  if (!(HAS_LOAD ? load.rowReading() : panel.read())) return 0;
+  *v = panel.busV;
+  *i = panel.currentA;
+  *p = panel.powerW;
+  return 1;
+}
+int ioDsConvert(void *) {
+  if (HAS_LOAD && conv_running) {  // conversion started ~800 ms ago in loadLoop()
+    while (millis() - conv_ms < PvDs18b20::CONVERSION_MS + 10) load.service(last_g, heatsinkTemp());
+    conv_running = false;
+    return 1;
+  }
+  return probes.convert();  // blocks until the probes are done, 750 ms at most
+}
+int ioDsRead(void *, const uint8_t *rom, float *t_c) {
+  *t_c = probes.readRom(rom);
+  return !isnan(*t_c);
+}
+int ioDsScan(void *, uint8_t *roms, int max) {
+  probes.begin();  // 1-Wire search of the whole bus
+  const int n = min((int)probes.count, max);
+  memcpy(roms, probes.rom, 8 * n);
+  return n;
+}
+void ioLog(void *, const char *text) { Serial.printf("# %s\n", text); }
+const pvlog_io_t PIO = {nullptr,    ioMillis,   ioBegin,     ioDetail, ioRtcRead,
+                        ioPyrRead,  ioPyrAnalog, ioEnvRead,  ioHubCheck, ioInaRead,
+                        ioDsConvert, ioDsRead,  ioDsScan,    ioLog};
 
-double backTemp(int k) {  // T1..T5 -> k = 0..4
-  if (!readable(probes)) return NAN;
-  int idx = probes.indexOf(t_map[k]);  // an all-zero row matches no sensor
-  return idx < 0 ? NAN : probes.tempC[idx];
+// Column of a ROM: "T1".."T7", "heatsink", or "-" if no table lists it.
+void romColumn(const uint8_t *rom, char *out, size_t size) {
+  snprintf(out, size, "-");
+  for (int k = 0; k < PVLOG_N_T; k++)
+    if (memcmp(T_ROM[k], rom, 8) == 0) snprintf(out, size, "T%d", k + 1);
+  if (!romIsZero(HEATSINK_ROM) && memcmp(HEATSINK_ROM, rom, 8) == 0) snprintf(out, size, "heatsink");
 }
 
 // One line of the boot ROM scan: to Serial as a '#' message and to /rom_scan.txt.
@@ -171,7 +239,8 @@ void scanLine(const char *line) {
   if (sd.ok()) sd.appendLine("/rom_scan.txt", line);
 }
 
-// Every DS18B20 on the bus: index in scan order, ROM, CRC, clone screening, CSV column.
+// Every DS18B20 on the bus: index in the bus search, ROM, CRC, clone screening and the CSV
+// column its ROM has in T_ROM. A ROM in no table is printed as a row to paste into T_ROM.
 void reportRomScan() {
   char line[128], rom[24], when[40];  // when: 19 chars used, sized for the compiler's check
   if (rtc.ok() && rtc.read() && rtc.timeValid) {
@@ -181,23 +250,35 @@ void reportRomScan() {
   } else {
     snprintf(when, sizeof(when), "unknown (RTC)");
   }
-  snprintf(line, sizeof(line), "boot ROM scan, UTC %s: %u DS18B20, T_ROM %s", when,
-           probes.count, t_rom_unmapped ? "NOT filled in -> T1..T5 by scan order" : "used");
+  int filled = 0;
+  for (int k = 0; k < PVLOG_N_T; k++) filled += !romIsZero(T_ROM[k]);
+  snprintf(line, sizeof(line), "boot ROM scan, UTC %s: %u DS18B20 on the bus, T_ROM has %d of %d rows",
+           when, probes.count, filled, PVLOG_N_T);
   scanLine(line);
   for (uint8_t i = 0; i < probes.count; i++) {
-    char col[12] = "-";  // "T1".."T5"
-    for (int k = 0; k < 5; k++)
-      if (memcmp(t_map[k], probes.rom[i], 8) == 0) snprintf(col, sizeof(col), "T%d", k + 1);
-    PvDs18b20::romText(probes.rom[i], rom);
+    char col[12];
+    const uint8_t *r = probes.rom[i];
+    romColumn(r, col, sizeof(col));
+    PvDs18b20::romText(r, rom);
     snprintf(line, sizeof(line), "%u,%s,%s,%s,%s", i, rom,
-             PvDs18b20::romCrcOk(probes.rom[i]) ? "crc ok" : "CRC BAD",
-             PvDs18b20::looksGenuine(probes.rom[i]) ? "genuine pattern" : "clone?", col);
+             PvDs18b20::romCrcOk(r) ? "crc ok" : "CRC BAD",
+             PvDs18b20::looksGenuine(r) ? "genuine pattern" : "clone?", col);
     scanLine(line);
+    if (col[0] == '-') {  // not in T_ROM: not logged. Ready to paste:
+      snprintf(line, sizeof(line),
+               "  NOT in T_ROM -> {0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X}",
+               r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7]);
+      scanLine(line);
+    }
   }
-  for (int k = 0; k < 5; k++) {
-    if (probes.indexOf(t_map[k]) >= 0) continue;
-    snprintf(line, sizeof(line), "T%d: %s", k + 1,
-             t_rom_unmapped ? "no sensor for this column" : "its T_ROM address is NOT on the bus");
+  for (int k = 0; k < PVLOG_N_T; k++) {
+    if (romIsZero(T_ROM[k])) {
+      snprintf(line, sizeof(line), "T%d: no ROM in T_ROM, the column stays empty", k + 1);
+    } else if (probes.indexOf(T_ROM[k]) < 0) {
+      snprintf(line, sizeof(line), "T%d: its T_ROM address is NOT on the bus", k + 1);
+    } else {
+      continue;
+    }
     scanLine(line);
   }
 }
@@ -224,49 +305,63 @@ void resetDetectors() {
 }
 
 // ---- one sample ---------------------------------------------------------------------------
+// Writes one line to a file on the card, with the header block first if this is the first
+// line this boot writes to that file (so every block of rows names its own format).
+bool appendRow(const char *path, const char *line) {
+  static char block_path[PVLOG_PATH_MAX] = "";  // file that has this boot's header block
+  if (strcmp(path, block_path) != 0) {
+    if (!sd.appendLine(path, PVLOG_VERSION_LINE) || !sd.appendLine(path, pvlog_header())) return false;
+    snprintf(block_path, sizeof(block_path), "%s", path);
+  }
+  return sd.appendLine(path, line);
+}
+
+// Events of pv_log_logic.c (a sensor failing, an unknown ROM, ...): to Serial and /events.csv.
+void writeEvents() {
+  char line[PVLOG_LINE_MAX];
+  bool any = false;
+  while (pvlog_next_event(&plog, millis(), line, sizeof(line))) {
+    Serial.printf("# event: %s\n", line);
+    if (sd.ok()) sd.appendLine(PVLOG_EVENTS_PATH, line, PVLOG_EVENTS_HEADER);
+    any = true;
+  }
+  if (any) printStatus();
+}
+
+// RTC, BME280 and PaHub share the main I2C bus. If all three are silent for several rows
+// the bus itself may be stuck (a chip holding SDA low after a glitch): start the I2C
+// driver again. [ASSUMPTION] that this frees such a bus; to be tried on the board.
+void watchI2C(uint32_t sens_fail) {
+  static uint8_t dead_rows = 0;
+  const uint32_t all = (1u << PV_SENSOR_RTC) | (1u << PV_SENSOR_ENV) | (1u << PV_SENSOR_HUB);
+  dead_rows = (sens_fail & all) == all ? dead_rows + 1 : 0;
+  if (dead_rows < I2C_RESTART_AFTER) return;
+  dead_rows = 0;
+  Wire.end();
+  Wire.begin(pins::I2C_SDA, pins::I2C_SCL, I2C_CLOCK_HZ);
+  Wire.setTimeOut(I2C_TIMEOUT_MS);
+  pvlog_event(&plog, "i2c_restart", "RTC; BME280 and PaHub all silent: I2C driver started again");
+}
+
 void sample(uint32_t n) {
-  uint32_t status = 0;
-  if (n % RETRY_EVERY == 0) {
-    bool retried = false;
-    for (PvDevice *d : DEVICES) {
-      if (!d->ok() && d != &panel) retried |= d->begin();
-    }
-    if (!panel.ok() && hub.ok()) retried |= panel.begin();  // the INA226 needs the PaHub
-    mapProbes();  // a re-scan may have found a sensor for a column that had none
-    if (retried || n == 0) printStatus();
-  }
+  // Read order (pv_log_logic.c): the timestamp, then at once the irradiance (the fastest-
+  // changing input, one short Modbus exchange), then the slower devices; the DS18B20
+  // conversion (750 ms) comes last. A sensor that failed at the last row is started
+  // again here, at this row. uptime_ms is taken with the timestamp.
+  pvlog_row_t row;
+  pvlog_read(&plog, &PIO, &row);
+  if (HAS_LOAD) heatsink_c = romIsZero(HEATSINK_ROM) ? NAN : probes.readRom(HEATSINK_ROM);
+  watchI2C(row.sens_fail);
 
-  // Read order: the timestamp, then at once the irradiance (the fastest-changing input,
-  // one short Modbus exchange), then the slower devices; the DS18B20 conversion (750 ms)
-  // comes last. uptime_ms is taken with the timestamp, after any device retry above.
-  const uint32_t uptime_ms = millis();  // logged: orders the rows even without the RTC
-  if (readable(rtc)) rtc.read();
-  if (readable(pyr)) pyr.read();
-  if (readable(env)) env.read();
-  const float row_d = load.L.d_a;  // duty of branch A at the reading (HAS_LOAD only)
-  if (HAS_LOAD) load.rowReading();   // 64-average, triggered (also one hold step)
-  else if (readable(panel)) panel.read();
-  if (HAS_LOAD && conv_running) {    // conversion started ~800 ms ago in loadLoop()
-    while (millis() - conv_ms < PvDs18b20::CONVERSION_MS + 10) load.service(last_g, heatsinkTemp());
-    probes.fetch();
-    conv_running = false;
-  } else if (probes.count) {
-    probes.read();
-  }
-
-  const bool have_time = rtc.ok() && rtc.timeValid;
-  const DateTime t = rtc.time();                    // UTC: every logged timestamp
+  const bool have_time = row.have_time;
+  const DateTime t(row.unix_s);                     // UTC: every logged timestamp
   const DateTime lt = t + TimeSpan(UTC_OFFSET_S);   // local time: NASIM inputs only
   double T[5];
-  for (int k = 0; k < 5; k++) T[k] = backTemp(k);
-  double ta = env.ok() ? env.temperatureC : NAN;
-  double rh = env.ok() ? env.humidityPct : NAN;
-  double g = pyr.ok() ? pyr.irradiance : NAN;
-  double v = panel.ok() ? panel.busV : NAN;
-  double i = panel.ok() ? panel.currentA : NAN;
-  double p_el = panel.ok() ? panel.powerW : NAN;
-  last_g = g;
+  for (int k = 0; k < 5; k++) T[k] = row.t[k];
+  const double ta = row.ta, g = row.g;
+  last_g = row.g;
   for (int k = 0; k < 5; k++) last_T[k] = T[k];
+  uint32_t status = row.status;  // the sensor bits; the detector bits are added below
 
   // Detectors: same input as the replay test; they need time, T1..T5, ambient, irradiance.
   double p = NAN;
@@ -275,13 +370,6 @@ void sample(uint32_t n) {
   bool complete = have_time && !isnan(ta) && !isnan(g);
   for (int k = 0; k < 5; k++) complete = complete && !isnan(T[k]);
   bool in_window = minute >= NASIM_START_MIN && minute < NASIM_END_MIN;
-  if (!have_time) status |= ST_RTC_INVALID;
-  if (isnan(ta)) status |= ST_AMBIENT_FAIL;
-  if (isnan(g)) status |= ST_IRRAD_FAIL;
-  if (isnan(v)) status |= ST_PANEL_FAIL;
-  for (int k = 0; k < 5; k++)
-    if (isnan(T[k])) status |= ST_TEMP_FAIL;
-  if (t_rom_unmapped) status |= ST_TROM_UNMAPPED;
   if (complete && in_window) {
     det_fails = 0;
     int doy = dayOfYear(lt);
@@ -316,66 +404,39 @@ void sample(uint32_t n) {
     }
   }
 
-  // CSV row
-  String row;
-  row.reserve(220);
-  if (have_time) {
-    char dt[40];  // 19 chars used; sized for the widest values the compiler can see
-    snprintf(dt, sizeof(dt), "%04u-%02u-%02u,%02u:%02u:%02u", t.year(), t.month(), t.day(),
-             t.hour(), t.minute(), t.second());
-    row += dt;
-  } else {
-    row += ',';
-  }
-  for (int k = 0; k < 5; k++) addField(row, T[k], 4);
-  addField(row, ta, 2);
-  addField(row, rh, 2);
-  addField(row, g, 0);
-  addField(row, v, 4);
-  addField(row, i, 4);
-  addField(row, p_el, 4);
+  // What the sensors did not measure: detector outputs and the load's columns.
+  row.p = p;
+  row.alarm = alarm;
 #if HAS_ANEMOMETER
-#error "HAS_ANEMOMETER 1: no anemometer driver exists yet"
-#else
-  row += ",NaN";  // no anemometer in this phase: "NaN" = not measured (empty = read failed)
+#error "HAS_ANEMOMETER 1: no anemometer driver exists yet (pv_log_logic.c writes wind = NaN)"
 #endif
-  addField(row, p, 6);
-  row += ',';
-  row += alarm;
-  if (HAS_LOAD) {  // D, load_mode, sweep_id
-    row += ',';
-    row += String(row_d, 4);
-    row += ',';
-    row += load_mode_text(load.L.mode);
-    row += ',';
-    row += row_sweep_id;
-    row += ',';
-  } else {
-    row += ",NaN,none,0,";  // no load fitted
+  if (HAS_LOAD) {  // D, load_mode, sweep_id; without a load they stay NaN, none, 0
+    row.d = row_d;
+    row.load_mode = load_mode_text(load.L.mode);
+    row.sweep_id = row_sweep_id;
   }
-  row += uptime_ms;
-  row += ',';
 
   // A row without RTC time goes to the file of the last row that had one (its neighbours
   // and uptime_ms give its time back), or to /nodate.csv if there was none since boot.
-  if (have_time) {
-    snprintf(day_path, sizeof(day_path), "/%04u%02u%02u.csv", t.year(), t.month(), t.day());
-  }
-  // status is the last field, so a second write attempt can be flagged in the row itself.
+  char path[PVLOG_PATH_MAX], line[PVLOG_LINE_MAX];
+  pvlog_day_path(&plog, &row, path);
   static bool sd_lost = false;  // the row before this one did not reach the card
   if (sd_lost) status |= ST_SD_RETRY;
   const int attempts = sd.ok() ? 2 : 1;  // a card that was working gets one re-mount + retry
   bool written = false;
-  String line;
   for (int a = 0; a < attempts && !written; a++) {
     if (a > 0) status |= ST_SD_RETRY;
-    line = row + String(status);
-    written = (a == 0 ? (sd.ok() || sd.begin()) : sd.begin()) &&
-              sd.appendLine(day_path, line.c_str(), HEADER);
+    row.status = status;
+    pvlog_format_row(&plog, &row, 0, 0, line, sizeof(line));
+    written = (a == 0 ? (sd.ok() || sd.begin()) : sd.begin()) && appendRow(path, line);
   }
+  pvlog_note_sd(&plog, written);  // counted in f_sd from the next row on
   if (!written && !sd_lost) printStatus();
   sd_lost = !written;
   Serial.println(line);
+  writeEvents();
+  if (n == 0) printStatus();
+  pvlog_end_cycle(&plog, millis());
 }
 
 // Polls the RTC until its second changes and records that edge (blocks up to ~1.1 s).
@@ -434,11 +495,8 @@ void logMarker() {
 }
 
 // ---- measurement load (called only with HAS_LOAD 1) -------------------------------------------
-float heatsinkTemp() {  // NaN = no valid reading -> the logic trips
-  if (!readable(probes)) return NAN;
-  const int idx = probes.indexOf(HEATSINK_ROM);  // an all-zero ROM matches no sensor
-  return idx < 0 ? NAN : probes.tempC[idx];
-}
+// NaN = no valid reading -> the logic trips. The probe is read by its ROM with every row.
+float heatsinkTemp() { return heatsink_c; }
 
 // Mode changes, trips, commands: to Serial and to /load_log.csv.
 void loadLog(const char *text) {
@@ -605,6 +663,9 @@ void loadLoop(uint32_t next_row_ms) {
 }
 
 // ---- Arduino ---------------------------------------------------------------------------------
+// FIRST ACTION of setup(): the pump gate (GPIO 32) LOW, then both load gates. The LOW level
+// is written before each pin becomes an output (pvOutputsOff, PvDaq.h). Nothing may be
+// placed above that call; tests/test_load_logic.py checks that it is the first statement.
 void setup() {
   pvOutputsOff();
   Serial.begin(115200);
@@ -612,6 +673,13 @@ void setup() {
   pinMode(pins::MARKER_BUTTON, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(pins::MARKER_BUTTON), onMarker, FALLING);
   Wire.begin(pins::I2C_SDA, pins::I2C_SCL, I2C_CLOCK_HZ);
+  Wire.setTimeOut(I2C_TIMEOUT_MS);  // no I2C transaction may take longer than this
+  pvlog_cfg_t cfg = {};
+  memcpy(cfg.t_rom, T_ROM, sizeof(cfg.t_rom));
+  memcpy(cfg.known_rom[0], HEATSINK_ROM, 8);  // belongs on the bus, is not a column
+  cfg.fail_report_after = FAIL_REPORT_AFTER;
+  cfg.scan_every = ROM_SCAN_EVERY;
+  pvlog_init(&plog, &cfg);
   gbt_init(&det, nasim_score_nowind, /*use_wind=*/0, /*hybrid=*/1, NASIM_P_THRESHOLD,
            NASIM_PERSIST);
   thr_init(&det_thr, THR_RISE_C);
@@ -623,21 +691,25 @@ void setup() {
                 NASIM_ALARM_THRESHOLD, (double)THR_RISE_C, NASIM_ALARM_CUSUM,
                 (double)CUSUM_KAPPA_C, (double)CUSUM_H_C);
   Serial.println("# timestamps are UTC (DS3231)");
+  // A first begin() of everything for the boot report. Whatever is missing now is started
+  // again by the first row, and by every row after it, until it answers.
   for (PvDevice *d : DEVICES) {
     if (d != &panel) d->begin();
   }
   if (hub.ok()) panel.begin();  // the INA226 needs the PaHub
-  mapProbes();
   reportRomScan();
   if (HAS_LOAD) {
-    if (probes.count) probes.read();  // a first heatsink temperature before the load may start
+    // a first heatsink temperature before the load may start (NaN keeps it in TRIP)
+    if (!romIsZero(HEATSINK_ROM)) probes.convert();
+    heatsink_c = romIsZero(HEATSINK_ROM) ? NAN : probes.readRom(HEATSINK_ROM);
     if (!load.begin()) Serial.println("# load: LEDC attach FAILED: both branches are held off");
     esp_task_wdt_config_t wdt = {LOOP_WDT_MS, 0, true};  // time-out, no idle task, reset
     if (esp_task_wdt_reconfigure(&wdt) != ESP_OK) esp_task_wdt_init(&wdt);
     enableLoopWDT();
     Serial.println("# load: active. Commands: GAMMA <minutes> | LOAD OFF | LOAD ON");
   }
-  Serial.println(HEADER);
+  Serial.println(PVLOG_VERSION_LINE);
+  Serial.println(pvlog_header());
 }
 
 void loop() {

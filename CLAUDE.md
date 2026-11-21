@@ -34,6 +34,13 @@ Last synced: 2026-11-10. Full status, reasons and sources: ./PROJECT_STATE.md
   in its slot as NOT_SETTLED (32). Details: docs/paper/07 section 12; real tau: bench B4.
 - PWM: 20 kHz, 11 bit (20 kHz x 2^11 = 40.96 MHz <= 80 MHz APB; 12 bit would not fit).
 - Timestamps: RTC and logs in UTC; NASIM adds +3 h internally. Run set_rtc.py first.
+- Logger robustness + CSV v2 (2026-11-21, branch logger-robustness, NOT run on the board):
+  a failed read empties only its own fields, is retried at the next row, counted per
+  sensor and reported once (/events.csv). T1..T7 are read by ROM from T_ROM (7 rows, to
+  fill in logger.ino) and never by bus-scan order. 20 columns appended after status (T6,
+  T7, pyr_mV, sens_fail, f_* counters, ring_rows, ring_dropped, cycle_ms); every block of
+  rows starts with "# nasim-logger-csv v2". Row logic: PvDaq/src/pv_log_logic.c, tested on
+  the PC with fake drivers. Audit, on-board test, "Needs board": docs/paper/13.
 - The supervisor lends a commercial data logger: reference for validating the ESP32
   DAQ (temps, V, I, PYR20 analog); align with /markers.csv button presses.
 - Stand: workshop-built mild-steel stand (drawings PS-01..03), tilt 20 deg, facing

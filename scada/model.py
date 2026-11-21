@@ -14,14 +14,17 @@ import pathlib
 from dataclasses import asdict, dataclass
 
 from data.schema import (ALARM_BITS, BACK_SENSORS, COLUMNS, LOGGER_EXTRA_COLUMNS,
-                         STATUS_BITS)
+                         LOGGER_V2_COLUMNS, STATUS_BITS)
 
-# The three row formats a file can have. The logger wrote FORMAT_OLD until 2026-11-12 and
-# writes FORMAT_NEW since; FORMAT_SCHEMA is the bare schema (synthetic day tables).
+# The row formats a file can have. The logger wrote FORMAT_OLD until 2026-11-12, FORMAT_NEW
+# from then on and writes FORMAT_V2 (CSV v2: 20 more columns appended) since 2026-11-21;
+# FORMAT_SCHEMA is the bare schema (synthetic day tables). The SCADA reads all of them; of
+# a FORMAT_V2 row it stores the FORMAT_NEW columns (the appended ones are not tags yet).
 FORMAT_SCHEMA = list(COLUMNS)
 FORMAT_OLD = FORMAT_SCHEMA + ["p", "alarm"]
 FORMAT_NEW = FORMAT_OLD + list(LOGGER_EXTRA_COLUMNS)
-FORMATS = {len(f): f for f in (FORMAT_SCHEMA, FORMAT_OLD, FORMAT_NEW)}
+FORMAT_V2 = FORMAT_NEW + list(LOGGER_V2_COLUMNS)
+FORMATS = {len(f): f for f in (FORMAT_SCHEMA, FORMAT_OLD, FORMAT_NEW, FORMAT_V2)}
 
 LOAD_MODES = {  # the `load_mode` column (docs/paper/07 sec. 7)
     "none": "no load fitted",
@@ -113,10 +116,14 @@ STATUS_TEXT = {  # meaning of each status bit (firmware: PvDaq/src/pv_status.h)
     "AMBIENT_FAIL": "BME280: no ambient temperature.",
     "IRRAD_FAIL": "PYR20: no irradiance.",
     "PANEL_FAIL": "Panel INA226 (or its PaHub channel): no V, I, P.",
-    "TROM_UNMAPPED": "T_ROM not filled in: T1..T5 follow the bus-scan order.",
+    "TROM_UNMAPPED": "A T1..T5 row of T_ROM is not filled in: that column is empty (files "
+                     "before CSV v2: T1..T5 followed the bus-scan order).",
     "DET_SKIPPED": "Row not given to the detectors (an input or the time is missing).",
     "DET_RESET": "Detector state cleared at this row (5 skipped rows in a row).",
-    "SD_RETRY": "SD: second write attempt, or the row(s) before did not reach the card.",
+    "SD_RETRY": "SD: not on the card at the first attempt, or the row(s) before did not "
+                "reach the card.",
+    "SD_BUFFERED": "SD: the row waited in the LittleFS ring buffer and was copied to the "
+                   "card later.",
 }
 TAGS = _tags()
 LOGGED = [t.name for t in TAGS if t.source.startswith("csv:") and t.kind != "time"]
@@ -279,6 +286,7 @@ def tag_list_markdown():
         "",
         "| Format | Columns | Header |",
         "|---|---|---|",
+        f"| CSV v2 (logger since 2026-11-21) | {len(FORMAT_V2)} | `{','.join(FORMAT_V2)}` |",
         f"| new (logger since 2026-11-12) | {len(FORMAT_NEW)} | `{','.join(FORMAT_NEW)}` |",
         f"| old (logger before 2026-11-12) | {len(FORMAT_OLD)} | `{','.join(FORMAT_OLD)}` |",
         f"| bare schema (synthetic day tables) | {len(FORMAT_SCHEMA)} | "

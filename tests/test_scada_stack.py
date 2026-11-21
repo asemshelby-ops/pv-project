@@ -45,15 +45,21 @@ class FakeClock:
         return self.t
 
 
+def _rows(path):
+    """Data rows of a logger file: its lines without the header and the version line."""
+    return sum(1 for line in path.read_text().splitlines()
+               if line and not line.startswith(("#", "date,")))
+
+
 # --- tag model ---------------------------------------------------------------------------------
 
 def test_new_format_is_the_header_the_logger_writes():
-    ino = (ROOT / "firmware/logger/logger.ino").read_text(encoding="utf-8")
-    m = re.search(r'const char \*HEADER =\s*((?:"[^"]*"\s*)+);', ino)
+    src = (ROOT / "firmware/libraries/PvDaq/src/pv_log_logic.c").read_text(encoding="utf-8")
+    m = re.search(r'static const char HEADER\[\] =\s*((?:"[^"]*"\s*)+);', src)
     header = "".join(re.findall(r'"([^"]*)"', m.group(1))).split(",")
-    assert header == model.FORMAT_NEW
+    assert header == model.FORMAT_V2 and header[:21] == model.FORMAT_NEW
     assert model.FORMAT_NEW[-5:] == list(LOGGER_EXTRA_COLUMNS)
-    assert sorted(model.FORMATS) == [14, 16, 21]
+    assert sorted(model.FORMATS) == [14, 16, 21, 41]
 
 
 def test_every_logged_column_and_every_bit_has_a_tag():
@@ -94,8 +100,7 @@ def test_replay_writes_the_source_files_line_for_line(source, tmp_path):
     day_files = sorted(p.name for p in source.glob("2*.csv"))
     for name in day_files + ["markers.csv"]:
         assert (dest / name).read_text() == (source / name).read_text(), name
-    assert n == sum(len((source / f).read_text().splitlines()) - 1
-                    for f in day_files + ["markers.csv"])
+    assert n == sum(_rows(source / f) for f in day_files + ["markers.csv"])
 
 
 def test_replay_is_progressive_and_the_ingest_follows_it(source, tmp_path):
@@ -111,7 +116,7 @@ def test_replay_is_progressive_and_the_ingest_follows_it(source, tmp_path):
     replay.feed(source, dest, speed=1.0, tick_s=0, clock=tick)
     ingest.poll()
     total = conn.execute("SELECT COUNT(*) FROM samples").fetchone()[0]
-    assert total == sum(len(f.read_text().splitlines()) - 1 for f in source.glob("2*.csv"))
+    assert total == sum(_rows(f) for f in source.glob("2*.csv"))
     assert max(seen) <= 61 and sum(1 for n in seen if n) > 100    # in small steps, not at once
     assert conn.execute("SELECT COUNT(*) FROM markers").fetchone()[0] == 4
     conn.close()
@@ -152,7 +157,7 @@ def test_injected_faults_set_the_bits_the_logger_would_set(days, tmp_path):
     date = f"{f.stem[:4]}-{f.stem[4:6]}-{f.stem[6:]}"
     before = f.read_text().splitlines()
     after = demo_data.inject_faults(before, date)
-    col = {name: k for k, name in enumerate(before[0].split(","))}
+    col = {name: k for k, name in enumerate(before[1].split(","))}   # [0] is the version line
     changed = [a.split(",") for a, b in zip(after, before) if a != b]
     assert len(changed) == sum(n for _, n, _, _ in demo_data.FAULTS) == 30
     t3 = [r for r in changed if int(r[col["status"]]) & BIT["TEMP_FAIL"]]

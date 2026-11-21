@@ -1,5 +1,6 @@
 // Phase 0 data-logger drivers. Include this one header from a sketch.
 #pragma once
+#include <driver/gpio.h>
 #include "pv_config.h"
 #include "pv_device.h"
 #include "pv_pahub.h"
@@ -10,14 +11,17 @@
 #include "pv_pyr20.h"
 #include "pv_sdcard.h"
 
-// Every sketch calls this first: pump and both measurement-load MOSFETs OFF.
+// Every sketch calls this first: pump and both measurement-load MOSFETs OFF, the pump
+// (GPIO 32) before anything else. For each pin the LOW level is written into the output
+// latch BEFORE the pin is made an output (gpio_set_level works on a pin that is still an
+// input; Arduino's digitalWrite does not), so the pin starts to drive at LOW and can never
+// show HIGH, not even for the time between two statements.
 inline void pvOutputsOff() {
-  pinMode(pins::PUMP_PWM, OUTPUT);
-  digitalWrite(pins::PUMP_PWM, LOW);
-  pinMode(pins::LOAD_A_PWM, OUTPUT);
-  digitalWrite(pins::LOAD_A_PWM, LOW);
-  pinMode(pins::LOAD_B_PWM, OUTPUT);
-  digitalWrite(pins::LOAD_B_PWM, LOW);
+  for (int pin : {pins::PUMP_PWM, pins::LOAD_A_PWM, pins::LOAD_B_PWM}) {
+    gpio_set_level((gpio_num_t)pin, 0);
+    pinMode(pin, OUTPUT);
+    digitalWrite(pin, LOW);
+  }
 }
 
 // Probes every 7-bit I2C address and prints the ones that ACK. Returns how many answered.

@@ -22,6 +22,15 @@ from scada.ingest import DAY_FILE, _marker_time_ms, _utc_seconds
 SENTINEL = "SCADA_FOLDER.txt"    # marks a folder this package made and may empty
 
 
+def head_size(lines):
+    """Number of lines before the first data row of a day file: 1 (the header) in files up
+    to 2026-11-21, 2 since CSV v2 (the line "# nasim-logger-csv v2", then the header)."""
+    for k, line in enumerate(lines[:5]):
+        if line.startswith("date,"):
+            return k + 1
+    return 1
+
+
 def load(source):
     """All lines to replay as (data time in s, file name, line), in time order, plus the
     header line of each file. A row without date and time takes the time of the row
@@ -33,8 +42,9 @@ def load(source):
         raise FileNotFoundError(f"no logger day files (YYYYMMDD.csv) in {source}")
     for name in names:
         lines = (source / name).read_text(encoding="utf-8").splitlines()
-        headers[name], t = lines[0], None
-        for line in lines[1:]:
+        h, t = head_size(lines), None
+        headers[name] = "\n".join(lines[:h])
+        for line in lines[h:]:
             f = line.split(",")
             try:
                 t = _utc_seconds(f[0], f[1])

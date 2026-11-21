@@ -24,8 +24,12 @@ class PvBme280 : public PvDevice {
   float temperatureC = NAN, humidityPct = NAN, pressureHpa = NAN;
 
  private:
-  bool readChipId(uint8_t addr, uint8_t &id);
+  bool readReg(uint8_t addr, uint8_t reg, uint8_t &value);
+  bool readChipId(uint8_t addr, uint8_t &id) { return readReg(addr, 0xD0, id); }
+  bool waitIdle(uint32_t timeout_ms);   // status bit 3 "measuring" clear; false on error
+  bool configure();          // forced mode, 1x oversampling, filter off
   TwoWire &wire_;
   Adafruit_BME280 bme_;
   Adafruit_BMP280 bmp_;
+  uint8_t initAddr_ = 0, initId_ = 0;   // chip the library has been started for (0 = none)
 };
