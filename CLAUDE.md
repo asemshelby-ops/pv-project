@@ -8,15 +8,26 @@ Team: 5 — 3 Mechatronics (Asim, lead) + 2 Mechanical. Most of the software wor
 on Asim; keep tasks for teammates small, dated and with one defined output.
 Supervisor: د. عبدالإله الحمياني. Lab access and purchase review: د. عبدالمجيد.
 
-Last synced: 2026-11-10. Full status, reasons and sources: ./PROJECT_STATE.md
+Last synced: 2026-11-10; edited in the repo 2026-11-21 (pump, load) — sync the Project copy.
+Full status, reasons and sources: ./PROJECT_STATE.md
 
 ## CURRENT PHASE — 2026-11-10 (overrides anything below that conflicts)
 - Priority: one published research paper, narrow and simple: characterize thermal
   spikes on our module in Makkah's hot-dry climate (frequency, size, cause, power
   cost via gamma measured from I-V sweeps) and detect them in real time on the ESP32
-  (NASIM vs threshold vs CUSUM). Expansion (cooling, pump, diagnose-before-spray,
-  reference panel, SCADA) only after the paper.
-- Deferred: cooling, pump (ENABLE_PUMP 0), anemometer (HAS_ANEMOMETER 0, wind = NaN).
+  (NASIM vs threshold vs CUSUM). Expansion (diagnose-before-spray, reference panel,
+  SCADA) only after the paper.
+- Cooling and the pump are NOT deferred (supervisor, 2026-11-14, reported by Asim
+  2026-11-21): cooling is allowed in the paper. The second INA226 stays on the pump.
+  ENABLE_PUMP stays 0 in the firmware only until the pump is bought and the bucket test
+  has replaced the assumed protection thresholds. Still deferred: anemometer
+  (HAS_ANEMOMETER 0, wind = NaN).
+- 2026-11-21 (Asim): the PWM resistor load below is DROPPED: charge controller (real
+  MPPT, not bought) + AGM battery >= 26 Ah (not bought) + 60-80 W lamp, daytime only.
+  No I-V sweeps; gamma by Method C (docs/paper/02 section 9), PENDING the supervisor.
+  HAS_LOAD stays 0; its build variant is kept and never flashed. GPIO33 = LAMP_RELAY
+  (reserved). Third INA226 (battery) on PaHub channel 2. Every "Load", "sweep" and
+  "option C" paragraph below is history, kept for reference.
 - Spike definition (supervisor): the rise when the sun returns after a cloud COUNTS.
   Do not require stable irradiance; label the cause (irradiance step vs. other).
 - Load (decision 2026-11-11): two 1.5 ohm branches, each with its own MOSFET. Branch A

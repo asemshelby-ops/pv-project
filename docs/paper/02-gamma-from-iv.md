@@ -172,14 +172,20 @@ temperature, collected over many days instead of inside one 20-min run. It is Me
 2. *The controller is not curtailing.* When the battery is full (absorption / float) or
    the lamp draws less than the module can give, the controller moves the module off the
    MPP toward `V_oc`: power falls for a reason that has nothing to do with temperature.
-   Those rows must be removed (rule below). Requirement on the lamp (not chosen yet): it
-   draws **at least the module's midday power, ≈ 80–100 W**, so the battery never fills
-   while the sun is high. The battery (planned: QSSUN AGM 12 V 18 Ah, not bought) is then
-   only a buffer: 18 Ah × 12 V ≈ 216 Wh `[EST, nominal]`, about two hours of a 100 W lamp
-   with no sun. Two consequences to design for `[OPEN]`: the lamp must be switched off
-   outside the sun hours (timer, or the controller's load output with its low-voltage
-   cut-off) or it empties the battery every evening; and the charge current the module
-   can deliver (≈ 6–7 A) must be within what the battery's datasheet allows.
+   Those rows must be removed (rule below). Hardware plan (decisions of 2026-11-21,
+   nothing bought): lamp **60–80 W**, on in daytime only (controller load output with
+   timer and low-voltage cut-off, else a switch on ESP32 GPIO33; `firmware/BRINGUP.md`
+   §13); AGM battery of **26 Ah or more**, so that the ≈ 6–7 A `[EST]` the module can
+   deliver is a smaller fraction of its capacity. `[OPEN]` the battery's datasheet limit
+   for charge current has still to be read against that figure.
+   **Consequence of a lamp below the module's midday power, to accept knowingly:** near
+   noon on a clear day the module can give ≈ 80–90 W `[EST, listing]`, so 10–30 W of
+   surplus goes into the battery, which fills after some hours and the controller then
+   curtails. How many usable (bulk) midday rows a day gives depends on how empty the
+   battery is in the morning; it is not known in advance and may be few on consecutive
+   clear days. This is why the battery's state must be logged (third INA226) and why the
+   count of usable rows per day is the first thing to look at in the first week. If it is
+   too low: a larger lamp, a second lamp switched on near noon, or a morning discharge.
 
 **Row selection.** A row is used when all hold:
 - controller state = bulk (not absorption, float or off). Source, in this order: the
@@ -228,8 +234,8 @@ convincing subset: same sun angle, warmer module in the afternoon.
 
 **Status of the hardware (2026-11-21).** Controller: not bought; must be a real MPPT (the
 Anern 30 A unit in the old BOM has not been checked for tracking or for a data port, and
-neither may be assumed). Battery: planned QSSUN AGM 12 V 18 Ah, not bought. Lamp: not
-chosen, ≥ 80–100 W. Third INA226-10A for the battery: to buy, PaHub channel 2, address
+neither may be assumed). Battery: AGM 12 V, 26 Ah or more, not bought (the 18 Ah QSSUN
+is no longer the plan). Lamp: 60–80 W, not chosen, daytime only. Third INA226-10A for the battery: to buy, PaHub channel 2, address
 0x41 (`firmware/PINMAP.md`). The logger gains battery columns and a charge-state column
 only once the unit is on the bench and the supervisor has approved the method.
 

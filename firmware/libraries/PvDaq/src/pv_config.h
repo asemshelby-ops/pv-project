@@ -44,7 +44,12 @@ constexpr int PYR20_ANALOG = 34;  // ADC1_CH6
 constexpr int PUMP_PWM = 32;
 constexpr int FLOW_PULSE = 35;    // flow sensor pulses -> PCNT; input-only, NO internal pull:
                                   // external pull-up to 3.3 V or a divider (PINMAP.md)
-constexpr int LOAD_A_PWM = 33;     // load branch A gate driver (MPP hold)
+constexpr int LOAD_A_PWM = 33;     // load branch A gate driver (MPP hold): load DROPPED,
+                                   // only the never-flashed HAS_LOAD variant uses it
+constexpr int LAMP_RELAY = 33;     // RESERVED 2026-11-21: lamp switch (relay or MOSFET module),
+                                   // HIGH = lamp on. Same pin as LOAD_A_PWM on purpose: the
+                                   // load is gone. No code drives it yet; pvOutputsOff()
+                                   // holds it LOW = lamp off (PINMAP.md)
 constexpr int LOAD_B_PWM = 14;     // load branch B gate driver (sweeps only); toggles at boot
                                    // (JTAG MTMS) -> 10 kOhm pull-down on the driver input
 constexpr int MARKER_BUTTON = 27;  // to GND, internal pull-up

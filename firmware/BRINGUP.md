@@ -468,3 +468,32 @@ Write the four voltages (module, battery, curtailed, `V_oc`), G and the back-she
 temperature in the day's log sheet. **NO-GO in step 1 or 3 = no γ from this controller**:
 tell the supervisor the same day; rows logged with it are still good for temperatures and
 spike detection, not for power cost.
+
+## 13. Lamp in daytime only (decision 2026-11-21) — two options, choose when the controller is bought
+
+The lamp (60–80 W, 12 V) must not run at night: it would empty the battery in about four
+hours `[EST: 26 Ah × 12 V ≈ 310 Wh nominal]` and deep-discharge it.
+
+**Option 1 (preferred): the controller's load output.** Use it if the controller has a load
+output with BOTH a low-voltage disconnect (LVD) and a timer or light-controlled mode that
+can be set to "on in daylight". Check in its manual, before buying: the load output's
+current rating (≥ 8 A for an 80 W lamp), the LVD voltage, and that the daytime mode exists
+(many controllers only offer "on at dusk", made for street lights: the opposite of what we
+need). No ESP32 pin, no firmware. GPIO33 stays unused, held LOW.
+
+**Option 2: ESP32 switches the lamp on GPIO33 (`pins::LAMP_RELAY`).** Only if option 1 is
+not possible. Wiring: GPIO33 → active-HIGH switch module (logic-level MOSFET module, or a
+relay module with its own driver transistor) with a 10 kΩ pull-down at its input; the
+switch in the lamp's positive lead, fed from the battery side through a fuse. Rules the
+firmware will need — **none of this is coded yet**:
+- ON only when the irradiance has been above a threshold for some minutes and OFF below a
+  lower one (both from the PYR20; values to choose), with the RTC as a second condition;
+- OFF below a battery voltage read by the third INA226 (LVD; value from the battery's
+  datasheet), and OFF if that reading fails;
+- OFF after a reset until the conditions hold again; the watchdog reset releases the pin
+  and the pull-down switches the lamp off;
+- every switch written to a log file, because switching the lamp changes the controller's
+  operating point: rows around it are not used for γ.
+A logger that hangs with the lamp ON is covered by the watchdog; a logger without power is
+covered by the pull-down. A stuck relay or MOSFET is not covered: that is what the
+controller's own LVD is for, so prefer a controller that has one even with option 2.
