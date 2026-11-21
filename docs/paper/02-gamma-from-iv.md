@@ -4,6 +4,11 @@ Status: method design, 2026-11-11. Needs the PWM load and sweep firmware
 (`07-load-firmware-spec.md`). No value of γ exists yet for our module; the seller listing
 gives none, and none may be assumed.
 
+**2026-11-21: the PWM load was dropped** (charge controller + battery + lamp instead), so
+no I-V sweeps will exist and Methods A and B below cannot be run as written. They are kept
+as the reference design. The proposed replacement is **Method C, §9 — PENDING the
+supervisor's approval**; until he approves it, the paper has no agreed way to obtain γ.
+
 **Standard.** IEC 60891:2021 (Edition 3.0) defines the procedures for temperature and
 irradiance corrections of measured I-V curves and the procedures to determine the factors
 used in those corrections (IEC webstore abstract, checked 2026-11-11). The full text is
@@ -140,6 +145,81 @@ and air mass are nearly the same, while the afternoon module is warmer.
 - `GAMMA_RUN` mode: sweep every 15 s for a set duration (firmware spec §3).
 - PYR20 read immediately before and after each sweep (firmware spec §4).
 - Sweep repeatability and cable resistance (bench steps B2, B8).
+
+## 9. Method C (proposal, PENDING supervisor approval): γ from controller-held power over many days
+
+Drafted 2026-11-21 for the supervisor. Nothing here has been measured or tried.
+
+**Idea.** With no sweep, the only power we have is the power at the point where the charge
+controller holds the module. If that point is the maximum-power point, the 10 s rows give
+`P_mp` directly, and γ is the slope of irradiance-normalised power against cell
+temperature, collected over many days instead of inside one 20-min run. It is Method B
+(§6) with the controller's operating point in place of the sweep's `P_mp`.
+
+**It only works if two things are true, and both must be shown from our own data first:**
+
+1. *The controller really tracks the MPP.* Many low-cost units sold as "MPPT" connect the
+   module to the battery through a switch (PWM type). The module is then held near the
+   battery voltage (≈ 12–14.5 V for a 12 V battery), on the flat part of the I-V curve
+   where the current barely depends on temperature, and **γ cannot be seen at all**.
+   Check, one clear midday hour: the logged module voltage must sit well above the
+   battery voltage and near the listed `V_mp` (18 V at 25 °C; lower when hot), and must
+   move when the module is shaded and uncovered. If it follows the battery voltage,
+   Method C is dead and the supervisor should be told that day.
+2. *The controller is not curtailing.* When the battery is full (absorption / float) or
+   the lamp draws less than the module can give, the controller moves the module off the
+   MPP toward `V_oc`: power falls for a reason that has nothing to do with temperature.
+   Those rows must be removed (rule below). The lamp should therefore draw at least the
+   module's midday power, or the battery must be large enough to stay in bulk charge until
+   mid-afternoon `[to size once the lamp and battery are known]`.
+
+**Row selection.** A row is used when all hold:
+- controller state = bulk (not absorption, float or off). Source, in this order: the
+  controller's own state if it exposes one; otherwise battery voltage and current from our
+  second INA226 unit (free now that the pump is deferred): bulk = battery voltage below
+  the controller's absorption setpoint and still rising, battery current > 0; otherwise
+  the module-side test alone: `V_module` below 0.9 · `V_oc,expected` `[ASSUMPTION]`;
+- G within 850–950 W/m², stable to ± 2 % over the last 10 min; clear sky, within ± 2 h of
+  solar noon (limits the angle-of-incidence and spectrum changes the PYR20 does not see
+  the way the module does);
+- module cleaned that morning; no spike event, cleaning, shading or marker window open;
+  all five temperature sensors present.
+
+**Data reduction.** `T_cell` as in §3 step 3. `P* = P · 900 / G`. Ordinary least squares
+`P* = a + b · (T_cell − 25)` over all used rows; `γ = b / a`. Also fit each day alone and
+report the spread of the daily slopes. The before/after-noon pairs of §6 are the most
+convincing subset: same sun angle, warmer module in the afternoon.
+
+**What is weaker than Method A, to say plainly to the supervisor and in the paper:**
+- *No proof of MPP in each row.* Method A fits the maximum of a measured curve. Here a
+  tracking error of the controller that changes with temperature or irradiance goes
+  straight into γ. The controller's tracking efficiency is not known and cannot be
+  measured without a sweep `[OPEN]`; one borrowed I-V tracer or electronic load for a day
+  would bound it.
+- *Confounding.* Temperature, time of day, season, spectrum and soiling change together
+  over days; a narrow G bin and the noon window reduce this but do not remove it. Method A
+  changed temperature alone in 20 min.
+- *Small temperature span.* Inside 850–950 W/m² the cell temperature moves mainly with
+  air temperature and wind, perhaps 10–15 °C over the campaign `[EST]`, against 20 °C in
+  one Method A run. With the PYR20's 5 % accuracy class, a drift of the irradiance scale
+  of 0.5 % over the span is ≈ 10 % of a γ of −0.4 %/°C (illustrative value, not ours).
+- *No α, β, no `V_oc`, no `I_sc`:* the cross-check of §3 (normalising by `I_sc`) is gone.
+- Expected uncertainty: not estimated yet; it will be larger than the 10 % target of §5.
+  The paper would report γ as "estimated from operating data under MPPT", with its
+  confidence interval from the day-to-day spread, and would not call it a measurement
+  from I-V curves.
+
+**Questions for the supervisor.**
+1. Is γ from operating data acceptable for the paper's power-cost figure, given the limits
+   above? The alternative is one borrowed I-V tracer for a few Method A runs.
+2. His 2026-11-03 direction was no battery and no charge controller. Does the new load
+   (controller + battery + lamp) have his agreement?
+3. May the second INA226 be put on the battery side to detect bulk / float?
+
+**Needed before any of this can be coded.** The controller's make and model (the BOM lists
+an Anern 30 A "MPPT"; whether that unit tracks, and whether it has any data port, has not
+been checked and must not be assumed), the battery type and capacity, and the lamp's power.
+The logger gains a controller-state column only once it is known where the state comes from.
 
 ## Sources (accessed 2026-11-11)
 
