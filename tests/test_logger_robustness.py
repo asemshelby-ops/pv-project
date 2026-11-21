@@ -890,3 +890,102 @@ def test_a_restart_with_a_full_ring_finds_every_line_and_copies_them_in_order():
     made = 4200 + 300                                    # rows of both boots
     assert made - given_up <= len(rows) < made           # every missing row is a counted one
     assert max(sim2.cycle_ms) < 912 + 1000 + 400         # every row stayed bounded
+
+
+# =================================================================================================
+# Follow-up 2026-11-21: the copy back goes in chunks, one per row, each within its budget
+# =================================================================================================
+
+BUDGET_MS = 1000           # PVSTORE_FLUSH_BUDGET_MS (pv_store_logic.h)
+FLUSH_MAX = 64             # PVSTORE_FLUSH_MAX
+LOOP_WDT_MS = 30000        # logger.ino, HAS_LOAD 0 (15000 with the load)
+
+
+def full_ring():
+    """A night without the card: the ring at its 128 segments (4096 lines), some given up."""
+    rig = ls.Rig()
+    rig.convert_ms = 0                                   # (only to make 4200 rows run fast)
+    sim = ls.Sim(rig, scan_every=10 ** 6)
+    sim.run(4200, lambda k, r: setattr(r, "card_in", k < 3))
+    assert sim.store("segments") == 128 and sim.store("waiting") > 4000
+    return sim
+
+
+def drain(sim, max_rows=400):
+    """Rows until the ring is empty; per row: (records copied, ms of the chunk)."""
+    chunks = []
+    while sim.store("waiting") and len(chunks) < max_rows:
+        sim.cycle()
+        chunks.append((sim.store("chunk_n"), sim.store("chunk_ms")))
+    return chunks
+
+
+def test_the_numbers_of_the_chunk_rule_match_the_header():
+    text = (ROOT / "firmware/libraries/PvDaq/src/pv_store_logic.h").read_text()
+    assert f"#define PVSTORE_FLUSH_BUDGET_MS {BUDGET_MS}" in text
+    assert f"#define PVSTORE_FLUSH_MAX {FLUSH_MAX} " in text
+    assert f"LOOP_WDT_MS = HAS_LOAD ? 15000 : {LOOP_WDT_MS}" in SKETCH
+
+
+def test_a_full_ring_goes_back_to_the_card_in_chunks_each_within_its_budget():
+    """4096 lines waiting, card back: every row copies one chunk, no chunk passes the 1 s
+    budget, no row comes near the watchdog, and the card ends complete, in order, once."""
+    sim = full_ring()
+    rows_before = sim.n
+    sim.rig.card_in = True
+    chunks = drain(sim)
+    assert sim.store("waiting") == 0 and sim.rig.flash == {}
+    assert len(chunks) > 4096 // FLUSH_MAX               # many rows: it went in chunks
+    assert all(1 <= n <= FLUSH_MAX for n, _ in chunks)   # every row moved the copy on
+    assert max(ms for _, ms in chunks) <= BUDGET_MS      # same-speed card: never over
+    assert sim.store("chunk_ms_max") <= BUDGET_MS
+    during = sim.cycle_ms[rows_before:]
+    assert max(during) <= 912 + BUDGET_MS                # the row itself + one chunk [EST]
+    assert max(during) < LOOP_WDT_MS / 10
+    rows = sim.data_rows("/20261125.csv") + sim.data_rows("/20261126.csv")
+    times = [(r["date"], r["time"]) for r in rows]
+    assert times == sorted(times) and len(set(times)) == len(times)
+
+
+def test_a_record_that_might_not_fit_is_not_started():
+    """A card that takes 300 ms per write: the old rule (stop only once 1 s had passed)
+    started a 4th record at ~940 ms and ended at ~1250 ms. Now a record starts only if
+    the slowest one of the chunk still fits."""
+    sim = full_ring()
+    sim.rig.card_in = True
+    sim.rig.sd_write_ms = 300
+    chunks = drain(sim, max_rows=30)
+    assert all(ms <= BUDGET_MS for _, ms in chunks)
+    assert all(n >= 2 for n, _ in chunks[1:])            # ... and still > 1 new line per row
+    assert sim.store("waiting") < 4096                   # so the backlog shrinks
+
+
+def test_a_card_that_stalls_overshoots_by_that_one_write_only_and_ends_the_chunk():
+    sim = full_ring()
+    sim.rig.card_in = True
+    sim.rig.sd_write_extra = [0] * 10 + [2000]           # the 11th write hangs 2 s
+    chunks = drain(sim)
+    n0, ms0 = chunks[0]
+    assert n0 == 11                                      # the stall was the last of its chunk
+    assert BUDGET_MS < ms0 <= BUDGET_MS + 2000           # over by the stall, not more
+    assert max(ms for _, ms in chunks[1:]) <= BUDGET_MS  # the next chunks are normal again
+    assert sim.store("waiting") == 0
+
+
+def test_full_ring_and_every_sensor_at_its_time_out_stays_far_below_the_watchdog():
+    """The slowest pass the logic allows: every device at its limit (as in the slowest-row
+    test) WHILE a full ring is copied back to a slow card."""
+    sim = full_ring()
+    rig = sim.rig
+    for d in rig.dev.values():
+        d.slow = True
+    rig.bus_shorted = True
+    rig.convert_ms, rig.ds_read_ms = 750, 30
+    rig.card_in = True
+    rig.sd_write_ms = 250
+    start = sim.n
+    sim.run(20)
+    worst = max(sim.cycle_ms[start:])
+    assert worst < 7000 + BUDGET_MS + 1000               # sensors [EST] + chunk + events
+    assert worst < 15000 / 1.5                           # below the load build's 15 s too
+    assert sim.store("chunks") == 20                     # every row moved the copy on

@@ -37,8 +37,19 @@ extern "C" {
 #define PVSTORE_WORK_MAX 1024      /* header block + line, written in one append */
 #define PVSTORE_SEG_RECORDS 32     /* records per segment file (5 min 20 s of rows) */
 #define PVSTORE_MAX_SEGMENTS 128   /* ring capacity 4096 records: 11.4 h of 10 s rows */
-#define PVSTORE_FLUSH_MAX 64       /* records copied to the card per row, at the most ... */
-#define PVSTORE_FLUSH_BUDGET_MS 1000  /* ... and no new one is started after this time */
+/* The copy of the ring back to the card goes in CHUNKS, one per row (pvstore_service), so
+ * a full ring (4096 lines) never holds one loop pass near the watchdog (30 s, 15 s with
+ * the load). A chunk is at most FLUSH_MAX records and FLUSH_BUDGET_MS of time (the mount
+ * attempt of the row included): a record is started only if the time used so far PLUS
+ * the slowest record of this chunk still fits in the budget; the first record of a chunk
+ * may always start, so the copy never stops for good. A chunk therefore ends within the
+ * budget unless one record is slower than every record before it (a card that stalls);
+ * it then overshoots by less than that record's own time, which the card driver's
+ * time-outs bound, and the stall, now the slowest record, ends the chunk. A card that is
+ * slow on every write still gets budget / its write time records per row. The rest waits
+ * for the next rows. */
+#define PVSTORE_FLUSH_MAX 64       /* records copied to the card per row, at the most */
+#define PVSTORE_FLUSH_BUDGET_MS 1000
 #define PVSTORE_NOTICES 6
 #define PVSTORE_NOTICE_MAX 112
 
@@ -83,6 +94,8 @@ typedef struct {
   uint32_t dropped;                /* given up since the ring was last empty (kept on flash) */
   uint32_t flushed_run;            /* copied to the card since the ring was last empty */
   uint32_t n_card, n_ring, n_flushed, n_dropped, n_dedup, n_mounts;   /* since boot */
+  uint32_t chunk_ms, chunk_n;      /* the last chunk: its time (mount included), its records */
+  uint32_t chunk_ms_max, chunks;   /* the longest chunk since boot; chunks with a record */
   char notice[PVSTORE_NOTICES][PVSTORE_NOTICE_MAX];
   uint32_t notice_head, notice_count;
   char rec[PVSTORE_REC_MAX + 8];
@@ -99,7 +112,7 @@ void pvstore_init(pvstore_t *S, const char *header_row, const char *header_event
 void pvstore_begin(pvstore_t *S, const pvstore_io_t *io);
 
 /* Once per row, before the row is stored: if the card is down, ONE attempt to mount it;
- * if it is up, copies waiting records to it, oldest first, within the flush limits. */
+ * if it is up, copies ONE CHUNK of waiting records to it, oldest first (see FLUSH_*). */
 void pvstore_service(pvstore_t *S, const pvstore_io_t *io);
 
 /* Stores one line (no line end). key_len: how many leading characters identify the

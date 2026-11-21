@@ -210,6 +210,7 @@ class Rig:
         self.card_torn_appends = 0     # the next n appends write only half, then fail
         self.card_mounted = False
         self.sd_write_ms, self.sd_mount_ms, self.sd_mount_fail_ms = 30, 150, 1500
+        self.sd_write_extra = []       # extra ms for the next appends, one per append (a stall)
         self.mounts = 0
         # -- the fake internal flash (LittleFS): ring segments {number: bytes} + state text
         self.flash = {}
@@ -341,7 +342,7 @@ class Rig:
         return len(self.card[path.decode()]) if path.decode() in self.card else -1
 
     def sd_append(self, _, path, data, n):
-        self.ms += self.sd_write_ms
+        self.ms += self.sd_write_ms + (self.sd_write_extra.pop(0) if self.sd_write_extra else 0)
         if not self._card_ok():
             return 0
         chunk = bytes(data[:n])

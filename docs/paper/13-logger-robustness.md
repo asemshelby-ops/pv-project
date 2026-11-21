@@ -212,8 +212,18 @@ flash: lines survive a watchdog reset and a power cut, and the next boot goes on
 partition fills first. When full, the **oldest segment (32 lines) is given up** to make
 room for the newest, and counted: column `ring_dropped`, event `ring_full` (once per
 outage), and the total in `ring_flushed` when the card is back. Sampling never stops.
-Copying a full ring back takes many rows (64 lines and 1 s per row at the most; with the
-fake's card times about 20 lines per row `[EST]`, i.e. about half an hour), and rows made
+Copying a full ring back goes in **chunks, one per row** (follow-up of 2026-11-21): at
+most 64 lines and 1 s per row, the row's mount attempt included, and a line is started
+only if the time used so far plus the slowest line of this chunk still fits in the 1 s.
+(Before, the check was only "1 s not yet over", so the last line could end past it: on a
+card taking 300 ms per write the fake measured 1.24 s per chunk, now ≤ 0.95 s.) A card
+that stalls on one write overshoots by that write only, and the stall then ends the
+chunk. With the fake's card times a full ring (4096 lines) goes back in 186 rows, about
+23 lines per row, ≈ 31 min `[EST]`, no chunk over 1 s and no row over 1.2 s; a card at
+450 ms per write still gets 2 lines per row, so the backlog shrinks, slowly. Tests:
+`test_a_full_ring_goes_back_…`, `test_a_record_that_might_not_fit_…`,
+`test_a_card_that_stalls_…`, `test_full_ring_and_every_sensor_at_its_time_out_…`
+(every sensor at its time-out and a full ring on a 250 ms card: 7.0 s in the fake, test limit 9 s). Rows made
 meanwhile join the end of the ring; if the ring is still full when one arrives, the
 oldest segment is given up as above. If
 the flash itself cannot be used, a line that cannot reach the card is counted the same way

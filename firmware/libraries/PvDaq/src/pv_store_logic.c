@@ -248,15 +248,32 @@ static int flush_one(pvstore_t *S, const pvstore_io_t *io) {
   return 1;
 }
 
+/* One chunk of the copy back: see PVSTORE_FLUSH_* in the header. */
+static void flush_chunk(pvstore_t *S, const pvstore_io_t *io, uint32_t start) {
+  uint32_t slowest = 0, n = 0;
+  while (n < PVSTORE_FLUSH_MAX && S->segments > 0) {
+    const uint32_t t0 = io->millis(io->ctx);
+    const uint32_t used = t0 - start;
+    if (used >= PVSTORE_FLUSH_BUDGET_MS) break;
+    if (n > 0 && used + slowest > PVSTORE_FLUSH_BUDGET_MS) break;  /* the next might not fit */
+    if (!flush_one(S, io)) break;
+    n++;
+    const uint32_t took = io->millis(io->ctx) - t0;
+    if (took > slowest) slowest = took;
+  }
+  S->chunk_n = n;
+}
+
 void pvstore_service(pvstore_t *S, const pvstore_io_t *io) {
   const uint32_t start = io->millis(io->ctx);
   S->mount_used = 0;
+  S->chunk_n = S->chunk_ms = 0;
   if (!S->sd_up) mount(S, io, 0);  /* the card is tried again at every row */
   if (!S->sd_up || S->segments == 0) return;
-  for (int k = 0; k < PVSTORE_FLUSH_MAX && S->segments > 0; k++) {
-    if (io->millis(io->ctx) - start >= PVSTORE_FLUSH_BUDGET_MS) break;
-    if (!flush_one(S, io)) break;
-  }
+  flush_chunk(S, io, start);
+  S->chunk_ms = io->millis(io->ctx) - start;
+  if (S->chunk_n) S->chunks++;
+  if (S->chunk_ms > S->chunk_ms_max) S->chunk_ms_max = S->chunk_ms;
   if (S->segments == 0) {  /* the ring is empty again */
     char text[96];
     snprintf(text, sizeof(text), "%lu lines copied from the buffer to the card in order; %lu given up",
@@ -359,5 +376,9 @@ uint32_t pvstore_get(const pvstore_t *S, const char *what) {
   if (!strcmp(what, "n_dedup")) return S->n_dedup;
   if (!strcmp(what, "n_mounts")) return S->n_mounts;
   if (!strcmp(what, "ring_ok")) return S->ring_ok;
+  if (!strcmp(what, "chunk_ms")) return S->chunk_ms;
+  if (!strcmp(what, "chunk_n")) return S->chunk_n;
+  if (!strcmp(what, "chunk_ms_max")) return S->chunk_ms_max;
+  if (!strcmp(what, "chunks")) return S->chunks;
   return 0xFFFFFFFFu;
 }
